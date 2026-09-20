@@ -1,0 +1,101 @@
+{
+  "properties": {
+    "schema_version": {
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "event_id": {
+      "format": "uuid",
+      "title": "Event Id",
+      "type": "string"
+    },
+    "event_type": {
+      "title": "Event Type",
+      "type": "string"
+    },
+    "producer": {
+      "enum": [
+        "conversation-service",
+        "agent-service",
+        "business-service"
+      ],
+      "title": "Producer",
+      "type": "string"
+    },
+    "aggregate_type": {
+      "enum": [
+        "run",
+        "query",
+        "tool",
+        "ingestion",
+        "asset"
+      ],
+      "title": "Aggregate Type",
+      "type": "string"
+    },
+    "aggregate_id": {
+      "format": "uuid",
+      "title": "Aggregate Id",
+      "type": "string"
+    },
+    "run_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Run Id"
+    },
+    "sequence": {
+      "minimum": 1,
+      "title": "Sequence",
+      "type": "integer"
+    },
+    "occurred_at": {
+      "format": "date-time",
+      "title": "Occurred At",
+      "type": "string"
+    },
+    "trace_id": {
+      "title": "Trace Id",
+      "type": "string"
+    },
+    "causation_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Causation Id"
+    },
+    "payload": {
+      "additionalProperties": true,
+      "title": "Payload",
+      "type": "object"
+    }
+  },
+  "required": [
+    "event_id",
+    "event_type",
+    "producer",
+    "aggregate_type",
+    "aggregate_id",
+    "sequence",
+    "occurred_at",
+    "trace_id",
+    "payload"
+  ],
+  "title": "EventEnvelope",
+  "type": "object"
+}

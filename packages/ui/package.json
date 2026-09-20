@@ -1,0 +1,1 @@
+{"name":"@semibrain/ui","version":"0.1.0","private":true,"type":"module","exports":{".":"./src/FoundationView.vue"},"peerDependencies":{"vue":"^3.5.0"}}

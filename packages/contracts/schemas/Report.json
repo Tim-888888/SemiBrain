@@ -1,0 +1,82 @@
+{
+  "$defs": {
+    "CitationBinding": {
+      "properties": {
+        "schema_version": {
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "marker": {
+          "title": "Marker",
+          "type": "string"
+        },
+        "evidence_id": {
+          "format": "uuid",
+          "title": "Evidence Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "marker",
+        "evidence_id"
+      ],
+      "title": "CitationBinding",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "report_id": {
+      "format": "uuid",
+      "title": "Report Id",
+      "type": "string"
+    },
+    "run_id": {
+      "format": "uuid",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "revision": {
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "body_markdown": {
+      "title": "Body Markdown",
+      "type": "string"
+    },
+    "content_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Content Hash",
+      "type": "string"
+    },
+    "citation_bindings": {
+      "items": {
+        "$ref": "#/$defs/CitationBinding"
+      },
+      "title": "Citation Bindings",
+      "type": "array"
+    },
+    "lineage_refs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Lineage Refs",
+      "type": "array"
+    }
+  },
+  "required": [
+    "report_id",
+    "run_id",
+    "revision",
+    "body_markdown",
+    "content_hash"
+  ],
+  "title": "Report",
+  "type": "object"
+}

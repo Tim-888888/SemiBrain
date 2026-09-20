@@ -1,0 +1,78 @@
+{
+  "properties": {
+    "schema_version": {
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "subject_id": {
+      "format": "uuid",
+      "title": "Subject Id",
+      "type": "string"
+    },
+    "run_id": {
+      "format": "uuid",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "task_id": {
+      "format": "uuid",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "input_revision": {
+      "minimum": 1,
+      "title": "Input Revision",
+      "type": "integer"
+    },
+    "auth_version": {
+      "minimum": 1,
+      "title": "Auth Version",
+      "type": "integer"
+    },
+    "policy_version": {
+      "title": "Policy Version",
+      "type": "string"
+    },
+    "audience": {
+      "const": "business-service",
+      "title": "Audience",
+      "type": "string"
+    },
+    "expires_at": {
+      "format": "date-time",
+      "title": "Expires At",
+      "type": "string"
+    },
+    "allowed_ops": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Allowed Ops",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "resource_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Resource Ids",
+      "type": "array",
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "subject_id",
+    "run_id",
+    "task_id",
+    "input_revision",
+    "auth_version",
+    "policy_version",
+    "audience",
+    "expires_at",
+    "allowed_ops",
+    "resource_ids"
+  ],
+  "title": "DelegationClaims",
+  "type": "object"
+}
