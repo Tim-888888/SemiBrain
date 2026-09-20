@@ -1,10 +1,12 @@
 # SemiBrain
 Semiconductor quality investigation and knowledge collaboration platform.
 
-Stage A provides a runnable engineering foundation: three FastAPI services, two Vue
-applications, versioned contracts, a synthetic PostgreSQL warehouse, and bounded
-document parser adapters. Login, RAG, investigations and production recovery are
-later stages and are not implemented by this foundation.
+Stage B adds account registration and login, a knowledge workspace, asynchronous
+PDF/DOCX/Markdown/CSV ingestion, governed hybrid retrieval, read-only business tools,
+streamed Markdown answers and persistent conversation history. The three Python
+services and two Vue applications run against real storage and configured model APIs.
+Single-agent investigations, multi-agent coordination, Web Search, sandbox execution
+and advanced administration remain later-stage work. Their UI entry is disabled.
 
 ## Repository layout
 
@@ -53,7 +55,9 @@ pnpm --filter @semibrain/user-web dev
 pnpm --filter @semibrain/admin-web dev --port 5174
 ```
 
-The frontends display real health responses. The administration app uses `/admin/`.
+The administration app uses `/admin/`. Complete workflows require the B-stage storage,
+per-service environment, workers, and reverse proxy described below; running the API
+commands alone only provides process health and API definitions.
 Each service exposes `/healthz` and its current `/openapi.json`; generated wire schemas
 are in `packages/contracts/schemas`. A `Report` envelope stores a Markdown string and
 citation bindings, not a business report schema or fixed answer sections.
@@ -85,6 +89,50 @@ pages are not an authenticated public product. The private foundation query endp
 requires its bearer even within the Docker network; it will be replaced by B-stage
 identity and resource authorization adapters.
 
+## Private B-stage platform
+
+Compose `infra/compose/storage.yaml` and `application.yaml` together. Build and pin
+the backend/web images first. Populate private `conversation.env`, `agent.env`,
+`business.env`, and an offline `bootstrap.env` under `SECRET_DIR`; never give online
+services the bootstrap credentials. `.env.example` lists configuration names.
+The storage lock is `infra/images/platform-images.lock.json`.
+
+Initialize the Mongo replica set and authentication keyfile before running
+`scripts/bootstrap/platform.py` through the `ops` profile. It creates service-specific
+Mongo users, the synthetic PostgreSQL warehouse/read role, and scoped storage users.
+Redis must start with service-specific ACLs: each service owns `celery_<service>:*`,
+conversation alone owns `auth:*` and `delegation:*`; conversation writes `stream:runs`
+and reads `stream:agent`, while agent has the reverse permissions. Business owns
+`stream:business`. Disable the default Redis user and remote Celery control.
+
+```shell
+docker compose --env-file /private/compose.env -f infra/compose/storage.yaml -f infra/compose/application.yaml up -d
+```
+
+The web entry listens only on `127.0.0.1:8081`. Forward it to the exact loopback
+origin configured in `SEMIBRAIN_PUBLIC_ORIGIN` for private development. APIs do not
+expose host ports. Each service has its own Mongo credentials; only business can
+reach the isolated PostgreSQL network. Workers use durable Mongo records, leases,
+Outbox/Inbox delivery and terminal snapshots, with Redis as transport.
+
+Explicit demo initialization is available through `semibrain_conversation.auth.seed_demo`
+only when `SEMIBRAIN_DEMO_MODE=true`. It creates `admin/admin` and `user/user` on first
+run and preserves existing records. Registration uses 8–128 character passwords,
+Argon2id hashes and browser/purpose-bound, single-attempt captchas. Demo passwords
+are intended for the isolated demonstration deployment.
+
+`infra/compose/domain.yaml` adds optional TLS verification on loopback port 8443.
+Provide `TLS_DIR` containing `fullchain.pem` and `semibrain.key`; account keys stay
+outside the web container. Before public activation, satisfy the host's domain
+filing requirements, change the exact browser origin to the canonical HTTPS domain,
+check Secure cookies and proxy client-IP handling, and establish certificate renewal.
+The repository does not create a renewal account or a DNS credential automatically.
+
+In a Redis-loss recovery, stop consumers, replay each producer's durable Outbox,
+reset the corresponding durable cursor using `reset_consumer`, then restart workers.
+Inbox deduplication must remain intact. Inspect quarantine before replaying an event
+after a schema upgrade. Do not silently remove failed events or mark tasks successful.
+
 ## Data and parser validation
 
 `scripts/seed_mock/generate.py --seed <integer> --prefix <namespace> --output <private-path>`
@@ -102,8 +150,9 @@ HTTP endpoint reads committed SQL data. Never point this test at production data
 The first parser profile covers PDF, Markdown, DOCX and CSV. PDF uses MinerU only with
 explicit external-data permission and a configured key, with local WeKnora fallback.
 The other paths wrap the pinned WeKnora parser subset with compatibility and source
-location adapters. Parser results remain staged: publication, OCR enrichment and asset
-storage are B/E-stage work. A parser subprocess is not the D-stage model code sandbox.
+location adapters. B stores original assets and immutable parsed versions and requires
+preview and explicit publication before retrieval. Expanded formats and OCR enrichment
+remain later-stage work. A parser subprocess is not the D-stage model code sandbox.
 
 `scripts/verify/checkpoint_probe.py` tests the supported MongoDBSaver API with a private
 `SEMIBRAIN_CHECKPOINT_PROBE_URI`. It requires an explicitly selected committed checkpoint,

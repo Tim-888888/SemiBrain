@@ -168,6 +168,7 @@ class ToolResult(Contract):
 
 EVENT_TYPES = frozenset(
     {
+        "run.requested",
         "run.accepted",
         "run.queued",
         "run.started",
