@@ -1,0 +1,75 @@
+name: semibrain-platform
+services:
+  mongo:
+    image: ${MONGO_IMAGE:?Pin Mongo image}
+    command: [mongod, --replSet, rs0, --bind_ip_all, --keyFile, /run/mongo-key]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: bootstrap
+      MONGO_INITDB_ROOT_PASSWORD_FILE: /run/mongo-password
+    volumes:
+      - ${DATA_DIR}/mongo:/data/db
+      - ${SECRET_DIR}/mongo-key:/run/mongo-key:ro
+      - ${SECRET_DIR}/mongo-password:/run/mongo-password:ro
+    networks: [core]
+    mem_limit: 2g
+    restart: unless-stopped
+  redis:
+    image: ${REDIS_IMAGE:?Pin Redis image}
+    command: [redis-server, /run/redis.conf]
+    volumes:
+      - ${DATA_DIR}/redis:/data
+      - ${SECRET_DIR}/redis.conf:/run/redis.conf:ro
+      - ${SECRET_DIR}/redis.acl:/run/redis.acl:ro
+    networks: [core]
+    mem_limit: 512m
+    restart: unless-stopped
+  postgres:
+    image: ${POSTGRES_IMAGE:?Pin PostgreSQL image}
+    environment:
+      POSTGRES_USER: bootstrap
+      POSTGRES_DB: semibrain_demo
+      POSTGRES_PASSWORD_FILE: /run/pg-password
+    volumes:
+      - ${DATA_DIR}/postgres:/var/lib/postgresql/data
+      - ${SECRET_DIR}/pg-password:/run/pg-password:ro
+    networks: [business-data]
+    mem_limit: 1g
+    restart: unless-stopped
+  minio:
+    image: ${MINIO_IMAGE:?Pin MinIO image}
+    command: [minio, server, /data, --console-address, ':9001']
+    env_file: ["${SECRET_DIR}/minio.env"]
+    volumes: ["${DATA_DIR}/minio:/data"]
+    networks: [business-data]
+    mem_limit: 2g
+    restart: unless-stopped
+  etcd:
+    image: ${ETCD_IMAGE:?Pin etcd image}
+    command: [etcd, --advertise-client-urls=http://etcd:2379, --listen-client-urls=http://0.0.0.0:2379, --data-dir=/etcd]
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: '1000'
+      ETCD_QUOTA_BACKEND_BYTES: '4294967296'
+      ETCD_SNAPSHOT_COUNT: '50000'
+    volumes: ["${DATA_DIR}/etcd:/etcd"]
+    networks: [vector]
+    mem_limit: 512m
+    restart: unless-stopped
+  milvus:
+    image: ${MILVUS_IMAGE:?Pin Milvus image}
+    command: [milvus, run, standalone]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MQ_TYPE: woodpecker
+    volumes:
+      - ${DATA_DIR}/milvus:/var/lib/milvus
+      - ${SECRET_DIR}/milvus.yaml:/milvus/configs/user.yaml:ro
+    networks: [business-data, vector]
+    mem_limit: 6g
+    restart: unless-stopped
+    depends_on: [etcd, minio]
+networks:
+  core: {}
+  business-data: {internal: true}
+  vector: {internal: true}

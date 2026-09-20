@@ -1,3 +1,4 @@
+import os
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Request
@@ -40,6 +41,11 @@ def create_app(service: str) -> FastAPI:
 
     @app.get("/healthz")
     def health():
-        return {"status": "ok", "service": service, "version": "0.1.0", "stage": "foundation"}
+        return {
+            "status": "ok",
+            "service": service,
+            "version": "0.1.0",
+            "stage": os.getenv("SEMIBRAIN_STAGE", "foundation"),
+        }
 
     return app

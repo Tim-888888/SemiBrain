@@ -1,0 +1,42 @@
+{
+  "redis": {
+    "source": "registry-1.docker.io/library/redis:7.4-bookworm",
+    "manifest_digest": "sha256:95acc00495ddacfec75111ba47021f903121a890311d49264c723b4423ac9601",
+    "index_digest": "sha256:c6eabf748fc7a61dbb5a705c78bcf3d6377b1127a97d0ce965c11c44ba46896f",
+    "config_digest": "sha256:64035c2c9726d90bea2a217d43da49d7a3f13dde8647c1f409059e02e0e61287",
+    "local_alias": "semibrain-base/redis:sha-95acc00495ddacfe",
+    "platform": "linux/amd64",
+    "archive_sha256": "176b60bd1aed58d46b62bd3d962cf183fa09da31d670fcd9ac04732233fe7e9d",
+    "imported_digest": "semibrain-base/redis@sha256:88886c4babd6b2163025ff564105e02f5f65f6004a78971f163c0af6aea34725"
+  },
+  "etcd": {
+    "source": "quay.io/coreos/etcd:v3.5.25",
+    "manifest_digest": "sha256:dc2bdc588d2adc5272204a1fff7f1d89f31e8caacea78fdf509fd409d7162a9d",
+    "index_digest": "sha256:52f17f7e56e4f7239f0320dbfcbcc24721163d7d78ae710b466af3254ccf6366",
+    "config_digest": "sha256:ce1ffcaa22b901114f685eb972afd230849fdcd8c90a36f31d7dfa7072d00158",
+    "local_alias": "semibrain-base/etcd:sha-dc2bdc588d2adc52",
+    "platform": "linux/amd64",
+    "archive_sha256": "3d1eaaabbc6fb71e3a2a4feb77ee20a80df6bb6c5430caa0840dcc369ffae0f1",
+    "imported_digest": "semibrain-base/etcd@sha256:129ef5fa02e9668d113097736241eae6c59e080eb03c5e8b3488f65c82b762f7"
+  },
+  "minio": {
+    "source": "quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z",
+    "manifest_digest": "sha256:34c8e2f52a5984492555427fee07254c80036bdb7079bb91679232abd7a4fa20",
+    "index_digest": "sha256:1dce27c494a16bae114774f1cec295493f3613142713130c2d22dd5696be6ad3",
+    "config_digest": "sha256:6aed1b6949018d1659310e66dc076711c9a9efeffa578b337ac3d1b82e0e9153",
+    "local_alias": "semibrain-base/minio:sha-34c8e2f52a598449",
+    "platform": "linux/amd64",
+    "archive_sha256": "8ce481f53b14960cb579898fd9b50646ff11d656e04676dcf75255e5f608486b",
+    "imported_digest": "semibrain-base/minio@sha256:fd4d3227c8ca82c42729e61ba7cf359b10403811078c7360fa1b495728dbeff3"
+  },
+  "milvus": {
+    "source": "registry-1.docker.io/milvusdb/milvus:v2.6.23",
+    "manifest_digest": "sha256:68a1fd77f6f1e6495964ab650ceb2ff09e06dabd53774e17541a74407352d34b",
+    "index_digest": "sha256:60e96d5abe7ea9199dd8a4d0d0506f9b57a7056cf57683327b8c7ae7f489ed17",
+    "config_digest": "sha256:ffc590dbdab51d1aee3fc61da1f861177b57072a29cd044deaf2d8b38e4fab90",
+    "local_alias": "semibrain-base/milvus:sha-68a1fd77f6f1e649",
+    "platform": "linux/amd64",
+    "archive_sha256": "56ae761796c0db26a9b51b641fdcfd7db16853c408e407cf2ea0e2d0b6436a38",
+    "imported_digest": "semibrain-base/milvus@sha256:a09f3003892bf965afc69be179f58142bf55073c56fc92d5ea222058a1a72d3b"
+  }
+}

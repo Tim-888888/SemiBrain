@@ -1,0 +1,265 @@
+import time
+from typing import Literal
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field
+from pymongo import ReturnDocument
+from semibrain_common.runtime import canonical, digest, failure, now, publish, transaction, uid
+from semibrain_contracts.models import InputSnapshot, RunRequest, parse_sse_cursor
+
+from semibrain_conversation.access import POLICY, run_snapshot
+from semibrain_conversation.auth import current_user, db
+
+router = APIRouter()
+
+
+class ConversationInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: UUID
+    title: str = Field(default="新会话", min_length=1, max_length=120)
+
+
+def request_key(request, supplied):
+    if request.headers.get("Idempotency-Key") != str(supplied):
+        failure("IDEMPOTENCY_KEY_REQUIRED")
+
+
+@router.post("/v1/conversations", status_code=201)
+def create(form: ConversationInput, request: Request, user=Depends(current_user)):
+    request_key(request, form.request_id)
+    key = digest(user["_id"] + ":" + str(form.request_id))
+    payload_hash = digest(canonical(form.model_dump(mode="json")))
+    row = {
+        "_id": uid(),
+        "owner_id": user["_id"],
+        "request_key": key,
+        "payload_hash": payload_hash,
+        "title": form.title,
+        "revision": 0,
+        "created_at": now(),
+        "updated_at": now(),
+    }
+    db().conversations.update_one({"request_key": key}, {"$setOnInsert": row}, upsert=True)
+    saved = db().conversations.find_one({"request_key": key})
+    if saved["payload_hash"] != payload_hash:
+        failure("IDEMPOTENCY_CONFLICT", 409)
+    return {"id": saved["_id"], "title": saved["title"], "revision": saved["revision"]}
+
+
+@router.get("/v1/conversations")
+def list_conversations(after: str = "", user=Depends(current_user)):
+    query = {"owner_id": user["_id"]}
+    if after:
+        cursor = db().conversations.find_one({"_id": after, "owner_id": user["_id"]})
+        if not cursor:
+            failure("INVALID_CURSOR")
+        query["$or"] = [
+            {"created_at": {"$lt": cursor["created_at"]}},
+            {"created_at": cursor["created_at"], "_id": {"$lt": after}},
+        ]
+    rows = list(db().conversations.find(query).sort([("created_at", -1), ("_id", -1)]).limit(31))
+    return {
+        "items": [
+            {
+                "id": r["_id"],
+                "title": r["title"],
+                "revision": r["revision"],
+                "updated_at": r["updated_at"],
+            }
+            for r in rows[:30]
+        ],
+        "next_cursor": rows[29]["_id"] if len(rows) > 30 else None,
+    }
+
+
+class MessageInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: UUID
+    expected_revision: int = Field(ge=0)
+    text: str = Field(min_length=1, max_length=16000)
+    mode: Literal["quick_qa", "investigation"] = "quick_qa"
+    resource_restrictions: list[UUID] = Field(default_factory=list, max_length=30)
+    attachment_refs: list[UUID] = Field(default_factory=list, max_length=10)
+    allow_web: bool = False
+
+
+@router.post("/v1/conversations/{conversation_id}/messages", status_code=202)
+def submit(conversation_id: str, form: MessageInput, request: Request, user=Depends(current_user)):
+    request_key(request, form.request_id)
+    if form.mode != "quick_qa" or form.allow_web:
+        failure("CAPABILITY_UNAVAILABLE", 409)
+    if not form.text.strip():
+        failure("EMPTY_MESSAGE")
+    key = digest(user["_id"] + ":" + conversation_id + ":" + str(form.request_id))
+    payload_hash = digest(canonical(form.model_dump(mode="json")))
+    run_id, turn_id, task_id = uid(), uid(), uid()
+
+    def accept(session):
+        existing = db().gateway_runs.find_one({"request_key": key}, session=session)
+        if existing:
+            if existing["payload_hash"] != payload_hash:
+                failure("IDEMPOTENCY_CONFLICT", 409)
+            return existing
+        conv = db().conversations.find_one_and_update(
+            {"_id": conversation_id, "owner_id": user["_id"], "revision": form.expected_revision},
+            {"$inc": {"revision": 1}, "$set": {"updated_at": now()}},
+            return_document=ReturnDocument.AFTER,
+            session=session,
+        )
+        if not conv:
+            failure("CONVERSATION_REVISION_CONFLICT", 409)
+        snapshot = InputSnapshot(
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            input_revision=conv["revision"],
+            question=form.text,
+            mode=form.mode,
+            resource_restrictions=[str(x) for x in form.resource_restrictions],
+            attachment_refs=form.attachment_refs,
+        )
+        command = RunRequest(
+            request_id=form.request_id,
+            run_id=run_id,
+            input=snapshot,
+            subject_ref=user["_id"],
+            scope_ref="demo",
+            policy_version=POLICY,
+        ).model_dump(mode="json")
+        row = {
+            "_id": run_id,
+            "owner_id": user["_id"],
+            "auth_version": user["auth_version"],
+            "task_id": task_id,
+            "input": command["input"],
+            "policy_version": POLICY,
+            "request_key": key,
+            "payload_hash": payload_hash,
+            "status": "dispatching",
+            "created_at": now(),
+        }
+        db().gateway_runs.insert_one(row, session=session)
+        db().turns.insert_one(
+            {"_id": turn_id, "run_id": run_id, "owner_id": user["_id"], "input": command["input"]},
+            session=session,
+        )
+        db().messages.insert_one(
+            {
+                "_id": uid(),
+                "conversation_id": conversation_id,
+                "owner_id": user["_id"],
+                "input_revision": conv["revision"],
+                "role": "user",
+                "text": form.text,
+                "position": 0,
+                "run_id": run_id,
+            },
+            session=session,
+        )
+        if conv["revision"] == 1:
+            db().conversations.update_one(
+                {"_id": conversation_id}, {"$set": {"title": form.text[:60]}}, session=session
+            )
+        publish(db(), "stream:runs", "run.requested", run_id, command, session)
+        return row
+
+    row = transaction(accept)
+    return {
+        "run_id": row["_id"],
+        "turn_id": row["input"]["turn_id"],
+        "input_revision": row["input"]["input_revision"],
+        "status": row["status"],
+        "status_url": "/v1/runs/" + row["_id"],
+        "events_url": "/v1/runs/" + row["_id"] + "/events",
+    }
+
+
+@router.get("/v1/conversations/{conversation_id}/messages")
+def messages(conversation_id: str, before: int = 2147483647, user=Depends(current_user)):
+    if not db().conversations.find_one({"_id": conversation_id, "owner_id": user["_id"]}):
+        failure("CONVERSATION_NOT_FOUND", 404)
+    revisions = list(
+        db()
+        .messages.find(
+            {"conversation_id": conversation_id, "role": "user", "input_revision": {"$lt": before}}
+        )
+        .sort("input_revision", -1)
+        .limit(21)
+    )
+    selected = [row["input_revision"] for row in revisions[:20]]
+    rows = list(
+        db()
+        .messages.find({"conversation_id": conversation_id, "input_revision": {"$in": selected}})
+        .sort([("input_revision", -1), ("position", -1)])
+        .limit(40)
+    )
+    items = []
+    for row in reversed(rows):
+        item = {
+            "id": row["_id"],
+            "role": row["role"],
+            "input_revision": row["input_revision"],
+            "run_id": row["run_id"],
+        }
+        if row["role"] == "user":
+            item["text"] = row["text"]
+        else:
+            try:
+                item.update(run_snapshot(user, row["run_id"]))
+            except Exception:
+                item.update(
+                    {
+                        "status": "unavailable",
+                        "body_markdown": "此回答的来源已失效或暂时无法核验。",
+                        "citations": [],
+                    }
+                )
+        items.append(item)
+    return {
+        "items": items,
+        "next_cursor": min(selected) if len(revisions) > 20 else None,
+    }
+
+
+@router.get("/v1/runs/{run_id}")
+def snapshot(run_id: str, user=Depends(current_user)):
+    return run_snapshot(user, run_id)
+
+
+@router.get("/v1/runs/{run_id}/events")
+def events(run_id: str, request: Request, user=Depends(current_user)):
+    raw_cursor = request.headers.get("Last-Event-ID") or request.query_params.get("cursor")
+    if raw_cursor:
+        try:
+            parse_sse_cursor(raw_cursor, UUID(run_id))
+        except ValueError:
+            failure("INVALID_EVENT_CURSOR")
+    if not db().gateway_runs.find_one({"_id": run_id, "owner_id": user["_id"]}):
+        failure("RUN_NOT_FOUND", 404)
+
+    def stream():
+        previous = ""
+        # Snapshot reset intentionally replaces all drafts after a reconnect or missing delta.
+        for _ in range(120):
+            try:
+                active = current_user(request)
+                state = run_snapshot(active, run_id)
+            except Exception:
+                yield 'event: access.unavailable\ndata: {"clear_draft":true}\n\n'
+                return
+            value = canonical(state)
+            if value != previous:
+                yield f"id: {run_id}:{state['sequence']}\nevent: snapshot\ndata: {value}\n\n"
+                previous = value
+            else:
+                yield ": heartbeat\n\n"
+            if state["status"] in {"succeeded", "partial", "failed", "cancelled"}:
+                return
+            time.sleep(1)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
