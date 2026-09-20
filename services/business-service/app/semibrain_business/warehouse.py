@@ -458,6 +458,7 @@ def query_yield(engine, query: YieldQuery) -> dict:
             row = conn.execute(text(YIELD_SQL), query.model_dump()).mappings().one()
     n, d = int(row["numerator"]), int(row["denominator"])
     return {
+        "query_scope": query.model_dump(mode="json"),
         "numerator": n,
         "denominator": d,
         "value": n / d if d else None,

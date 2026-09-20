@@ -22,7 +22,7 @@ DEFAULT_LIMITS = {
     "seconds": 180,
     "searches": 3,
     "pages": 5,
-    "final_token_reserve": 7000,
+    "final_token_reserve": 12000,
     "final_seconds_reserve": 30,
 }
 

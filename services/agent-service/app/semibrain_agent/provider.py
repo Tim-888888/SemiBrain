@@ -27,8 +27,9 @@ class ModelProfile:
     credential_prefix: str = field(repr=False)
     tool_calling: bool = True
     image_input: bool = False
+    parallel_tool_calls: bool = True
     reasoning_effort: str | None = "low"
-    version: str = "api-profiles-v1"
+    version: str = "api-profiles-v2"
     model_origin: str = "api_simulated"
 
     def snapshot(self):
@@ -43,6 +44,7 @@ def profile_for(role="investigator"):
             protocol="chat_completions",
             credential_prefix="SEMIBRAIN_VISION",
             tool_calling=False,
+            parallel_tool_calls=False,
             image_input=True,
             reasoning_effort=None,
         )
@@ -172,7 +174,11 @@ class ProviderAdapter:
         if self.profile.reasoning_effort:
             payload["reasoning"] = {"effort": self.profile.reasoning_effort}
         if tools:
-            payload.update(tools=tools, parallel_tool_calls=False, tool_choice="auto")
+            payload.update(
+                tools=tools,
+                parallel_tool_calls=self.profile.parallel_tool_calls,
+                tool_choice="auto",
+            )
         else:
             payload["tool_choice"] = "none"
         response_value = None
@@ -187,7 +193,7 @@ class ProviderAdapter:
                     min(45, max(0.1, self.deadline - time.monotonic())), connect=10
                 ),
             ) as response:
-                self._check_http(response.status_code)
+                self._check_http(response.status_code, self._error_code(response))
 
                 def monitor():
                     while not stop.wait(0.5):
@@ -234,8 +240,27 @@ class ProviderAdapter:
         return parse_response(response_value)
 
     @staticmethod
-    def _check_http(status):
+    def _error_code(response):
+        if response.status_code < 400:
+            return None
+        # Retain only a small, recognized machine code, never provider messages or credentials.
+        raw = bytearray()
+        for chunk in response.iter_bytes(chunk_size=1024):
+            raw.extend(chunk)
+            if len(raw) >= 8192:
+                return None
+        try:
+            error = json.loads(raw).get("error", {})
+            code = error.get("code") if isinstance(error, dict) else None
+            return code if code in {"insufficient_balance", "insufficient_quota"} else None
+        except (ValueError, AttributeError, TypeError):
+            return None
+
+    @staticmethod
+    def _check_http(status, error_code=None):
         if status >= 400:
+            if error_code in {"insufficient_balance", "insufficient_quota"}:
+                raise ModelError("MODEL_PAYMENT_REQUIRED")
             code = {
                 401: "MODEL_AUTH_FAILED",
                 402: "MODEL_PAYMENT_REQUIRED",
@@ -274,7 +299,7 @@ class ProviderAdapter:
                 headers={"Authorization": "Bearer " + self.key},
                 timeout=min(45, max(0.1, self.deadline - time.monotonic())),
             )
-            self._check_http(response.status_code)
+            self._check_http(response.status_code, self._error_code(response))
             value = response.json()
             self.check()
             choice = value["choices"][0]

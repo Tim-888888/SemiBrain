@@ -9,7 +9,7 @@ from semibrain_contracts.models import assert_no_credentials
 
 from semibrain_agent.harness import RunStopped
 
-GRAPH_VERSION = "single-investigator-v1"
+GRAPH_VERSION = "single-investigator-v2"
 STATE_VERSION = "1.0"
 
 

@@ -9,7 +9,9 @@ Stage C adds bounded single-agent investigations with native tool calling, versi
 runtime prompts, explicit fenced MongoDBSaver checkpoints, shared budgets, cancellation,
 fixed statistics over authorized results, optional public Web Search and static-page
 snapshots. A reviewer checks investigation drafts before Markdown publication. The
-current implementation is undergoing its first frozen baseline acceptance run.
+implementation is still under acceptance: earlier full batches and functional checks
+are retained, and the latest batch encountered an external provider credit outage.
+The stage is not signed off; final revision quality and live closeout checks remain pending.
 Multi-agent coordination, sandbox execution and advanced administration remain later-stage work.
 
 ## Repository layout
@@ -40,6 +42,13 @@ unknown pricing is never reported as zero. Workers restore only the explicitly c
 checkpoint ID, reconcile immutable model/tool observations, and reject stale writes.
 The service coordinator commits checkpoints around LangGraph node transitions rather
 than using an unfenced latest-checkpoint lookup. Restarting does not reset the budget.
+The normal loop reserves 12,000 tokens and 30 seconds for tool-free synthesis and review.
+Independent read-only requests may share one model turn; the executor processes their
+native calls sequentially under the same budget. At a soft limit, one closeout attempt
+uses registered observations and still requires review. If that cannot finish, a bounded
+Markdown fallback preserves validated raw counts, their actual query scope and citations.
+Cancellation and lease loss never publish this fallback. Recognized credit exhaustion
+is reported separately from transient transport failure and is not automatically retried.
 
 Web access is off by default and can be disabled during a run. Search results are URLs,
 not fabricated source excerpts. The static fetcher validates DNS, the connected peer,

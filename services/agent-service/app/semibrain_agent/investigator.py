@@ -19,6 +19,7 @@ from semibrain_agent.checkpoints import GRAPH_VERSION, STATE_VERSION, Checkpoint
 from semibrain_agent.client import BusinessClient
 from semibrain_agent.executor import ToolExecutor, extend_catalog, wire_tools
 from semibrain_agent.harness import BudgetExhausted, Harness, RunStopped, estimate_reservation
+from semibrain_agent.partial import partial_answer
 from semibrain_agent.prompts import (
     Intent,
     PromptAssembler,
@@ -107,13 +108,14 @@ class Investigator:
             }
         )
         builder = StateGraph(GraphState)
-        for phase in ("understand", "model", "tools", "review", "revise"):
+        phases = ("understand", "model", "tools", "finalize", "review", "revise")
+        for phase in phases:
             builder.add_node(phase, self.node(phase))
             builder.add_edge(phase, END)
         builder.add_conditional_edges(
             START,
             lambda value: value["payload"]["phase"],
-            {phase: phase for phase in ("understand", "model", "tools", "review", "revise")},
+            {phase: phase for phase in phases},
         )
         self.graph = builder.compile()
 
@@ -455,9 +457,38 @@ class Investigator:
             raise BudgetExhausted("NO_NEW_OBSERVATION")
         return state
 
+    def finalize(self, state):
+        self.notify({"progress": "正在用预留预算整理已有证据，不再追加工具调用"})
+        evidence = self.executor.evidence()
+        selected = evidence if len(evidence) <= 8 else evidence[:4] + evidence[-4:]
+        inputs = [
+            {
+                "role": "user",
+                "content": "调查预算已到收尾边界。只基于以下已取得的观察回答原问题，不提出新工具调用。"
+                "逐项说明已完成和未完成目标，不猜缺失事实；未列出的来源不代表不存在。"
+                "只输出自然 Markdown 和已登记引用。\n"
+                + canonical(
+                    {
+                        "question": self.context["input"]["question"],
+                        "intent": state["intent"],
+                        "stop_reason": state["stop_code"],
+                        "evidence": [self.executor.observation(item) for item in selected],
+                        "omitted_sources": len(evidence) - len(selected),
+                    }
+                ),
+            }
+        ]
+        turn, _ = self.model_call(
+            state, inputs=inputs, final=True, suffix="closeout", max_tokens=1800
+        )
+        state.update(draft=turn.text, phase="review")
+        return state
+
     def review(self, state):
         self.notify({"progress": "正在核对结论、数值和来源"})
         evidence = self.executor.evidence()
+        cited = set(re.findall(r"\[(\d+)\]", state["draft"]))
+        inspected = [item for item in evidence if item["marker"] in cited] if cited else evidence
         inputs = [
             {
                 "role": "user",
@@ -467,12 +498,21 @@ class Investigator:
                         "intent": state["intent"],
                         "capability_names": [item["name"] for item in self.catalog["tools"]],
                         "draft": state["draft"],
-                        "evidence": [self.executor.observation(item) for item in evidence],
+                        "evidence": [self.executor.observation(item) for item in inspected],
                         "executed": [
                             {
                                 key: value
                                 for key, value in row["observation"].items()
-                                if key != "evidence"
+                                if key
+                                in {
+                                    "tool",
+                                    "arguments",
+                                    "status",
+                                    "job_id",
+                                    "error",
+                                    "warnings",
+                                    "reused",
+                                }
                             }
                             for row in self.db.observations.find({"run_id": self.run["_id"]})
                         ],
@@ -531,39 +571,44 @@ class Investigator:
 
     @staticmethod
     def partial_body(reason, evidence):
-        lines = ["本次调查暂未完整完成。" + reason + "。", ""]
-        if evidence:
-            lines.extend(["已取得以下来源，可继续据此核查：", ""])
-            lines.extend(f"- {record['title']} [{record['marker']}]" for record in evidence)
-        else:
-            lines.append("当前没有取得可核验的证据，因此暂不作事实或根因结论。")
-        lines.extend(["", "你可以缩小调查范围，或补充更明确的对象、资料和时间后继续。"])
-        return "\n".join(lines)
+        return partial_answer(reason, evidence)
 
     def execute(self):
         state = self.state
-        try:
-            while state["phase"] != "done":
+        while state["phase"] != "done":
+            try:
                 state = self.graph.invoke({"payload": state})["payload"]
                 self.checkpoints.save(state)
-        except (BudgetExhausted, ModelError) as exc:
-            evidence = self.executor.evidence()
-            state = {
-                **state,
-                "phase": "done",
-                "outcome": "partial",
-                "stop_code": str(exc),
-                "draft": self.partial_body(
-                    "执行预算已用完"
-                    if isinstance(exc, BudgetExhausted)
-                    else (
-                        "本轮任务理解结果未通过校验，请重试"
-                        if str(exc) == "INTENT_CONTROL_INVALID"
-                        else "模型服务暂时未完成响应"
+            except (BudgetExhausted, ModelError) as exc:
+                evidence = self.executor.evidence()
+                if (
+                    isinstance(exc, BudgetExhausted)
+                    and str(exc) != "RUN_TIME_BUDGET"
+                    and evidence
+                    and not state.get("closing")
+                ):
+                    # A crash before this transition commits re-enters the same closeout;
+                    # its distinct, stable journal identity prevents a second model charge.
+                    state = {**state, "phase": "finalize", "closing": True, "stop_code": str(exc)}
+                    continue
+                state = {
+                    **state,
+                    "phase": "done",
+                    "outcome": "partial",
+                    "stop_code": str(exc),
+                    "draft": self.partial_body(
+                        "执行预算已用完"
+                        if isinstance(exc, BudgetExhausted)
+                        else (
+                            "本轮任务理解结果未通过校验，请重试"
+                            if str(exc) == "INTENT_CONTROL_INVALID"
+                            else "模型服务额度不足，请联系管理员补充额度后继续"
+                            if str(exc) == "MODEL_PAYMENT_REQUIRED"
+                            else "模型服务暂时未完成响应"
+                        ),
+                        evidence,
                     ),
-                    evidence,
-                ),
-            }
+                }
         self.finish(state)
 
     def finish(self, state):

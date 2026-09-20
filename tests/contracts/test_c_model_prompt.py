@@ -1,5 +1,6 @@
 import json
 
+import httpx
 import pytest
 from semibrain_agent.prompts import (
     Intent,
@@ -9,7 +10,38 @@ from semibrain_agent.prompts import (
     compact_messages,
     redact_preview,
 )
-from semibrain_agent.provider import ModelError, normalized_usage, parse_response, profile_for
+from semibrain_agent.provider import (
+    ModelError,
+    ProviderAdapter,
+    normalized_usage,
+    parse_response,
+    profile_for,
+)
+
+
+@pytest.mark.parametrize("status", [402, 403, 429])
+def test_credit_errors_are_not_retried_as_transient_outages(status):
+    response = httpx.Response(
+        status,
+        json={"error": {"code": "insufficient_balance", "message": "PRIVATE_PROVIDER_DETAIL"}},
+    )
+    code = ProviderAdapter._error_code(response)
+    with pytest.raises(ModelError, match="MODEL_PAYMENT_REQUIRED") as caught:
+        ProviderAdapter._check_http(status, code)
+    assert not caught.value.retryable
+    assert "PRIVATE_PROVIDER_DETAIL" not in str(caught.value)
+
+
+def test_unknown_or_unbounded_provider_errors_are_not_retained():
+    for response in [
+        httpx.Response(500, content=b"upstream message " * 1000),
+        httpx.Response(500, json={"error": {"code": "private-provider-value"}}),
+        httpx.Response(500, json=["non-object"]),
+    ]:
+        assert ProviderAdapter._error_code(response) is None
+    with pytest.raises(ModelError) as caught:
+        ProviderAdapter._check_http(503)
+    assert caught.value.retryable
 
 
 def test_native_calls_are_paired_and_prose_is_not_executed():
