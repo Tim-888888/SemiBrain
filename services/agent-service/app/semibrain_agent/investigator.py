@@ -82,21 +82,23 @@ class Investigator:
         self.prompts = PromptAssembler(context, catalog, sources, self.attachments)
         self.checkpoints = Checkpoints(self.harness, context["task_id"], run["attempt"])
         self.state = self.checkpoints.restore()
+        runtime_models = {
+            role: profile_for(role).snapshot()
+            for role in ("understanding", "investigator", "reviewer")
+        }
         self.bundle = run.get("version_bundle") or {
             "graph_version": GRAPH_VERSION,
             "state_version": STATE_VERSION,
             **self.prompts.snapshot(),
             "route_version": RoutePolicy().version,
-            "models": {
-                role: profile_for(role).snapshot()
-                for role in ("understanding", "investigator", "reviewer")
-            },
+            "models": runtime_models,
             "metric_version": catalog.get("metric_version"),
         }
         if (
             self.bundle["graph_version"] != GRAPH_VERSION
             or self.bundle["tool_version"] != catalog.get("version")
             or self.bundle["prompt_version"] != self.prompts.snapshot()["prompt_version"]
+            or self.bundle["models"] != runtime_models
         ):
             raise RuntimeError("RUN_VERSION_INCOMPATIBLE")
         self.notify(

@@ -1,4 +1,5 @@
 import json
+from contextlib import contextmanager
 
 import httpx
 import pytest
@@ -12,11 +13,94 @@ from semibrain_agent.prompts import (
 )
 from semibrain_agent.provider import (
     ModelError,
+    ModelProfile,
     ProviderAdapter,
     normalized_usage,
     parse_response,
     profile_for,
 )
+
+
+def test_text_profiles_share_deepseek_default_without_changing_vision(monkeypatch):
+    for role in ("understanding", "investigator", "reviewer", "rca"):
+        monkeypatch.delenv("SEMIBRAIN_LLM_" + role.upper() + "_MODEL", raising=False)
+    monkeypatch.delenv("SEMIBRAIN_LLM_DEFAULT_MODEL", raising=False)
+    monkeypatch.delenv("SEMIBRAIN_LLM_REASONING_EFFORT", raising=False)
+    monkeypatch.delenv("SEMIBRAIN_LLM_ENCRYPTED_REASONING", raising=False)
+    for role in ("understanding", "investigator", "reviewer", "rca"):
+        profile = profile_for(role)
+        assert profile.model == "deepseek-v4-pro"
+        assert profile.reasoning_effort == "none" and not profile.encrypted_reasoning
+    assert profile_for("vision").credential_prefix == "SEMIBRAIN_VISION"
+    monkeypatch.setenv("SEMIBRAIN_LLM_REVIEWER_MODEL", "explicit-override")
+    assert profile_for("reviewer").model == "explicit-override"
+    assert profile_for("investigator").model == "deepseek-v4-pro"
+
+
+def test_responses_without_encrypted_reasoning_streams_only_visible_text(monkeypatch):
+    monkeypatch.setenv("SEMIBRAIN_LLM_BASE_URL", "https://provider.invalid")
+    monkeypatch.setenv("SEMIBRAIN_LLM_API_KEY", "fixture-credential")
+    captured, chunks = [], []
+    events = [
+        {"type": "response.reasoning_text.delta", "delta": "PRIVATE_REASONING"},
+        {"type": "response.output_text.delta", "delta": "Visible answer"},
+        {
+            "type": "response.completed",
+            "response": {
+                "status": "completed",
+                "model": "deepseek-v4-pro",
+                "output": [
+                    {
+                        "type": "reasoning",
+                        "content": [{"type": "reasoning_text", "text": "PRIVATE_REASONING"}],
+                    },
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": "Visible answer"}],
+                    },
+                ],
+                "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+            },
+        },
+    ]
+
+    @contextmanager
+    def stream(*args, **kwargs):
+        captured.append(kwargs["json"])
+        yield httpx.Response(
+            200, content="\n\n".join("data: " + json.dumps(x) for x in events).encode()
+        )
+
+    monkeypatch.setattr(httpx, "stream", stream)
+    profile = ModelProfile(
+        role="investigator",
+        model="deepseek-v4-pro",
+        protocol="responses",
+        credential_prefix="SEMIBRAIN_LLM",
+    )
+    turn = ProviderAdapter(profile).turn(
+        "Rules", [{"role": "user", "content": "Question"}], on_text=chunks.append
+    )
+    assert captured[0]["reasoning"] == {"effort": "none"}
+    assert "include" not in captured[0]
+    assert chunks == ["Visible answer"]
+    assert "PRIVATE_REASONING" not in json.dumps(turn.replay)
+    assert turn.usage["total_tokens"] == 15
+
+
+def test_tool_thinking_without_supported_replay_fails_before_transport(monkeypatch):
+    monkeypatch.setenv("SEMIBRAIN_LLM_BASE_URL", "https://provider.invalid")
+    monkeypatch.setenv("SEMIBRAIN_LLM_API_KEY", "fixture-credential")
+    profile = ModelProfile(
+        role="investigator",
+        model="thinking-fixture",
+        protocol="responses",
+        credential_prefix="SEMIBRAIN_LLM",
+        reasoning_effort="low",
+        encrypted_reasoning=False,
+    )
+    with pytest.raises(ModelError, match="MODEL_REASONING_REPLAY_UNAVAILABLE"):
+        ProviderAdapter(profile).turn("Rules", [], tools=[{"type": "function", "name": "read"}])
 
 
 @pytest.mark.parametrize("status", [402, 403, 429])

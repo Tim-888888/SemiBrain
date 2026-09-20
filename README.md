@@ -10,8 +10,9 @@ runtime prompts, explicit fenced MongoDBSaver checkpoints, shared budgets, cance
 fixed statistics over authorized results, optional public Web Search and static-page
 snapshots. A reviewer checks investigation drafts before Markdown publication. The
 implementation is still under acceptance: earlier full batches and functional checks
-are retained, and the latest batch encountered an external provider credit outage.
-The stage is not signed off; final revision quality and live closeout checks remain pending.
+are retained. Text roles now default to DeepSeek V4 Pro through its Responses API;
+the previous provider credit outage is retained in the historical evaluation records.
+The stage is not signed off; final revision quality checks remain pending.
 Multi-agent coordination, sandbox execution and advanced administration remain later-stage work.
 
 ## Repository layout
@@ -31,6 +32,15 @@ Multi-agent coordination, sandbox execution and advanced administration remain l
 Each service owns its database and accesses other services through authenticated APIs.
 Final answers use ordinary Markdown. Typed tool and event contracts do not impose a
 fixed report schema on user-facing answers.
+
+Understanding, investigation, review and RCA share the configurable `deepseek-v4-pro`
+default; role-specific overrides are available. DeepSeek uses non-thinking mode because
+its Responses interface does not provide encrypted reasoning replay. Native tools and
+the application Agent loop remain enabled. Plain reasoning is never stored or exposed.
+Providers with verified encrypted replay can enable it explicitly. Running checkpoints
+with different model profiles are rejected after a model migration; old final answers
+remain readable and follow-ups create new runs. Vision, embedding, reranking and public
+search keep their independently configured providers.
 
 The shared Markdown renderer supports bracket and dollar math through KaTeX. It
 disables trusted TeX commands, bounds macros and expression size, and sanitizes the

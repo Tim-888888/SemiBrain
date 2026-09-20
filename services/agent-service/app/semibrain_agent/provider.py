@@ -28,8 +28,9 @@ class ModelProfile:
     tool_calling: bool = True
     image_input: bool = False
     parallel_tool_calls: bool = True
-    reasoning_effort: str | None = "low"
-    version: str = "api-profiles-v2"
+    reasoning_effort: str | None = "none"
+    encrypted_reasoning: bool = False
+    version: str = "api-profiles-v3"
     model_origin: str = "api_simulated"
 
     def snapshot(self):
@@ -50,15 +51,16 @@ def profile_for(role="investigator"):
         )
     if role not in {"understanding", "investigator", "reviewer", "rca"}:
         raise ModelError("UNKNOWN_MODEL_ROLE")
-    default = os.getenv("SEMIBRAIN_LLM_DEFAULT_MODEL", "gpt-5.6-luna")
+    default = os.getenv("SEMIBRAIN_LLM_DEFAULT_MODEL", "deepseek-v4-pro")
     model = os.getenv("SEMIBRAIN_LLM_" + role.upper() + "_MODEL", default)
-    if role in {"reviewer", "rca"}:
-        model = os.getenv("SEMIBRAIN_LLM_" + role.upper() + "_MODEL", "gpt-5.6-sol")
     return ModelProfile(
         role=role,
         model=model,
         protocol=os.getenv("SEMIBRAIN_LLM_API_MODE", "responses"),
         credential_prefix="SEMIBRAIN_LLM",
+        reasoning_effort=os.getenv("SEMIBRAIN_LLM_REASONING_EFFORT", "none"),
+        encrypted_reasoning=os.getenv("SEMIBRAIN_LLM_ENCRYPTED_REASONING", "false").lower()
+        == "true",
     )
 
 
@@ -162,6 +164,13 @@ class ProviderAdapter:
             raise ModelError("MODEL_PROTOCOL_UNAVAILABLE")
         if tools and not self.profile.tool_calling:
             raise ModelError("TOOL_CALLING_UNAVAILABLE")
+        if (
+            tools
+            and self.profile.reasoning_effort not in {None, "none"}
+            and not self.profile.encrypted_reasoning
+        ):
+            # Thinking tool turns require replay. Never silently retain plain hidden reasoning.
+            raise ModelError("MODEL_REASONING_REPLAY_UNAVAILABLE")
         payload = {
             "model": self.profile.model,
             "instructions": system,
@@ -169,8 +178,9 @@ class ProviderAdapter:
             "max_output_tokens": max_tokens,
             "store": False,
             "stream": True,
-            "include": ["reasoning.encrypted_content"],
         }
+        if self.profile.encrypted_reasoning:
+            payload["include"] = ["reasoning.encrypted_content"]
         if self.profile.reasoning_effort:
             payload["reasoning"] = {"effort": self.profile.reasoning_effort}
         if tools:
