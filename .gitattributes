@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.png binary
+*.pdf binary
+*.docx binary
+# Preserve the verbatim upstream license, including its whitespace.
+vendor/weknora-docreader/LICENSE -whitespace

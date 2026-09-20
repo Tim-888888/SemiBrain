@@ -1,0 +1,115 @@
+{
+  "$defs": {
+    "InputSnapshot": {
+      "properties": {
+        "schema_version": {
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "conversation_id": {
+          "format": "uuid",
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "turn_id": {
+          "format": "uuid",
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "input_revision": {
+          "minimum": 1,
+          "title": "Input Revision",
+          "type": "integer"
+        },
+        "question": {
+          "maxLength": 32000,
+          "minLength": 1,
+          "title": "Question",
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "quick_qa",
+            "investigation"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "allow_web": {
+          "default": false,
+          "title": "Allow Web",
+          "type": "boolean"
+        },
+        "resource_restrictions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Resource Restrictions",
+          "type": "array"
+        },
+        "attachment_refs": {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "Attachment Refs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "conversation_id",
+        "turn_id",
+        "input_revision",
+        "question",
+        "mode"
+      ],
+      "title": "InputSnapshot",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "run_id": {
+      "format": "uuid",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "input": {
+      "$ref": "#/$defs/InputSnapshot"
+    },
+    "subject_ref": {
+      "format": "uuid",
+      "title": "Subject Ref",
+      "type": "string"
+    },
+    "scope_ref": {
+      "title": "Scope Ref",
+      "type": "string"
+    },
+    "policy_version": {
+      "title": "Policy Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_id",
+    "run_id",
+    "input",
+    "subject_ref",
+    "scope_ref",
+    "policy_version"
+  ],
+  "title": "RunRequest",
+  "type": "object"
+}

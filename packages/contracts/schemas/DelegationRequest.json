@@ -1,0 +1,38 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "run_id": {
+      "format": "uuid",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "task_id": {
+      "format": "uuid",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "input_revision": {
+      "minimum": 1,
+      "title": "Input Revision",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "request_id",
+    "run_id",
+    "task_id",
+    "input_revision"
+  ],
+  "title": "DelegationRequest",
+  "type": "object"
+}

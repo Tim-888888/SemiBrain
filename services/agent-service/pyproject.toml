@@ -1,0 +1,13 @@
+[project]
+name = "semibrain-agent-service"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = ["semibrain-contracts", "semibrain-common", "uvicorn>=0.34", "langgraph>=1.0", "langgraph-checkpoint-mongodb>=0.2", "pymongo>=4.14"]
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+[tool.hatch.build.targets.wheel]
+packages = ["app/semibrain_agent"]
+[tool.uv.sources]
+semibrain-contracts = { workspace = true }
+semibrain-common = { workspace = true }

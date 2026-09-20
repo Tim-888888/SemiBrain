@@ -1,0 +1,10 @@
+{
+  "schema_version": "1.0",
+  "report_id": "00000000-0000-0000-0000-000000000001",
+  "run_id": "00000000-0000-0000-0000-000000000002",
+  "revision": 1,
+  "body_markdown": "The tested cohort has a final yield of **91.5%**.\n\n- 183 passed units out of 200.\n- Missing evidence prevents a causal conclusion.\n\n[Source 1](#evidence-1)",
+  "content_hash": "5ffede90613e4c17e05a5983e46107523e493d33f1e8b20a50e8a87e28a041ad",
+  "citation_bindings": [],
+  "lineage_refs": []
+}

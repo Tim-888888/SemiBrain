@@ -1,0 +1,5 @@
+{
+  "name": "semibrain", "private": true, "version": "0.1.0",
+  "packageManager": "pnpm@11.19.0", "engines": {"node": "24.19.x"},
+  "scripts": {"build": "pnpm -r --filter @semibrain/*-web build", "typecheck": "pnpm -r --filter @semibrain/*-web typecheck"}
+}

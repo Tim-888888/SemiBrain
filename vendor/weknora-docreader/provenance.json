@@ -1,0 +1,68 @@
+{
+  "repository": "https://github.com/Tencent/WeKnora",
+  "commit": "c40a9dd1940f85d85a59787bd532eb0f290cb176",
+  "modifications": "None in upstream source files. Exact Git blob bytes are preserved; only packaging and package markers are added.",
+  "files": [
+    {
+      "path": "docreader/config.py",
+      "sha256": "1424fb1bc57669e3baf6bb40fcdd8aa5b5adf919b3df56fa0ff4da14fde4ccbd"
+    },
+    {
+      "path": "docreader/models/document.py",
+      "sha256": "108cd362a2731824a8151c844958537787246545dd8b8d6a52265cd75867c86e"
+    },
+    {
+      "path": "docreader/parser/base_parser.py",
+      "sha256": "3b83ab59549ce08eba9dde84907b84214d4faffb38d82c4240f890f6c0d103ea"
+    },
+    {
+      "path": "docreader/parser/chain_parser.py",
+      "sha256": "02d419dd34129023d720b520a065c21d48fdd00210d4894f76c3d42dc2117431"
+    },
+    {
+      "path": "docreader/parser/concurrency.py",
+      "sha256": "149acd24b10b8924ca551846d89a648ff5e3798ea9b3eb747788302f83408617"
+    },
+    {
+      "path": "docreader/parser/docx_merge.py",
+      "sha256": "d1d94ef7632c976c6d588bfb21dc5d2e37c0906b77933858f9a7a6465eb5f7b2"
+    },
+    {
+      "path": "docreader/parser/docx_parser.py",
+      "sha256": "c5ad355a202f56d99272afb4e6fbcbbf9a169b51c36fcfe3c7c19262ef30eb7b"
+    },
+    {
+      "path": "docreader/parser/excel_convert.py",
+      "sha256": "f65b83fd2957d82661b56cbd02c7790739d56787ab34c0a8d0644a13616cc923"
+    },
+    {
+      "path": "docreader/parser/markdown_parser.py",
+      "sha256": "37011d9ffa4ba2692103f19ac193776eac4f26a85f6d1763e4679126ccc00bd9"
+    },
+    {
+      "path": "docreader/parser/markitdown_parser.py",
+      "sha256": "75d16952a5d0b18f243909fcc784977009c03522394d7fdc6e86ebd9f4f7cb22"
+    },
+    {
+      "path": "docreader/parser/pdf_parser.py",
+      "sha256": "6e95dc00777058172ab485bc540eed62e62d246d4c60555f02e3ec1bd6b190c4"
+    },
+    {
+      "path": "docreader/parser/ppt_convert.py",
+      "sha256": "1e0160fa9fe6d43b033998ecdf6f6ae2065df9f93975a81e06c91a6e428308fc"
+    },
+    {
+      "path": "docreader/parser/pptx_media.py",
+      "sha256": "69ad9457d726c7c62d806f69c37f07d95be773baf39c1dc8ed2c01ce6df1b789"
+    },
+    {
+      "path": "docreader/utils/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "docreader/utils/endecode.py",
+      "sha256": "20d1b3088de0576ddbee8ac2447965756563b0399fc18d6a2abd3e48458ba8a6"
+    }
+  ],
+  "license_sha256": "25cfeca2c3eee245313b1106cf1b27244e47b682802a02cc536f8f1beb6a29a6"
+}

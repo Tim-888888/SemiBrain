@@ -1,0 +1,52 @@
+{
+  "python": {
+    "source": "docker.io/library/python:3.12.13-slim-bookworm",
+    "manifest_digest": "sha256:6e13e65c55e33adf203d77ee371cf8bf5d81bd4902ef07565721f46bf44917af",
+    "index_digest": "sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2",
+    "config_digest": "sha256:64d91f7b885eed272bba87909446b12ff408d4aaa5f1a0e9ca787bbea1a020b9",
+    "local_alias": "semibrain-base/python:sha-6e13e65c55e33adf",
+    "archive_sha256": "284bd50f3719af1c4a0de733de62bb7fca4fc65e9a2cc5ff29954eebb04f27dc",
+    "platform": "linux/amd64",
+    "imported_digest": "semibrain-base/python@sha256:086100b87bbc2b8733ce2ae1b4e78821665df944c468540134bc09629d6a3431"
+  },
+  "node": {
+    "source": "docker.io/library/node:24.19.0-bookworm-slim",
+    "manifest_digest": "sha256:e5a8dee7bc1e6a215d224a7ef8206f7e77271bc3cabd5febf2beafac0674f174",
+    "index_digest": "sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df",
+    "config_digest": "sha256:622f209f6c16ba5af4d9a337cae6577d096f17174b904cfc6a5b0c81a2679c24",
+    "local_alias": "semibrain-base/node:sha-e5a8dee7bc1e6a21",
+    "archive_sha256": "d90cae5837691c8f1fe2dcc124b687a3af0734b6b4d5ab04d6b0cafd75381f91",
+    "platform": "linux/amd64",
+    "imported_digest": "semibrain-base/node@sha256:f3bc667ad626ee6b297097ac3ffe2eecc3a03c9554bb9b76c7d669366df20f4c"
+  },
+  "postgres": {
+    "source": "docker.io/library/postgres:17-bookworm",
+    "manifest_digest": "sha256:91eb910c44c7ed13f7f1a4ccadaa9ca72ef14cddc04cacb6e070e48eb44731a3",
+    "index_digest": "sha256:639ab7ceb90e13123085b741fb31ef493fba25463002f6da665352e7b534b652",
+    "config_digest": "sha256:248efd5e58cd743f2a0e0daec8ea4649e5580145ec2a12e2345bc710d4a77201",
+    "local_alias": "semibrain-base/postgres:sha-91eb910c44c7ed13",
+    "archive_sha256": "6429ce47d93d58f10f43b307cb3036270a9d325d64ddc3290bc74733582d8b6c",
+    "platform": "linux/amd64",
+    "imported_digest": "semibrain-base/postgres@sha256:b3721d9bd40bf0da8dde2ef10bb0557d5b6615cbf12f63c448acbf5279b417c2"
+  },
+  "mongo": {
+    "source": "docker.io/library/mongo:8.0",
+    "manifest_digest": "sha256:a70d9916fd916ddfdf6fd8552784c599eb26f88c59951c7bcdc50abd158e8be7",
+    "index_digest": "sha256:4968f22d0c6c10ef29952f3e807f62872ba22b3312f25803564fbfc08255efc2",
+    "config_digest": "sha256:70ca9c71813295005776e37005b0150235f84cf002588d2484d8f93747c401a8",
+    "local_alias": "semibrain-base/mongo:sha-a70d9916fd916ddf",
+    "archive_sha256": "5015b0024d40364a4372698df3e5d79dec99a69ee3f74a375c57424fdfe0fc89",
+    "platform": "linux/amd64",
+    "imported_digest": "semibrain-base/mongo@sha256:782723e702cdd37e97502aba4a099c95cf6fadf8151a2cc33f78384084705a51"
+  },
+  "nginx": {
+    "source": "docker.io/library/nginx:stable-bookworm",
+    "manifest_digest": "sha256:3b03dfd827515a07ccf4946000f0bbdd2a4fb6aca7499249fcb6b1f9726823d6",
+    "index_digest": "sha256:552e7481ca93ffccd046aa658dbbed22caefbc09c66fa7cd247cbb90b8a5c609",
+    "config_digest": "sha256:34e04bb6b4bb37d45845842374be0cd181723daffb230849b1984aaeaa96faba",
+    "local_alias": "semibrain-base/nginx:sha-3b03dfd827515a07",
+    "archive_sha256": "8a89256a8da2329507da68f2dca7a9aa099b75ba31fc7ff923b1698e53f44ec3",
+    "platform": "linux/amd64",
+    "imported_digest": "semibrain-base/nginx@sha256:d8d0f0e0e23c5b6cd842e5b472ae4cb7ac6324e0ea550481e432af26c7cb84b6"
+  }
+}

@@ -1,0 +1,57 @@
+name: semibrain-foundation
+x-backend: &backend
+  image: ${BACKEND_IMAGE:?Build and pin the backend image first}
+  restart: unless-stopped
+  read_only: true
+  tmpfs: ['/tmp:size=256m,mode=1777']
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  networks: [foundation]
+  healthcheck:
+    test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+    interval: 10s
+    timeout: 5s
+    retries: 6
+services:
+  conversation:
+    <<: *backend
+    command: [uvicorn, semibrain_conversation.main:app, --host, 0.0.0.0, --port, '8000']
+    mem_limit: 512m
+  agent:
+    <<: *backend
+    command: [uvicorn, semibrain_agent.main:app, --host, 0.0.0.0, --port, '8000']
+    mem_limit: 768m
+  business:
+    <<: *backend
+    command: [uvicorn, semibrain_business.main:app, --host, 0.0.0.0, --port, '8000']
+    env_file: ["${FOUNDATION_BUSINESS_ENV:?Private business foundation env file}"]
+    mem_limit: 1g
+    depends_on:
+      postgres: {condition: service_healthy}
+  web:
+    image: ${WEB_IMAGE:?Build and pin the web image first}
+    ports: ['127.0.0.1:8080:8080']
+    networks: [foundation]
+    depends_on:
+      conversation: {condition: service_healthy}
+      agent: {condition: service_healthy}
+      business: {condition: service_healthy}
+    mem_limit: 256m
+  postgres:
+    image: ${POSTGRES_IMAGE:?Pinned imported PostgreSQL digest}
+    environment:
+      POSTGRES_USER: foundation_owner
+      POSTGRES_DB: semibrain_foundation
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
+    volumes:
+      - ${FOUNDATION_DATA_DIR:?Private foundation volume directory}/postgres:/var/lib/postgresql/data
+      - ${FOUNDATION_PG_PASSWORD_FILE:?Private PostgreSQL password file}:/run/secrets/pg_password:ro
+    networks: [foundation]
+    mem_limit: 1g
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U foundation_owner -d semibrain_foundation']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+networks:
+  foundation: {}

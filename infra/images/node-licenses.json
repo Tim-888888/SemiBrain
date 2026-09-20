@@ -1,0 +1,411 @@
+{
+  "MIT": [
+    {
+      "name": "@babel/helper-string-parser",
+      "versions": [
+        "7.29.7"
+      ],
+      "license": "MIT",
+      "homepage": "https://babel.dev/docs/en/next/babel-helper-string-parser",
+      "description": "A utility package to parse strings"
+    },
+    {
+      "name": "@babel/helper-validator-identifier",
+      "versions": [
+        "7.29.7"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/babel/babel#readme",
+      "description": "Validate identifier/keywords name"
+    },
+    {
+      "name": "@babel/parser",
+      "versions": [
+        "7.29.9"
+      ],
+      "license": "MIT",
+      "homepage": "https://babel.dev/docs/en/next/babel-parser",
+      "description": "A JavaScript parser"
+    },
+    {
+      "name": "@babel/types",
+      "versions": [
+        "7.29.8"
+      ],
+      "license": "MIT",
+      "homepage": "https://babel.dev/docs/en/next/babel-types",
+      "description": "Babel Types is a Lodash-esque utility library for AST nodes"
+    },
+    {
+      "name": "@esbuild/win32-x64",
+      "versions": [
+        "0.28.2"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/evanw/esbuild#readme",
+      "description": "The Windows 64-bit binary for esbuild, a JavaScript bundler."
+    },
+    {
+      "name": "@jridgewell/sourcemap-codec",
+      "versions": [
+        "1.6.0"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/jridgewell/sourcemaps/tree/main/packages/sourcemap-codec",
+      "description": "Encode/decode sourcemap mappings"
+    },
+    {
+      "name": "@rolldown/pluginutils",
+      "versions": [
+        "1.0.1"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/rolldown/plugins/tree/main/packages/pluginutils#readme",
+      "description": "Plugin utilities for Rolldown"
+    },
+    {
+      "name": "@rollup/rollup-win32-x64-gnu",
+      "versions": [
+        "4.63.4"
+      ],
+      "license": "MIT",
+      "homepage": "https://rollupjs.org/",
+      "description": "Native bindings for Rollup"
+    },
+    {
+      "name": "@rollup/rollup-win32-x64-msvc",
+      "versions": [
+        "4.63.4"
+      ],
+      "license": "MIT",
+      "homepage": "https://rollupjs.org/",
+      "description": "Native bindings for Rollup"
+    },
+    {
+      "name": "@types/estree",
+      "versions": [
+        "1.0.9"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/estree",
+      "description": "TypeScript definitions for estree"
+    },
+    {
+      "name": "@vitejs/plugin-vue",
+      "versions": [
+        "6.0.9"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/vitejs/vite-plugin-vue/tree/main/packages/plugin-vue#readme",
+      "description": "The official plugin for Vue SFC support in Vite."
+    },
+    {
+      "name": "@volar/language-core",
+      "versions": [
+        "2.4.28"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/volarjs/volar.js#readme"
+    },
+    {
+      "name": "@volar/source-map",
+      "versions": [
+        "2.4.28"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/volarjs/volar.js#readme"
+    },
+    {
+      "name": "@volar/typescript",
+      "versions": [
+        "2.4.28"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/volarjs/volar.js#readme"
+    },
+    {
+      "name": "@vue/compiler-core",
+      "versions": [
+        "3.5.43"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/vuejs/core/tree/main/packages/compiler-core#readme",
+      "description": "@vue/compiler-core"
+    },
+    {
+      "name": "@vue/compiler-dom",
+      "versions": [
+        "3.5.43"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/vuejs/core/tree/main/packages/compiler-dom#readme",
+      "description": "@vue/compiler-dom"
+    },
+    {
+      "name": "@vue/compiler-sfc",
+      "versions": [
+        "3.5.43"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/vuejs/core/tree/main/packages/compiler-sfc#readme",
+      "description": "@vue/compiler-sfc"
+    },
+    {
+      "name": "@vue/compiler-ssr",
+      "versions": [
+        "3.5.43"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/vuejs/core/tree/main/packages/compiler-ssr#readme",
+      "description": "@vue/compiler-ssr"
+    },
+    {
+      "name": "@vue/language-core",
+      "versions": [
+        "3.3.11"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/vuejs/language-tools#readme"
+    },
+    {
+      "name": "@vue/reactivity",
+      "versions": [
+        "3.5.43"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/vuejs/core/tree/main/packages/reactivity#readme",
+      "description": "@vue/reactivity"
+    },
+    {
+      "name": "@vue/runtime-core",
+      "versions": [
+        "3.5.43"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/vuejs/core/tree/main/packages/runtime-core#readme",
+      "description": "@vue/runtime-core"
+    },
+    {
+      "name": "@vue/runtime-dom",
+      "versions": [
+        "3.5.43"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/vuejs/core/tree/main/packages/runtime-dom#readme",
+      "description": "@vue/runtime-dom"
+    },
+    {
+      "name": "@vue/server-renderer",
+      "versions": [
+        "3.5.43"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/vuejs/core/tree/main/packages/server-renderer#readme",
+      "description": "@vue/server-renderer"
+    },
+    {
+      "name": "@vue/shared",
+      "versions": [
+        "3.5.43"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/vuejs/core/tree/main/packages/shared#readme",
+      "description": "internal utils shared across @vue packages"
+    },
+    {
+      "name": "alien-signals",
+      "versions": [
+        "3.2.1"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/stackblitz/alien-signals#readme",
+      "description": "The lightest signal library."
+    },
+    {
+      "name": "csstype",
+      "versions": [
+        "3.2.3"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/frenic/csstype#readme",
+      "description": "Strict TypeScript and Flow types for style based on MDN data"
+    },
+    {
+      "name": "esbuild",
+      "versions": [
+        "0.28.2"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/evanw/esbuild#readme",
+      "description": "An extremely fast JavaScript and CSS bundler and minifier."
+    },
+    {
+      "name": "estree-walker",
+      "versions": [
+        "2.0.2"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/Rich-Harris/estree-walker#readme",
+      "description": "Traverse an ESTree-compliant AST"
+    },
+    {
+      "name": "fdir",
+      "versions": [
+        "6.5.0"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/thecodrr/fdir#readme",
+      "description": "The fastest directory crawler & globbing alternative to glob, fast-glob, & tiny-glob. Crawls 1m files in < 1s"
+    },
+    {
+      "name": "magic-string",
+      "versions": [
+        "0.30.21"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/Rich-Harris/magic-string#readme",
+      "description": "Modify strings, generate sourcemaps"
+    },
+    {
+      "name": "muggle-string",
+      "versions": [
+        "0.4.1"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/johnsoncodehk/muggle-string#readme"
+    },
+    {
+      "name": "nanoid",
+      "versions": [
+        "3.3.19"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/ai/nanoid#readme",
+      "description": "A tiny (116 bytes), secure URL-friendly unique string ID generator"
+    },
+    {
+      "name": "path-browserify",
+      "versions": [
+        "1.0.1"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/browserify/path-browserify",
+      "description": "the path module from node core for browsers"
+    },
+    {
+      "name": "picomatch",
+      "versions": [
+        "4.0.7"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/micromatch/picomatch",
+      "description": "Blazing fast and accurate glob matcher written in JavaScript, with no dependencies and full support for standard and extended Bash glob features, including braces, extglobs, POSIX brackets, and regular expressions."
+    },
+    {
+      "name": "postcss",
+      "versions": [
+        "8.5.28"
+      ],
+      "license": "MIT",
+      "homepage": "https://postcss.org/",
+      "description": "Tool for transforming styles with JS plugins"
+    },
+    {
+      "name": "rollup",
+      "versions": [
+        "4.63.4"
+      ],
+      "license": "MIT",
+      "homepage": "https://rollupjs.org/",
+      "description": "Next-generation ES module bundler"
+    },
+    {
+      "name": "tinyglobby",
+      "versions": [
+        "0.2.17"
+      ],
+      "license": "MIT",
+      "homepage": "https://superchupu.dev/tinyglobby",
+      "description": "A fast and minimal alternative to globby and fast-glob"
+    },
+    {
+      "name": "vite",
+      "versions": [
+        "7.3.6"
+      ],
+      "license": "MIT",
+      "homepage": "https://vite.dev",
+      "description": "Native-ESM powered web dev build tool"
+    },
+    {
+      "name": "vscode-uri",
+      "versions": [
+        "3.2.0"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/microsoft/vscode-uri#readme",
+      "description": "The URI implementation that is used by VS Code and its extensions"
+    },
+    {
+      "name": "vue",
+      "versions": [
+        "3.5.43"
+      ],
+      "license": "MIT",
+      "homepage": "https://vuejs.org/",
+      "description": "The progressive JavaScript framework for building modern web UI."
+    },
+    {
+      "name": "vue-tsc",
+      "versions": [
+        "3.3.11"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/vuejs/language-tools#readme"
+    }
+  ],
+  "BSD-2-Clause": [
+    {
+      "name": "entities",
+      "versions": [
+        "7.0.1"
+      ],
+      "license": "BSD-2-Clause",
+      "homepage": "https://github.com/fb55/entities#readme",
+      "description": "Encode & decode XML and HTML entities with ease & speed"
+    }
+  ],
+  "ISC": [
+    {
+      "name": "picocolors",
+      "versions": [
+        "1.1.1"
+      ],
+      "license": "ISC",
+      "homepage": "https://github.com/alexeyraspopov/picocolors#readme",
+      "description": "The tiniest and the fastest library for terminal output formatting with ANSI colors"
+    }
+  ],
+  "BSD-3-Clause": [
+    {
+      "name": "source-map-js",
+      "versions": [
+        "1.2.1"
+      ],
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/7rulnik/source-map-js",
+      "description": "Generates and consumes source maps"
+    }
+  ],
+  "Apache-2.0": [
+    {
+      "name": "typescript",
+      "versions": [
+        "5.9.3"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://www.typescriptlang.org/",
+      "description": "TypeScript is a language for application scale JavaScript development"
+    }
+  ]
+}
