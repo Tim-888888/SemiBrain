@@ -264,6 +264,17 @@ def test_prompt_layers_preserve_roles_and_current_metadata_only():
     assert "SOURCE_OVERRIDE" not in assembler.system()
     assert assembler.inputs()[0]["role"] == "assistant"
     assert "RAW_PRIVATE_DOCUMENT" not in json.dumps(assembler.inputs())
+    control_messages = assembler.inputs("understanding")
+    assert all(item["role"] == "user" for item in control_messages)
+    transcript = json.loads(control_messages[0]["content"].split("\n", 1)[1])
+    assert transcript["history"] == context["history"]
+    assert transcript["latest_question"] == context["input"]["question"]
+    assert "RAW_PRIVATE_DOCUMENT" not in json.dumps(control_messages)
+    assert assembler.preview("understanding")["messages"] == control_messages
+    assert "不输出答案 JSON" in assembler.system("investigator")
+    for role in ("understanding", "reviewer"):
+        assert "不输出答案 JSON" not in assembler.system(role)
+        assert "UNTRUSTED_OVERRIDE" not in assembler.system(role)
     assert redact_preview({"password": "one", "text": "Bearer abc.def_ghi"}) == {
         "password": "[redacted]",
         "text": "[redacted]",

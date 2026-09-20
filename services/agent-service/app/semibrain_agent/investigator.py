@@ -240,7 +240,7 @@ class Investigator:
 
     def understand(self, state):
         self.notify({"progress": "正在核对目标、资料范围和查询条件"})
-        inputs = self.prompts.inputs()
+        inputs = self.prompts.inputs("understanding")
         intent = None
         for retry in range(2):
             turn, _ = self.model_call(

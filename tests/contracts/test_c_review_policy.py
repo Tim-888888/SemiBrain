@@ -70,7 +70,7 @@ def test_review_publication_gate(draft, verdict, evidence, expected_outcome, pre
 def test_malformed_control_is_not_reported_as_missing_user_information():
     agent = Investigator.__new__(Investigator)
     agent.notify = lambda *_: None
-    agent.prompts = SimpleNamespace(inputs=lambda: [{"role": "user", "content": "Known scope"}])
+    agent.prompts = SimpleNamespace(inputs=lambda role: [{"role": "user", "content": "Known scope"}])
     calls = []
 
     def malformed(*_, **kwargs):
