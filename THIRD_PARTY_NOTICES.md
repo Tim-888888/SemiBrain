@@ -20,3 +20,8 @@ generated inventory intentionally retains the wheel's missing-metadata finding.
 Container components keep their own licenses, including the
 [MongoDB community server license](https://github.com/mongodb/mongo/blob/master/LICENSE-Community.txt).
 The foundation deployment does not relicense or redistribute base images in this Git repository.
+
+The Markdown renderer uses the MIT-licensed [KaTeX](https://github.com/KaTeX/KaTeX)
+and [markdown-it-texmath](https://github.com/goessner/markdown-it-texmath) packages.
+Their code is installed from the locked packages; their bundled notices and KaTeX
+font licenses must accompany redistributed application builds.

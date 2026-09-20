@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import MarkdownIt from 'markdown-it'
 import DOMPurify from 'dompurify'
+import 'katex/dist/katex.min.css'
+import { renderMarkdown } from './markdown.mjs'
 import type { Citation } from './api'
 const props = defineProps<{ text: string; citations?: Citation[]; streaming?: boolean }>()
-const md = new MarkdownIt({ html: false, linkify: false, breaks: false })
-md.renderer.rules.image = (tokens, idx) => `<span class="image-label">[图片：${md.utils.escapeHtml(tokens[idx].content)}]</span>`
-const html = computed(() => DOMPurify.sanitize(md.render(props.text || ''), {
-  USE_PROFILES: { html: true }, FORBID_TAGS: ['img', 'iframe', 'form', 'input', 'style'],
+const html = computed(() => DOMPurify.sanitize(renderMarkdown(props.text), {
+  USE_PROFILES: { html: true, mathMl: true }, FORBID_TAGS: ['img', 'iframe', 'form', 'input', 'style'],
 }))
 async function copy() { await navigator.clipboard.writeText(props.text) }
 </script>

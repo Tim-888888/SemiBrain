@@ -4,6 +4,7 @@ import json
 import os
 import re
 import time
+from urllib.parse import unquote
 from uuid import UUID
 
 import httpx
@@ -54,6 +55,23 @@ def outgoing_query(query, protected=()):
     ):
         raise WebError("WEB_QUERY_PRIVATE_VALUE")
     return query.strip()
+
+
+def outgoing_url(url, protected=()):
+    decoded = url
+    for _ in range(3):
+        decoded = unquote(decoded)
+    if re.search(
+        r"[?&;](?:password|secret|token|api[_-]?key|access[_-]?key|authorization|cookie)\s*=|[\w.+-]+@[\w.-]+",
+        decoded,
+        re.I,
+    ):
+        raise WebError("WEB_URL_SENSITIVE")
+    if any(
+        len(str(value)) >= 3 and str(value).casefold() in decoded.casefold() for value in protected
+    ):
+        raise WebError("WEB_URL_PRIVATE_VALUE")
+    return url
 
 
 def authorization(job):
@@ -226,6 +244,8 @@ def fetch(form, job):
     from semibrain_business.knowledge import store_asset
 
     authorization(job)
+    protected = protected_values(job)
+    outgoing_url(form.url, protected)
     quota(job, "pages", 5)
     last_checked = [0.0]
 
@@ -234,7 +254,7 @@ def fetch(form, job):
             authorization(job)
             last_checked[0] = time.monotonic()
 
-    page = fetch_static(form.url, guard=guard)
+    page = fetch_static(form.url, guard=guard, url_guard=lambda url: outgoing_url(url, protected))
     authorization(job)
     content_hash = digest(page["text"])
     snapshot_id = job["_id"]

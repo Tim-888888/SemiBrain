@@ -9,7 +9,7 @@ from semibrain_business.safe_fetch import (
     validate_url,
 )
 from semibrain_business.statistics import StatisticsInput, compute
-from semibrain_business.web_tools import outgoing_query
+from semibrain_business.web_tools import outgoing_query, outgoing_url
 from semibrain_common.telemetry import safe_metadata
 
 
@@ -93,6 +93,41 @@ def test_outbound_queries_reject_authorized_but_private_business_values():
     with pytest.raises(WebError, match="PRIVATE"):
         outgoing_query("ConfidentialProduct reliability", {"ConfidentialProduct"})
     assert outgoing_query("NIST semiconductor process capability")
+
+
+def test_url_parameters_and_encoded_private_values_are_checked():
+    for url in ["https://example.com/?token=credential", "https://example.com/x?email=a%40b.com"]:
+        with pytest.raises(WebError, match="SENSITIVE"):
+            outgoing_url(url)
+    with pytest.raises(WebError, match="PRIVATE"):
+        outgoing_url("https://example.com/report/%2542atch_Secret", {"Batch_Secret"})
+    assert outgoing_url("https://example.com/page?chapter=3")
+
+
+def test_dns_wait_is_bounded_and_cancellable(monkeypatch):
+    import threading
+    import time
+
+    release = threading.Event()
+
+    def lookup(*args, **kwargs):
+        release.wait(2)
+        return [(2, 1, 6, "", ("8.8.8.8", 80))]
+
+    monkeypatch.setattr("socket.getaddrinfo", lookup)
+    started = time.monotonic()
+    try:
+        with pytest.raises(WebError, match="DNS_TIMEOUT"):
+            resolve_public("bounded.example", 80, deadline=started + 0.05)
+        assert time.monotonic() - started < 0.5
+
+        def cancelled():
+            raise WebError("CANCELLED")
+
+        with pytest.raises(WebError, match="CANCELLED"):
+            resolve_public("bounded.example", 80, guard=cancelled)
+    finally:
+        release.set()
 
 
 def form(operation, **kwargs):

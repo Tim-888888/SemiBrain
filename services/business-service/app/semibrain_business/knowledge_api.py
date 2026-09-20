@@ -463,7 +463,8 @@ def retrieve(form: SearchInput, request: Request):
 
 class LineageInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    refs: list[str] = Field(max_length=60)
+    # A run may hold 50 evidence items with both a query and a web snapshot reference.
+    refs: list[str] = Field(max_length=120)
 
 
 @router.post("/internal/v1/lineage/check")

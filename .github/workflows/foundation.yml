@@ -21,4 +21,5 @@ jobs:
       - run: uv run --all-packages python scripts/verify/engineering.py
       - run: npm install -g pnpm@11.19.0
       - run: pnpm install --frozen-lockfile
+      - run: node --test packages/ui/tests/*.test.mjs
       - run: pnpm build

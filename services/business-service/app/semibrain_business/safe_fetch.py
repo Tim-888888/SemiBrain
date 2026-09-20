@@ -6,6 +6,8 @@ import re
 import socket
 import ssl
 import time
+from queue import Empty, Queue
+from threading import BoundedSemaphore, Thread
 from urllib.parse import quote, urljoin, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup
@@ -13,6 +15,9 @@ from bs4 import BeautifulSoup
 
 class WebError(ValueError):
     pass
+
+
+DNS_SLOTS = BoundedSemaphore(4)
 
 
 def public_address(value):
@@ -55,11 +60,35 @@ def validate_url(url):
     return urlunsplit((parts.scheme, netloc, path, query, "")), host, port
 
 
-def resolve_public(host, port):
-    try:
-        values = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-    except OSError:
-        raise WebError("WEB_DNS_FAILED") from None
+def resolve_public(host, port, *, deadline=None, guard=lambda: None):
+    deadline = min(deadline or time.monotonic() + 5, time.monotonic() + 5)
+    if not DNS_SLOTS.acquire(blocking=False):
+        raise WebError("WEB_DNS_BUSY")
+    result = Queue(maxsize=1)
+
+    def lookup():
+        try:
+            result.put(socket.getaddrinfo(host, port, type=socket.SOCK_STREAM))
+        except OSError:
+            result.put(None)
+        finally:
+            DNS_SLOTS.release()
+
+    # OS DNS cannot be forcibly cancelled. Bound abandoned lookups process-wide,
+    # and stop waiting on cancellation/deadline without creating unlimited threads.
+    Thread(target=lookup, daemon=True).start()
+    while True:
+        guard()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise WebError("WEB_DNS_TIMEOUT")
+        try:
+            values = result.get(timeout=min(0.1, remaining))
+            break
+        except Empty:
+            continue
+    if values is None:
+        raise WebError("WEB_DNS_FAILED")
     if not values or any(not public_address(value[4][0]) for value in values):
         raise WebError("WEB_ADDRESS_DENIED")
     return values
@@ -88,12 +117,15 @@ def parse_page(content, media_type, charset="utf-8"):
     return {"title": title, "text": body[:200000], "truncated": len(body) > 200000}
 
 
-def fetch_static(url, *, guard=lambda: None, timeout=18, max_bytes=2_000_000):
+def fetch_static(
+    url, *, guard=lambda: None, url_guard=lambda url: None, timeout=18, max_bytes=2_000_000
+):
     deadline, redirects = time.monotonic() + timeout, []
     for _ in range(4):
         guard()
         url, host, port = validate_url(url)
-        addresses = resolve_public(host, port)
+        url_guard(url)
+        addresses = resolve_public(host, port, deadline=deadline, guard=guard)
         guard()
         remaining = deadline - time.monotonic()
         if remaining <= 0:

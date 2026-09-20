@@ -84,6 +84,44 @@ def test_web_policy_cannot_be_enabled_by_model_or_source():
         RoutePolicy().choose({"mode": "quick_qa", "allow_web": True}, intent, catalog)
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        ["Batch_A", "batch-a", "0018"],
+        25,
+        0.95,
+        False,
+        {"start": "2026-01-01", "end": "2026-01-03", "timezone": "Asia/Shanghai"},
+    ],
+)
+def test_intent_slots_preserve_typed_user_values(value):
+    intent = Intent.model_validate(
+        {
+            "action": "investigate",
+            "query": "scope probe",
+            "clarification": None,
+            "slots": [{"name": "scope", "value": value, "source": "current_user"}],
+        }
+    )
+    assert intent.slots[0].value == value
+    assert type(intent.slots[0].value) is type(value)
+    assert intent.clarification == ""
+
+
+@pytest.mark.parametrize(
+    "value", [None, float("nan"), ["x"] * 65, "x" * 4001, [[[[[["too deep"]]]]]]]
+)
+def test_intent_slots_reject_unknown_unbounded_or_nonfinite_values(value):
+    with pytest.raises(ValueError):
+        Intent.model_validate(
+            {
+                "action": "investigate",
+                "query": "scope probe",
+                "slots": [{"name": "scope", "value": value, "source": "current_user"}],
+            }
+        )
+
+
 def test_prompt_layers_preserve_roles_and_current_metadata_only():
     context = {
         "input": {
@@ -107,6 +145,8 @@ def test_prompt_layers_preserve_roles_and_current_metadata_only():
         "password": "[redacted]",
         "text": "[redacted]",
     }
+    for value in ["password: private-value", 'api_key="private-value"', "密码：private-value"]:
+        assert "private-value" not in redact_preview(value)
 
 
 def test_compaction_keeps_call_pairs_and_retrievable_evidence():

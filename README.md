@@ -30,6 +30,10 @@ Each service owns its database and accesses other services through authenticated
 Final answers use ordinary Markdown. Typed tool and event contracts do not impose a
 fixed report schema on user-facing answers.
 
+The shared Markdown renderer supports bracket and dollar math through KaTeX. It
+disables trusted TeX commands, bounds macros and expression size, and sanitizes the
+rendered HTML/MathML. Copying preserves the original Markdown, including formulas.
+
 Investigation runs default to 12 reasoning rounds, 20 tool calls, 40,000 tokens and
 180 seconds. Unknown provider usage remains reserved and visible as unreconciled;
 unknown pricing is never reported as zero. Workers restore only the explicitly committed
@@ -58,6 +62,7 @@ uv sync --frozen --all-packages
 pnpm install --frozen-lockfile
 uv run --all-packages pytest -q
 uv run --all-packages ruff check packages services tests scripts
+node --test packages/ui/tests/*.test.mjs
 pnpm build
 uv run --all-packages python scripts/verify/export_contracts.py
 uv run --all-packages python scripts/verify/engineering.py
@@ -177,8 +182,9 @@ remain later-stage work. A parser subprocess is not the D-stage model code sandb
 even when a newer orphan exists. It does not implement durable leases or recovery.
 
 The sealed evaluation generator, oracle and evaluator run offline. Generate holdouts
-outside the repository, never mount them into running services, and leave them unused
-until the appropriate acceptance stage. Evaluation envelopes may contain measurement
+outside the repository; send only approved inputs and synthetic source tables to the
+runtime during acceptance. Never mount oracle files, expected answers or evaluation
+verdicts into running services. Evaluation envelopes may contain measurement
 metadata; the answer body always remains unrestricted Markdown.
 
 ## Provenance

@@ -1,1 +1,1 @@
-{"name":"@semibrain/ui","version":"0.1.0","private":true,"type":"module","exports":{".":"./src/Workspace.vue"},"peerDependencies":{"vue":"^3.5.0"},"dependencies":{"markdown-it":"^14.1.0","dompurify":"^3.2.6"},"devDependencies":{"@types/markdown-it":"^14.1.2"}}
+{"name":"@semibrain/ui","version":"0.1.0","private":true,"type":"module","exports":{".":"./src/Workspace.vue"},"peerDependencies":{"vue":"^3.5.0"},"dependencies":{"dompurify":"^3.2.6","katex":"0.16.45","markdown-it":"^14.1.0","markdown-it-texmath":"1.0.0"},"devDependencies":{"@types/markdown-it":"^14.1.2"}}
