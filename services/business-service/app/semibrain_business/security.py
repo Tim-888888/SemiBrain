@@ -75,5 +75,11 @@ def lineage_check(refs, claim):
             job = db().tool_jobs.find_one({"_id": identity, "subject_id": claim["subject_id"]})
             if not job or job.get("result_hash") != version:
                 failure("EVIDENCE_UNAVAILABLE", 403)
+        elif kind == "web":
+            snapshot = db().web_snapshots.find_one(
+                {"_id": identity, "owner_id": claim["subject_id"], "content_hash": version}
+            )
+            if not snapshot:
+                failure("WEB_EVIDENCE_UNAVAILABLE", 403)
         else:
             failure("UNKNOWN_LINEAGE", 403)

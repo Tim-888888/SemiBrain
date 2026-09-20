@@ -1,6 +1,7 @@
 from semibrain_common.runtime import consume, relay
 from semibrain_common.worker import worker_app
 
+from semibrain_agent.control import reconcile_cancellations
 from semibrain_agent.runs import accept, db, execute_one
 from semibrain_agent.storage import initialize
 
@@ -18,6 +19,7 @@ def tick():
     initialize()
     consume(db(), "stream:runs", "agent-run-requests", command)
     relay(db())
+    reconcile_cancellations()
     work.delay()
 
 

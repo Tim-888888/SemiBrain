@@ -167,6 +167,43 @@
         }
       }
     },
+    "/internal/v1/tool-jobs/{job_id}/cancel": {
+      "post": {
+        "summary": "Cancel",
+        "operationId": "cancel_internal_v1_tool_jobs__job_id__cancel_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/v1/knowledge/documents": {
       "get": {
         "summary": "Documents",
@@ -373,6 +410,42 @@
               }
             }
           }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/knowledge/read": {
+      "post": {
+        "summary": "Read Document",
+        "operationId": "read_document_internal_v1_knowledge_read_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReadDocumentInput"
+              }
+            }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -639,6 +712,41 @@
           "version"
         ],
         "title": "PublishInput"
+      },
+      "ReadDocumentInput": {
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Document Id"
+          },
+          "version": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Version"
+          },
+          "offset": {
+            "type": "integer",
+            "maximum": 1000000.0,
+            "minimum": 0.0,
+            "title": "Offset",
+            "default": 0
+          },
+          "length": {
+            "type": "integer",
+            "maximum": 8000.0,
+            "minimum": 500.0,
+            "title": "Length",
+            "default": 6000
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "document_id",
+          "version"
+        ],
+        "title": "ReadDocumentInput"
       },
       "SearchInput": {
         "properties": {

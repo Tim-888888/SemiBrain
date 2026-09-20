@@ -87,6 +87,18 @@ def snapshot(run_id: str, request: Request):
         "progress": row["progress"],
         "error": row.get("error"),
     }
+    for key in (
+        "strategy",
+        "model_origin",
+        "scope_summary",
+        "round",
+        "active_tool",
+        "budget",
+        "stop_code",
+        "web_disabled",
+    ):
+        if key in row:
+            result[key] = row[key]
     if row.get("report_id"):
         report = db().reports.find_one({"_id": row["report_id"]})
         result.update(
@@ -98,6 +110,22 @@ def snapshot(run_id: str, request: Request):
             }
         )
     return result
+
+
+@router.get("/internal/v1/runs/{run_id}/prompt-preview")
+def prompt_preview(run_id: str, request: Request):
+    internal_identity(request, {"conversation"})
+    rows = list(
+        db().model_turns.find({"run_id": run_id}, {"prompt_preview": 1, "phase": 1}).limit(20)
+    )
+    return {
+        "run_id": run_id,
+        "read_only": True,
+        "items": [
+            {"step_id": row["_id"], "phase": row["phase"], "assembled": row.get("prompt_preview")}
+            for row in rows
+        ],
+    }
 
 
 def update(run, fence, values, event="task.started"):
@@ -153,6 +181,16 @@ def execute_one():
     try:
         context = call("conversation", "GET", "/internal/v1/runs/" + run["_id"] + "/context").json()
         client = BusinessClient(run["_id"], context["task_id"], context["input"]["input_revision"])
+        if context["input"]["mode"] == "investigation":
+            from semibrain_agent.investigator import Investigator
+
+            Investigator(
+                run,
+                fence,
+                context,
+                lambda values, event="task.started": update(run, fence, values, event),
+            ).execute()
+            return True
         model = ModelAdapter()
         catalog = client.request("GET", "/internal/v1/tools")
         documents = client.request("GET", "/internal/v1/knowledge/documents")["items"]
@@ -387,6 +425,9 @@ def execute_one():
 
         transaction(finish)
     except Exception as exc:
+        from semibrain_agent.control import acknowledge_stopped
+
+        acknowledge_stopped(run["_id"], fence)
         error_kind = type(exc).__name__
 
         def failed(session):

@@ -1,12 +1,14 @@
-"""Text-only provider adapter. Final answers never use JSON mode or a report schema."""
+"""Quick-answer facade over the shared native provider transport; Markdown stays unrestricted."""
 
 import json
-import os
+import threading
 import time
+from queue import Queue
 from typing import Literal
 
-import httpx
 from pydantic import BaseModel, ConfigDict, Field
+
+from semibrain_agent.provider import ModelError, ProviderAdapter, profile_for
 
 
 class Understanding(BaseModel):
@@ -29,49 +31,47 @@ class PlanCheck(BaseModel):
 
 class ModelAdapter:
     def __init__(self):
-        self.base = os.environ["SEMIBRAIN_LLM_BASE_URL"].rstrip("/")
-        self.key = os.environ["SEMIBRAIN_LLM_API_KEY"]
-        self.model = os.getenv("SEMIBRAIN_LLM_DEFAULT_MODEL", "gpt-5.6-luna")
+        self.profile = profile_for("investigator")
+        self.model = self.profile.model
         self.usage = None
         self.deadline = time.monotonic() + 210
 
     def stream(self, system, user, *, max_tokens=4096):
-        start = time.monotonic()
-        payload = {
-            "model": self.model,
-            "input": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            "max_output_tokens": max_tokens,
-            "reasoning": {"effort": "low"},
-            "store": False,
-            "stream": True,
-        }
-        done = False
-        with httpx.stream(
-            "POST",
-            self.base + "/responses",
-            headers={"Authorization": "Bearer " + self.key},
-            json=payload,
-            timeout=httpx.Timeout(60, connect=10),
-        ) as response:
-            response.raise_for_status()
-            for line in response.iter_lines():
-                if time.monotonic() - start > 120 or time.monotonic() > self.deadline:
-                    raise TimeoutError("MODEL_DEADLINE")
-                if not line.startswith("data:"):
-                    continue
-                raw = line[5:].strip()
-                if raw == "[DONE]":
-                    break
-                event = json.loads(raw)
-                if event.get("type") == "response.output_text.delta":
-                    yield event.get("delta", "")
-                elif event.get("type") == "response.completed":
-                    done = True
-                    self.usage = event.get("response", {}).get("usage")
-                elif event.get("type") in {"response.failed", "response.incomplete", "error"}:
-                    raise RuntimeError("MODEL_STREAM_FAILED")
-        if not done:
-            raise RuntimeError("MODEL_STREAM_INCOMPLETE")
+        queue = Queue()
+        stopped = threading.Event()
+
+        def guard():
+            if stopped.is_set():
+                raise ModelError("MODEL_CONSUMER_STOPPED")
+
+        def produce():
+            try:
+                adapter = ProviderAdapter(self.profile, deadline=self.deadline, guard=guard)
+                turn = adapter.turn(
+                    system,
+                    [{"role": "user", "content": user}],
+                    max_tokens=max_tokens,
+                    on_text=lambda text: queue.put(("text", text)),
+                )
+                self.usage = turn.usage
+            except Exception as exc:
+                queue.put(("error", exc))
+            finally:
+                queue.put(("done", None))
+
+        thread = threading.Thread(target=produce, daemon=True)
+        thread.start()
+        try:
+            while True:
+                kind, value = queue.get(timeout=max(0.1, self.deadline - time.monotonic()))
+                if kind == "done":
+                    return
+                if kind == "error":
+                    raise value
+                yield value
+        finally:
+            stopped.set()
+            thread.join(timeout=2)
 
     def understand(self, question, history, tools, attachments, sources=None):
         system = """你负责一次快速问答的通用理解。仅输出一个 JSON 控制对象（不是最终回答）：

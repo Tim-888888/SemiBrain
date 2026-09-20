@@ -5,8 +5,12 @@ Stage B adds account registration and login, a knowledge workspace, asynchronous
 PDF/DOCX/Markdown/CSV ingestion, governed hybrid retrieval, read-only business tools,
 streamed Markdown answers and persistent conversation history. The three Python
 services and two Vue applications run against real storage and configured model APIs.
-Single-agent investigations, multi-agent coordination, Web Search, sandbox execution
-and advanced administration remain later-stage work. Their UI entry is disabled.
+Stage C adds bounded single-agent investigations with native tool calling, versioned
+runtime prompts, explicit fenced MongoDBSaver checkpoints, shared budgets, cancellation,
+fixed statistics over authorized results, optional public Web Search and static-page
+snapshots. A reviewer checks investigation drafts before Markdown publication. The
+current implementation is undergoing its first frozen baseline acceptance run.
+Multi-agent coordination, sandbox execution and advanced administration remain later-stage work.
 
 ## Repository layout
 
@@ -25,6 +29,20 @@ and advanced administration remain later-stage work. Their UI entry is disabled.
 Each service owns its database and accesses other services through authenticated APIs.
 Final answers use ordinary Markdown. Typed tool and event contracts do not impose a
 fixed report schema on user-facing answers.
+
+Investigation runs default to 12 reasoning rounds, 20 tool calls, 40,000 tokens and
+180 seconds. Unknown provider usage remains reserved and visible as unreconciled;
+unknown pricing is never reported as zero. Workers restore only the explicitly committed
+checkpoint ID, reconcile immutable model/tool observations, and reject stale writes.
+The service coordinator commits checkpoints around LangGraph node transitions rather
+than using an unfenced latest-checkpoint lookup. Restarting does not reset the budget.
+
+Web access is off by default and can be disabled during a run. Search results are URLs,
+not fabricated source excerpts. The static fetcher validates DNS, the connected peer,
+and every redirect, accepts no credentials, and stores private immutable snapshots.
+It does not execute JavaScript, log into websites, or publish pages into the knowledge base.
+Langfuse uses the configured regional endpoint and exports allowlisted identifiers,
+status and usage only; business persistence does not depend on the telemetry service.
 
 `.env.example` contains configuration names and public defaults only. Actual credentials,
 source documents, local product and development records, acceptance evidence, and data
