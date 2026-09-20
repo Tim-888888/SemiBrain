@@ -161,9 +161,14 @@ for _name, (_schema, _function, _description) in WEB_TOOLS.items():
 @router.get("/internal/v1/tools")
 def catalog(request: Request):
     claim = authorize_request(request, "business.catalog")
+    business_authorized = "demo" in claim["resource_ids"]
     return {
-        "version": "p1-tools-v1",
+        "version": "p1-tools-v2",
         "data_origin": "synthetic",
+        "business_access": {
+            "resource_authorized": business_authorized,
+            "reason": None if business_authorized else "RESOURCE_NOT_GRANTED",
+        },
         "tools": [
             {
                 "name": name,
@@ -173,7 +178,7 @@ def catalog(request: Request):
             for name, value in REGISTRY.items()
             if name in claim["allowed_ops"]
             and (not name.startswith("web.") or configured())
-            and (not name.startswith("business.") or "demo" in claim["resource_ids"])
+            and (not name.startswith("business.") or business_authorized)
         ],
         "web_available": configured(),
         "metric_version": w.METRIC_VERSION,
@@ -181,7 +186,9 @@ def catalog(request: Request):
             name: list(table.columns.keys())
             for name, table in w.metadata.tables.items()
             if name in {"lots", "test_results", "process_events", "defect_records"}
-        },
+        }
+        if business_authorized
+        else {},
     }
 
 
