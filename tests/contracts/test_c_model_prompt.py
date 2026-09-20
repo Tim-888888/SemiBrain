@@ -4,6 +4,7 @@ import pytest
 from semibrain_agent.prompts import (
     Intent,
     PromptAssembler,
+    Review,
     RoutePolicy,
     compact_messages,
     redact_preview,
@@ -72,6 +73,12 @@ def test_profiles_expose_no_credentials_and_reject_unknown_role(monkeypatch):
     assert not profile_for("vision").tool_calling
     with pytest.raises(ModelError, match="UNKNOWN_MODEL_ROLE"):
         profile_for("unregistered")
+
+
+def test_review_keeps_evidence_requirement_fail_closed_for_older_models():
+    assert Review(approved=True).evidence_required is True
+    limitation = Review(approved=True, evidence_required=False, missing_goals=["query unavailable"])
+    assert limitation.missing_goals and not limitation.evidence_required
 
 
 def test_web_policy_cannot_be_enabled_by_model_or_source():

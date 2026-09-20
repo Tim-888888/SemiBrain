@@ -9,6 +9,7 @@ from typing import TypedDict
 from uuid import NAMESPACE_URL, uuid5
 
 from langgraph.graph import END, START, StateGraph
+from pydantic import ValidationError
 from semibrain_common.runtime import call as service_call
 from semibrain_common.runtime import canonical, digest, now, publish, transaction, uid
 from semibrain_common.telemetry import Observation
@@ -244,20 +245,26 @@ class Investigator:
             try:
                 intent = parse_control(turn.text, Intent)
                 break
-            except ValueError:
+            except ValueError as exc:
+                errors = (
+                    [
+                        {"field": list(error["loc"]), "type": error["type"]}
+                        for error in exc.errors(include_input=False, include_url=False)[:6]
+                    ]
+                    if isinstance(exc, ValidationError)
+                    else [{"type": "invalid_json"}]
+                )
                 inputs = [
                     *inputs,
                     {
                         "role": "user",
-                        "content": "上次控制对象无法校验。请按指定字段返回一次，不添加字段，也不猜测缺失条件。",
+                        "content": "上次控制对象无法校验。请按指定字段返回一次，不添加字段，也不猜测缺失条件。校验字段与类型："
+                        + canonical(errors),
                     },
                 ]
         if intent is None:
-            intent = Intent(
-                action="clarify",
-                query=self.context["input"]["question"][:8000],
-                clarification="请补充本次调查的对象、希望核对的资料或时间范围。",
-            )
+            # A malformed control response is our failure, not missing user information.
+            raise ModelError("INTENT_CONTROL_INVALID")
         RoutePolicy().choose(self.context["input"], intent, self.catalog["tools"])
         state["intent"] = intent.model_dump()
         self.notify(
@@ -483,7 +490,7 @@ class Investigator:
         valid = {record["marker"] for record in evidence}
         if set(re.findall(r"\[(\d+)\]", state["draft"])) - valid:
             review = Review(approved=False, issues=[*review.issues, "引用编号未登记"])
-        if state["intent"]["action"] == "investigate" and not evidence:
+        if state["intent"]["action"] == "investigate" and not evidence and review.evidence_required:
             review = Review(
                 approved=False,
                 issues=[*review.issues, "未取得可引用证据，不得给出有依据的调查结论"],
@@ -549,7 +556,11 @@ class Investigator:
                 "draft": self.partial_body(
                     "执行预算已用完"
                     if isinstance(exc, BudgetExhausted)
-                    else "模型服务暂时未完成响应",
+                    else (
+                        "本轮任务理解结果未通过校验，请重试"
+                        if str(exc) == "INTENT_CONTROL_INVALID"
+                        else "模型服务暂时未完成响应"
+                    ),
                     evidence,
                 ),
             }
