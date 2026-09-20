@@ -5,3 +5,5 @@
 .run-details{margin:8px 0 18px 40px;padding:10px 14px;border:1px solid var(--border);border-radius:8px;background:#f8fbf9;color:#667c72;font-size:12px}.run-details summary{cursor:pointer}.scope-summary{margin-top:12px}.scope-summary ul{padding-left:20px}.web-toggle{white-space:nowrap;font-size:12px}.composer-toolbar{flex-wrap:wrap}@media(max-width:650px){.run-details{margin-left:0}}
 
 .prompt-preview{white-space:pre-wrap;overflow:auto;max-height:55vh;font-size:12px;overflow-wrap:anywhere}
+
+.markdown .katex-display{overflow-x:auto;overflow-y:hidden;padding:6px 0}.markdown .katex{font-size:1.08em}.markdown .katex-error{white-space:pre-wrap;overflow-wrap:anywhere}
