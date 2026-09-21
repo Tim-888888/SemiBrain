@@ -229,6 +229,7 @@ class Investigator:
                     "phase": state["phase"],
                     "profile": profile.snapshot(),
                     "token_basis": basis,
+                    "created_at": now(),
                     "prompt_preview": redact_preview(
                         {
                             "system": system,
