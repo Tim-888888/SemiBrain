@@ -4,7 +4,7 @@ import time
 from datetime import timedelta
 
 from pymongo import ReturnDocument
-from semibrain_common.runtime import canonical, database, now, transaction, uid
+from semibrain_common.runtime import canonical, database, digest, now, transaction, uid
 
 
 class RunStopped(RuntimeError):
@@ -27,12 +27,39 @@ DEFAULT_LIMITS = {
 }
 
 
-def estimate_reservation(system, inputs, tools, max_output):
+def estimate_text(content):
+    ascii_count = sum(ord(char) < 128 for char in content)
+    return (ascii_count + 1) // 2 + (len(content) - ascii_count) * 2
+
+
+def token_basis(system, inputs, tools, profile):
+    """Fingerprints only: a usage baseline must match model, rules and tool schemas."""
+    return {
+        "context": digest(canonical({"system": system, "tools": tools or [], "profile": profile})),
+        "messages": [digest(canonical(item)) for item in inputs],
+    }
+
+
+def estimate_reservation(system, inputs, tools, max_output, *, basis=None, previous=None):
     # Conservative mixed-language estimate; actual provider usage is settled separately.
     # This is a reservation, not an assertion about an undocumented provider tokenizer.
     content = canonical({"system": system, "input": inputs, "tools": tools or []})
-    ascii_count = sum(ord(char) < 128 for char in content)
-    return (ascii_count + 1) // 2 + (len(content) - ascii_count) * 2 + max_output + 1024
+    estimated_input = estimate_text(content)
+    if previous and basis and previous.get("token_basis", {}).get("context") == basis["context"]:
+        actual = (previous.get("turn", {}).get("usage") or {}).get("input_tokens")
+        if isinstance(actual, int) and not isinstance(actual, bool) and actual > 0:
+            old = previous["token_basis"].get("messages", [])
+            prefix = 0
+            for left, right in zip(old, basis["messages"]):
+                if left != right:
+                    break
+                prefix += 1
+            # Retain the entire previous measured input, even its removed suffix.
+            # Estimate all changed/new messages conservatively; never discount new
+            # source text with an average ratio learned from unrelated prompts.
+            measured = actual + estimate_text(canonical(inputs[prefix:])) + 256
+            estimated_input = min(estimated_input, measured)
+    return estimated_input + max_output + 1024
 
 
 class Harness:

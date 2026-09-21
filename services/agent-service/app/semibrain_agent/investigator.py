@@ -19,7 +19,13 @@ from semibrain_agent.checkpoints import GRAPH_VERSION, STATE_VERSION, Checkpoint
 from semibrain_agent.client import BusinessClient
 from semibrain_agent.evidence_view import evidence_views
 from semibrain_agent.executor import ToolExecutor, extend_catalog, wire_tools
-from semibrain_agent.harness import BudgetExhausted, Harness, RunStopped, estimate_reservation
+from semibrain_agent.harness import (
+    BudgetExhausted,
+    Harness,
+    RunStopped,
+    estimate_reservation,
+    token_basis,
+)
 from semibrain_agent.partial import partial_answer
 from semibrain_agent.prompts import (
     Intent,
@@ -184,7 +190,14 @@ class Investigator:
         if compressed:
             self.notify({"progress": "正在整理上下文，证据仍可追溯"})
         system = self.prompts.system(role)
-        amount = estimate_reservation(system, inputs, tools, max_tokens)
+        basis = token_basis(system, inputs, tools, profile.snapshot())
+        previous = self.db.model_turns.find_one(
+            {"run_id": self.run["_id"], "token_basis.context": basis["context"],
+             "turn.usage.input_tokens": {"$gt": 0}}, sort=[("created_at", -1)]
+        )
+        amount = estimate_reservation(
+            system, inputs, tools, max_tokens, basis=basis, previous=previous
+        )
         reservation = self.harness.model_reserve(amount, phase=state["phase"], final=final)
         row = self.harness.check()
         adapter = ProviderAdapter(
@@ -215,6 +228,7 @@ class Investigator:
                     "turn": asdict(turn),
                     "phase": state["phase"],
                     "profile": profile.snapshot(),
+                    "token_basis": basis,
                     "prompt_preview": redact_preview(
                         {
                             "system": system,
@@ -341,7 +355,7 @@ class Investigator:
             }
         )
         evidence = self.executor.evidence()
-        if evidence:
+        if evidence and not state.get("model_turn_ids"):
             result.append(
                 {
                     "role": "user",
@@ -349,10 +363,6 @@ class Investigator:
                     + canonical(
                         [
                             self.executor.observation(record)
-                            if not state.get("model_turn_ids")
-                            else {
-                                key: record.get(key) for key in ("evidence_id", "marker", "title")
-                            }
                             for record in evidence
                         ]
                     ),
@@ -377,6 +387,23 @@ class Investigator:
                         ),
                     }
                 )
+        if evidence and state.get("model_turn_ids"):
+            # Append mutable metadata after the stable transcript prefix, so API
+            # usage can calibrate the next request without recounting old schemas.
+            result.append({
+                "role": "user",
+                "content": "当前已授权证据索引（数据）：\n" + canonical([
+                    {key: record.get(key) for key in ("evidence_id", "marker", "title")}
+                    for record in evidence
+                ]),
+            })
+        if state.get("retrieval_feedback"):
+            result.append({
+                "role": "user",
+                "content": "上次草稿尚未满足原任务。请用允许的工具补充适用来源，取得正文后再回答；"
+                "不得扩大原问题范围或重复已失败且条件未变的操作。\n"
+                + canonical(state["retrieval_feedback"]),
+            })
         return result
 
     def model(self, state):
@@ -526,6 +553,8 @@ class Investigator:
                         "draft": state["draft"],
                         "evidence": evidence_views(inspected),
                         "executed": self.execution_summary(),
+                        "retrieval_available": not state.get("closing")
+                        and not state.get("retrieval_repair_count"),
                     }
                 ),
             }
@@ -549,9 +578,22 @@ class Investigator:
         # bypass either reviewer defects or the deterministic publication checks.
         if issues:
             review = review.model_copy(update={"approved": False, "issues": issues})
+        if review.needs_retrieval and not review.missing_goals:
+            review = review.model_copy(update={
+                "missing_goals": state["intent"].get("goals")
+                or [self.context["input"]["question"]]
+            })
         state["review"] = review.model_dump()
         state["review_count"] += 1
-        if review.approved:
+        if (review.needs_retrieval and not state.get("closing")
+                and not state.get("retrieval_repair_count")
+                and any(item["name"].startswith(("web.", "knowledge."))
+                        for item in self.catalog["tools"])):
+            # One bounded return to tools; a prose-only revision cannot supply missing sources.
+            state.update(phase="model", retrieval_repair_count=1,
+                         retrieval_feedback=state["review"])
+            self.notify({"progress": "现有来源不足以回答问题，正在补充相关资料"})
+        elif review.approved:
             state.update(
                 phase="done",
                 outcome="partial"
@@ -623,7 +665,7 @@ class Investigator:
                     "outcome": "partial",
                     "stop_code": str(exc),
                     "draft": self.partial_body(
-                        "执行预算已用完"
+                        "剩余执行额度不足以预留下一步请求"
                         if isinstance(exc, BudgetExhausted)
                         else (
                             "本轮任务理解结果未通过校验，请重试"

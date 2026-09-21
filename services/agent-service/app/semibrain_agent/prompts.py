@@ -11,7 +11,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 from semibrain_common.runtime import canonical, digest
 
-PROMPT_VERSION = "investigator-prompts-v18"
+from semibrain_agent.evidence_view import evidence_views
+
+PROMPT_VERSION = "investigator-prompts-v19"
 CARD_VERSION = "semiconductor-intents-v1"
 INTENT_CARDS = [
     {
@@ -58,6 +60,8 @@ trusted_runtime 是当前执行边界；business_access.resource_authorized=fals
 合成数据必须标为演示数据，统计相关不能直接当成工艺因果。最终答案使用自然 Markdown，只允许已登记引用；当前角色的内部控制 JSON 不等于最终答案。只提供执行摘要与可验证依据，不展示隐藏推理。"""
 
 ANSWER_RULES = """当前角色是单 Agent Investigator，按真实工具观察决定下一步。
+根据原问题判断资料适用性：通用概念、工艺原理和标准流程不能仅凭合成演示批次或巡检记录介绍。已授权本地资料不足或只有不适用的演示材料时，若允许联网且用户没有限制只用指定资料，应补充公开来源；不把重复本地检索当成完成目标。用户明确要求网络来源时优先网络检索，不能以本地资料替代。联网关闭或用户限定来源时遵守边界。
+检索先用一个覆盖核心问题的查询，看到结果再决定是否补充；不要同一轮并列多个近义知识库查询。搜索返回网址只是发现来源，应继续 web.fetch 读取与目标相关的原文；已读到足够证据就直接回答，不必把所有搜索结果读完。
 外部资料调查按新增信息推进：一轮先提交一个有针对性的 web.search，看到返回网址后优先读取相关原文；已有满足来源要求的网址时不再重复搜索同一主题。确实缺少其他目标的来源时，基于已见结果再决定下一次搜索，避免在同一轮并列多个近义搜索。
 最终输出自然清晰的 Markdown，按内容选段落、列表、表格或标题，不输出答案 JSON，不强制固定报告章节。
 篇幅遵循用户要求，只展开完成本任务所需的内容。只说明影响本任务结论的限制，不把用户没要求的工作列为未完成项，不猜测未读取部分具体写了什么。
@@ -82,7 +86,9 @@ attachment_metadata 也包括当前已授权 sources 目录；source_text 只摘
 
 UNDERSTANDING_RULES += '\n槽位 value 保留原始 JSON 类型：单个编号为字符串，多个编号为数组，数量为数值，范围可为对象；不要将多个对象拼成一个编号。未知值放在 missing，不伪造槽位。无澄清时 clarification 为 ""；goals/constraints/missing/intent_ids 均为字符串数组。'
 
-REVIEW_RULES = """你负责审查自由 Markdown 调查草稿。只返回内部 JSON：approved 布尔值，issues 字符串数组，missing_goals 字符串数组，evidence_required 布尔值。
+REVIEW_RULES = """你负责审查自由 Markdown 调查草稿。只返回内部 JSON：approved 布尔值，issues 字符串数组，missing_goals 字符串数组，evidence_required 布尔值，needs_retrieval 布尔值。
+目标完成和陈述有据要分别检查。通用知识介绍只复述合成巡检记录或声明没有通用资料，不算完成介绍；即使说明完全诚实，也必须在 missing_goals 记录原任务缺口。用户要求网络事实时只有搜索网址而没有读取正文不算完成取证，除非原任务仅要求查找链接。
+如果缺少适用资料、授权工具仍能补充且 retrieval_available=true，将 needs_retrieval=true，让执行器先补充检索；不要要求仅靠改写补出新事实。仅需补已有引用或更正表达、用户禁止的来源、权限拒绝或已失败且无替代路径的任务不需要再次检索。已诚实说明但无法完成的目标始终列入 missing_goals。
 逐项核对原问题、明确约束、实际工具 observation 和登记证据。没有工具成功结果不得称完成查询；失败/空集/部分必须准确表达。
 先以原始 question 核对 intent 和草稿里的用户要求；无原问题或适用历史依据的新增要求列入 issues，不能列为 missing_goals。missing_goals 只记录用户实际要求但尚未完成的目标，不能因为能力目录还支持其他事情就判定缺项。
 查询的实际参数必须覆盖用户必要的阶段、时间、否定和来源条件；只把条件写在说明里不能算执行。数字与确定性工具一致，引用支持对应结论。不得把相关性写成因果或合成数据写成生产事实。
@@ -155,6 +161,7 @@ class Review(BaseModel):
     issues: list[str] = Field(default_factory=list, max_length=20)
     missing_goals: list[str] = Field(default_factory=list, max_length=12)
     evidence_required: bool = True
+    needs_retrieval: bool = False
 
 
 class IntentSourceError(ValueError):
@@ -347,7 +354,10 @@ class PromptAssembler:
                         ],
                         "available_capabilities": {
                             "tools": [
-                                {"name": item["name"], "description": item["description"]}
+                                {"name": item["name"], **(
+                                    {"description": item["description"]}
+                                    if role == "understanding" else {}
+                                )}
                                 for item in self.catalog.get("tools", [])
                             ],
                             "tables": self.catalog.get("tables", {}),
@@ -402,6 +412,33 @@ def compact_messages(messages, *, max_chars=18000):
     """Compact old observations, keeping every call/output pair and immutable evidence handles."""
     result = copy.deepcopy(messages)
     compacted = False
+    # Even the latest observation can be large. Present bounded source extracts
+    # and durable handles before estimating a new request; full records remain intact.
+    for item in result:
+        if item.get("type") != "function_call_output":
+            continue
+        try:
+            observation = json.loads(item["output"])
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(observation, dict):
+            continue
+        changed = False
+        if observation.get("evidence") and len(canonical(observation["evidence"])) > 4500:
+            records = observation["evidence"]
+            views = evidence_views(records, content_chars=3000)
+            observation["evidence"] = [
+                {**record, **view, "source": record.get("source")}
+                for record, view in zip(records, views)
+            ]
+            changed = True
+        if "retrieval" in observation:
+            # Retrieval diagnostics are stored for inspection, not repeated as source facts.
+            observation.pop("retrieval")
+            changed = True
+        if changed:
+            item["output"] = canonical(observation)
+            compacted = True
     for index, item in enumerate(result):
         if len(canonical(result)) <= max_chars:
             break
@@ -416,7 +453,7 @@ def compact_messages(messages, *, max_chars=18000):
         # Full durable observations can be reread through evidence.read; no model summary is trusted.
         summary = {
             key: observation[key]
-            for key in ("status", "error", "evidence", "job_id", "warnings", "call_ref")
+            for key in ("status", "error", "evidence", "job_id", "warnings", "call_ref", "tool")
             if key in observation
         }
         if "evidence" in summary:
@@ -428,6 +465,12 @@ def compact_messages(messages, *, max_chars=18000):
                 }
                 for e in summary["evidence"]
             ]
+        if observation.get("tool") == "web.search":
+            # Discovery has no evidence handle; dropping its URLs would break the next fetch.
+            summary["data"] = {
+                key: value for key, value in observation.get("data", {}).items()
+                if key in {"sources", "query", "notice", "source_text_available", "row_count"}
+            }
         summary["compacted"] = True
         summary["notice"] = "正文已压缩；需详细内容时通过 evidence.read 读取原证据。"
         item["output"] = canonical(summary)
