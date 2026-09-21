@@ -40,6 +40,8 @@ def fixture_agent(invoke):
     agent.checkpoints = SimpleNamespace(save=lambda _: None)
     agent.finish = lambda state: setattr(agent, "finished", state)
     agent.notify = lambda *_: None
+    agent.run = {"_id": "closeout-fixture"}
+    agent.db = SimpleNamespace(observations=SimpleNamespace(find=lambda *_: []))
     return agent
 
 
@@ -122,6 +124,31 @@ def test_finalize_uses_fresh_compact_evidence_and_final_budget_without_tools():
     assert received[0]["suffix"] == "closeout"
     assert not received[0].get("tools")
     assert "CP-rev8" in received[0]["inputs"][0]["content"]
+
+
+def test_closeout_preserves_successful_discovery_even_without_registered_evidence():
+    agent = fixture_agent(None)
+    agent.context = {"input": {"question": "Locate and read an authorized source."}}
+    agent.db.observations.find = lambda *_: [
+        {
+            "observation": {
+                "tool": "discovery.find",
+                "status": "succeeded",
+                "job_id": "found",
+                "data": {"large_untrusted_body": "Do not promote this into facts"},
+            }
+        },
+        {"observation": {"tool": "source.read", "status": "partial", "warnings": ["TRUNCATED"]}},
+    ]
+    captured = []
+    agent.model_call = lambda _, **kwargs: (
+        captured.append(kwargs) or SimpleNamespace(text="Draft"),
+        "call",
+    )
+    agent.finalize({**agent.state, "phase": "finalize", "stop_code": "ROUND_LIMIT"})
+    content = captured[0]["inputs"][0]["content"]
+    assert '"job_id":"found"' in content and '"status":"succeeded"' in content
+    assert "TRUNCATED" in content and "large_untrusted_body" not in content
 
 
 def test_verified_fallback_keeps_actual_scope_raw_ratio_and_synthetic_label():

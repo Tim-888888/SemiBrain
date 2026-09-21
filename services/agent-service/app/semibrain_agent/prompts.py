@@ -10,7 +10,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 from semibrain_common.runtime import canonical, digest
 
-PROMPT_VERSION = "investigator-prompts-v8"
+PROMPT_VERSION = "investigator-prompts-v9"
 CARD_VERSION = "semiconductor-intents-v1"
 INTENT_CARDS = [
     {

@@ -459,6 +459,18 @@ class Investigator:
             raise BudgetExhausted("NO_NEW_OBSERVATION")
         return state
 
+    def execution_summary(self):
+        # Some successful tools produce discovery metadata, not citable evidence.
+        # Retain their durable outcome when the verbose model transcript is discarded.
+        return [
+            {
+                key: value
+                for key, value in row["observation"].items()
+                if key in {"tool", "arguments", "status", "job_id", "error", "warnings", "reused"}
+            }
+            for row in self.db.observations.find({"run_id": self.run["_id"]})
+        ]
+
     def finalize(self, state):
         self.notify({"progress": "正在用预留预算整理已有证据，不再追加工具调用"})
         evidence = self.executor.evidence()
@@ -468,6 +480,9 @@ class Investigator:
                 "role": "user",
                 "content": "调查预算已到收尾边界。只基于以下已取得的观察回答原问题，不提出新工具调用。"
                 "逐项说明已完成和未完成目标，不猜缺失事实；未列出的来源不代表不存在。"
+                "execution_summary 记录真实工具执行状态，与可引用事实 evidence 用途不同；"
+                "没有登记成引用来源不等于工具没有执行或没有返回。"
+                "遵守用户的篇幅要求，简洁回答核心问题，避免无关展开和重复限制说明。"
                 "只输出自然 Markdown 和已登记引用。\n"
                 + canonical(
                     {
@@ -475,6 +490,7 @@ class Investigator:
                         "intent": state["intent"],
                         "stop_reason": state["stop_code"],
                         "evidence": [self.executor.observation(item) for item in selected],
+                        "execution_summary": self.execution_summary(),
                         "omitted_sources": len(evidence) - len(selected),
                     }
                 ),
@@ -501,23 +517,7 @@ class Investigator:
                         "capability_names": [item["name"] for item in self.catalog["tools"]],
                         "draft": state["draft"],
                         "evidence": [self.executor.observation(item) for item in inspected],
-                        "executed": [
-                            {
-                                key: value
-                                for key, value in row["observation"].items()
-                                if key
-                                in {
-                                    "tool",
-                                    "arguments",
-                                    "status",
-                                    "job_id",
-                                    "error",
-                                    "warnings",
-                                    "reused",
-                                }
-                            }
-                            for row in self.db.observations.find({"run_id": self.run["_id"]})
-                        ],
+                        "executed": self.execution_summary(),
                     }
                 ),
             }
