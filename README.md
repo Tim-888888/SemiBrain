@@ -8,11 +8,13 @@ services and two Vue applications run against real storage and configured model 
 Stage C adds bounded single-agent investigations with native tool calling, versioned
 runtime prompts, explicit fenced MongoDBSaver checkpoints, shared budgets, cancellation,
 fixed statistics over authorized results, optional public Web Search and static-page
-snapshots. A reviewer checks investigation drafts before Markdown publication. The
-implementation is still under acceptance: earlier full batches and functional checks
-are retained. Text roles now default to DeepSeek Flash through its Responses API;
-the previous provider credit outage is retained in the historical evaluation records.
-The stage is not signed off; final revision quality checks remain pending.
+snapshots. A reviewer checks investigation drafts before Markdown publication.
+Stage C development is closed with known issues at the project owner's request;
+acceptance is partial. The final synthetic batch passed 115/120 task checks and
+60/60 numeric checks. Citation coverage missed its original threshold and two
+offline reviews remained unavailable. Original failures are retained, and repeated
+full-batch evaluations have stopped. This is not production quality certification.
+Text roles default to DeepSeek Flash through its Responses API.
 Multi-agent coordination, sandbox execution and advanced administration remain later-stage work.
 
 ## Repository layout
