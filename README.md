@@ -48,7 +48,7 @@ The shared Markdown renderer supports bracket and dollar math through KaTeX. It
 disables trusted TeX commands, bounds macros and expression size, and sanitizes the
 rendered HTML/MathML. Copying preserves the original Markdown, including formulas.
 
-Investigation runs default to 12 reasoning rounds, 20 tool calls, 40,000 tokens and
+Investigation runs default to 12 reasoning rounds, 20 tool calls, 80,000 tokens and
 180 seconds. Unknown provider usage remains reserved and visible as unreconciled;
 unknown pricing is never reported as zero. Workers restore only the explicitly committed
 checkpoint ID, reconcile immutable model/tool observations, and reject stale writes.

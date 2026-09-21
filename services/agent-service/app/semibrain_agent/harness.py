@@ -18,7 +18,7 @@ class BudgetExhausted(RuntimeError):
 DEFAULT_LIMITS = {
     "rounds": 12,
     "tools": 20,
-    "tokens": 40000,
+    "tokens": 80000,
     "seconds": 180,
     "searches": 3,
     "pages": 5,
