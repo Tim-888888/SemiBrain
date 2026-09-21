@@ -1,5 +1,5 @@
 from semibrain_common.runtime import call, consume, now, relay, uid
-from semibrain_common.worker import worker_app
+from semibrain_common.worker import PollTask, worker_app
 
 from semibrain_conversation.auth import db
 from semibrain_conversation.storage import initialize
@@ -48,7 +48,7 @@ def project(event, session):
         )
 
 
-@app.task(name="conversation.tick")
+@app.task(name="conversation.tick", base=PollTask)
 def tick():
     initialize()
     relay(db())

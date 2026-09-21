@@ -292,6 +292,8 @@ class ToolExecutor:
             code = (
                 exc.detail.get("code", "TOOL_REQUEST_FAILED")
                 if isinstance(exc, HTTPException) and isinstance(exc.detail, dict)
+                else "TOOL_DEADLINE"
+                if isinstance(exc, TimeoutError)
                 else "TOOL_ARGUMENT_OR_EXECUTION_FAILED"
             )
             observation = {
