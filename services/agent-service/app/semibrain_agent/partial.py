@@ -45,7 +45,7 @@ def yield_observation(record):
         f"- {origin}：{metric}，分子 {numerator}、分母 {denominator}；{ratio} [{record['marker']}]。  \n"
         f"  实际范围：批次 {lots}；阶段 {inline(data['stage'])}；程序 {inline(data.get('program_version'))}；"
         f"首次测试窗口 {inline(data.get('cohort_start'))} 至 {inline(data.get('cohort_end'))}（前闭后开）；"
-        f"截至 {inline(data.get('as_of'))}。"
+        f"截至 {inline(data.get('as_of'))} [{record['marker']}]。"
     )
 
 

@@ -201,16 +201,19 @@ def run_context(run_id: str, request: Request):
             {
                 "conversation_id": run["input"]["conversation_id"],
                 "input_revision": {"$lt": run["input"]["input_revision"]},
+                "role": "user",
             }
         )
         .sort([("input_revision", -1), ("position", -1)])
-        .limit(10)
+        .limit(5)
     )
     history = []
     for message in reversed(messages):
-        if message["role"] == "user":
-            history.append({"role": "user", "content": message["text"]})
-        elif message.get("run_id"):
+        history.append({"role": "user", "content": message["text"]})
+        # User messages and their run IDs are committed together. Assistant message
+        # projections may still lag after the client has received a final snapshot.
+        # Resolve each prior answer from its owning service, independent of that lag.
+        if message.get("run_id"):
             try:
                 prior = run_snapshot(user, message["run_id"])
                 if prior.get("lineage_refs"):
@@ -222,7 +225,7 @@ def run_context(run_id: str, request: Request):
                         run=run,
                         json={"refs": prior["lineage_refs"]},
                     )
-                if prior.get("body_markdown"):
+                if prior.get("report_id") and prior.get("body_markdown"):
                     history.append(
                         {
                             "role": "assistant",
