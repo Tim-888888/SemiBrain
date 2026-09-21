@@ -162,11 +162,14 @@ def search(form, job):
     quota(job, "searches", 3)
     payload = {
         "model": os.getenv("SEMIBRAIN_WEB_MODEL", "qwen3.8-max"),
-        "input": "Search once for these public keywords and return sources: " + query,
+        "input": "Search exactly once for these public keywords: " + query
+        + ". Return only the source URLs, no explanation or summary.",
         "tools": [{"type": "web_search"}],
         "max_tool_calls": 1,
         "max_output_tokens": 1800,
-        "enable_thinking": True,
+        # This call discovers URLs; the investigator reads and explains sources.
+        # Avoid spending the search deadline on an unused provider-side essay.
+        "reasoning": {"effort": "low"},
         "store": False,
     }
     deadline = time.monotonic() + 45
