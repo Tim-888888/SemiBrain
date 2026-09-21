@@ -23,12 +23,28 @@ RUN_OPS = {
     "business.get_process_history",
     "business.get_fdc_alerts",
     "business.query",
+    "business.statistics",
     "lineage.check",
 }
+WEB_OPS = {"web.search", "web.fetch", "web.read"}
+
+
+def web_allowed(run):
+    return bool(
+        run
+        and run["input"].get("allow_web")
+        and not run.get("web_disabled_at")
+        and not run.get("cancel_requested_at")
+    )
 
 
 def make_grant(user, *, run=None, operations=None):
     token = secrets.token_urlsafe(32)
+    allowed = set(operations or RUN_OPS)
+    if web_allowed(run) and (operations is None or operations == RUN_OPS):
+        allowed |= WEB_OPS
+    elif not web_allowed(run):
+        allowed -= WEB_OPS
     claim = {
         "schema_version": "1.0",
         "subject_id": user["_id"],
@@ -39,9 +55,10 @@ def make_grant(user, *, run=None, operations=None):
         "expires_at": (now() + timedelta(seconds=60)).isoformat(),
         "run_id": run["_id"] if run else None,
         "task_id": run["task_id"] if run else None,
+        "trace_root_id": run.get("trace_root_id") if run else None,
         "input_revision": run["input"]["input_revision"] if run else None,
-        "allowed_ops": sorted(operations or RUN_OPS),
-        "resource_ids": ["demo", "owner:" + user["_id"]],
+        "allowed_ops": sorted(allowed),
+        "resource_ids": [*user.get("resource_ids", ["demo"]), "owner:" + user["_id"]],
         "document_ids": run["input"]["resource_restrictions"] if run else [],
         "attachment_refs": run["input"]["attachment_refs"] if run else [],
     }
@@ -106,6 +123,8 @@ def introspect(form: IntrospectInput, request: Request):
             or run["input"]["input_revision"] != claim["input_revision"]
         ):
             failure("RUN_BINDING_MISMATCH", 403)
+        if not web_allowed(run):
+            claim["allowed_ops"] = sorted(set(claim["allowed_ops"]) - WEB_OPS)
     return claim
 
 
@@ -125,6 +144,7 @@ class ExecutionAuthorization(BaseModel):
     subject_id: str
     auth_version: int
     run_id: str | None = None
+    operation: str | None = None
 
 
 @router.post("/internal/v1/authorization/check")
@@ -139,6 +159,16 @@ def execution_authorization(form: ExecutionAuthorization, request: Request):
         run, _ = trusted_run(form.run_id)
         if run["owner_id"] != form.subject_id:
             failure("EXECUTION_BINDING_MISMATCH", 403)
+        if run.get("cancel_requested_at"):
+            failure("EXECUTION_CANCELLED", 409)
+        if form.operation and form.operation.startswith("web.") and not web_allowed(run):
+            failure("WEB_DISABLED", 403)
+        if (
+            form.operation
+            and form.operation.startswith("business.")
+            and "demo" not in user.get("resource_ids", ["demo"])
+        ):
+            failure("RESOURCE_SCOPE_DENIED", 403)
     return {"active": True, "policy_version": POLICY}
 
 
@@ -151,6 +181,13 @@ def run_snapshot(user, run_id):
     # Recover from projection lag using the owning service, never its database.
     response = call("agent", "GET", "/internal/v1/runs/" + run_id).json()
     check_lineage(user, response.get("lineage_refs", []))
+    response["input_scope"] = {
+        key: gateway["input"].get(key)
+        for key in ("mode", "allow_web", "resource_restrictions", "attachment_refs")
+    }
+    response["continuation"] = gateway.get("continuation")
+    if gateway.get("web_disabled_at"):
+        response["web_disabled"] = True
     return response
 
 
@@ -164,16 +201,19 @@ def run_context(run_id: str, request: Request):
             {
                 "conversation_id": run["input"]["conversation_id"],
                 "input_revision": {"$lt": run["input"]["input_revision"]},
+                "role": "user",
             }
         )
         .sort([("input_revision", -1), ("position", -1)])
-        .limit(10)
+        .limit(5)
     )
     history = []
     for message in reversed(messages):
-        if message["role"] == "user":
-            history.append({"role": "user", "content": message["text"]})
-        elif message.get("run_id"):
+        history.append({"role": "user", "content": message["text"]})
+        # User messages and their run IDs are committed together. Assistant message
+        # projections may still lag after the client has received a final snapshot.
+        # Resolve each prior answer from its owning service, independent of that lag.
+        if message.get("run_id"):
             try:
                 prior = run_snapshot(user, message["run_id"])
                 if prior.get("lineage_refs"):
@@ -185,7 +225,7 @@ def run_context(run_id: str, request: Request):
                         run=run,
                         json={"refs": prior["lineage_refs"]},
                     )
-                if prior.get("body_markdown"):
+                if prior.get("report_id") and prior.get("body_markdown"):
                     history.append(
                         {
                             "role": "assistant",
@@ -200,8 +240,14 @@ def run_context(run_id: str, request: Request):
     return {
         "input": run["input"],
         "task_id": run["task_id"],
+        "trace_root_id": run.get("trace_root_id"),
         "history": history,
         "subject_ref": user["_id"],
         "policy_version": POLICY,
         "auth_version": user["auth_version"],
+        "web_allowed": web_allowed(run),
+        "cancel_requested": bool(run.get("cancel_requested_at")),
+        "submitted_at": run["created_at"].isoformat(),
+        "continuation": run.get("continuation"),
+        "resource_ids": user.get("resource_ids", ["demo"]),
     }

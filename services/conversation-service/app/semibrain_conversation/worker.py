@@ -1,5 +1,5 @@
-from semibrain_common.runtime import consume, now, relay, uid
-from semibrain_common.worker import worker_app
+from semibrain_common.runtime import call, consume, now, relay, uid
+from semibrain_common.worker import PollTask, worker_app
 
 from semibrain_conversation.auth import db
 from semibrain_conversation.storage import initialize
@@ -28,7 +28,7 @@ def project(event, session):
         {"$set": updates},
         session=session,
     )
-    if event["event_type"] in {"report.ready", "run.failed"}:
+    if event["event_type"] in {"report.ready", "run.failed", "run.cancelled"}:
         db().messages.update_one(
             {
                 "conversation_id": run["input"]["conversation_id"],
@@ -48,8 +48,27 @@ def project(event, session):
         )
 
 
-@app.task(name="conversation.tick")
+@app.task(name="conversation.tick", base=PollTask)
 def tick():
     initialize()
     relay(db())
     consume(db(), "stream:agent", "conversation-agent-events", project)
+    for run in (
+        db()
+        .gateway_runs.find(
+            {
+                "cancel_requested_at": {"$exists": True},
+                "status": {"$nin": ["succeeded", "partial", "failed", "cancelled"]},
+            }
+        )
+        .limit(20)
+    ):
+        try:
+            call(
+                "agent",
+                "POST",
+                "/internal/v1/runs/" + run["_id"] + "/cancel",
+                json={"request_id": run["cancel_request_id"]},
+            )
+        except Exception:
+            pass  # Durable intent is retried on the next tick.

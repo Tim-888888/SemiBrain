@@ -21,13 +21,18 @@ from semibrain_common.runtime import (
     transaction,
     uid,
 )
+from semibrain_common.telemetry import Observation
 from semibrain_contracts.models import ErrorInfo, SourceRef, ToolResult, assert_no_credentials
 from sqlalchemy import func, select
 from sqlalchemy.exc import DBAPIError
 
 from semibrain_business import warehouse as w
+from semibrain_business.cancellation import CancellationScope, QueryCancelled, watch_engine
+from semibrain_business.safe_fetch import WebError
 from semibrain_business.security import authorize_request, db
 from semibrain_business.sql_policy import SQLInput, execute_query
+from semibrain_business.statistics import StatisticsInput, calculate
+from semibrain_business.web_tools import WEB_TOOLS, configured
 
 router = APIRouter()
 
@@ -58,7 +63,7 @@ def register(name, schema, function, description):
 
 @lru_cache(maxsize=1)
 def engine():
-    return w.engine_from_url(os.environ["SEMIBRAIN_WAREHOUSE_READ_URL"])
+    return watch_engine(w.engine_from_url(os.environ["SEMIBRAIN_WAREHOUSE_READ_URL"]))
 
 
 def read_rows(statement):
@@ -142,14 +147,28 @@ register(
     lambda f: execute_query(engine(), f),
     "执行受限单表 SELECT，服务端强制批次/时间窗口、只读账号和超时。",
 )
+register(
+    "business.statistics",
+    StatisticsInput,
+    None,
+    "对本运行已成功查询的 job_ids 做均值、样本标准差、百分点差或分组比较。只能读已有授权结果，不接受自填数列、表达式或脚本；百分点比较必须同产品/阶段/程序/时间/口径。",
+)
+
+for _name, (_schema, _function, _description) in WEB_TOOLS.items():
+    register(_name, _schema, _function, _description)
 
 
 @router.get("/internal/v1/tools")
 def catalog(request: Request):
     claim = authorize_request(request, "business.catalog")
+    business_authorized = "demo" in claim["resource_ids"]
     return {
-        "version": "p0-tools-v1",
+        "version": "p1-tools-v3",
         "data_origin": "synthetic",
+        "business_access": {
+            "resource_authorized": business_authorized,
+            "reason": None if business_authorized else "RESOURCE_NOT_GRANTED",
+        },
         "tools": [
             {
                 "name": name,
@@ -158,13 +177,18 @@ def catalog(request: Request):
             }
             for name, value in REGISTRY.items()
             if name in claim["allowed_ops"]
+            and (not name.startswith("web.") or configured())
+            and (not name.startswith("business.") or business_authorized)
         ],
+        "web_available": configured(),
         "metric_version": w.METRIC_VERSION,
         "tables": {
             name: list(table.columns.keys())
             for name, table in w.metadata.tables.items()
             if name in {"lots", "test_results", "process_events", "defect_records"}
-        },
+        }
+        if business_authorized
+        else {},
     }
 
 
@@ -180,7 +204,7 @@ def submit(form: ToolInput, request: Request):
     if form.tool not in REGISTRY:
         failure("UNKNOWN_TOOL")
     claim = authorize_request(request, form.tool)
-    if "demo" not in claim["resource_ids"]:
+    if form.tool.startswith("business.") and "demo" not in claim["resource_ids"]:
         failure("RESOURCE_SCOPE_DENIED", 403)
     try:
         args = REGISTRY[form.tool]["schema"].model_validate(form.arguments).model_dump(mode="json")
@@ -218,6 +242,8 @@ def submit(form: ToolInput, request: Request):
             "arguments": args,
             "subject_id": claim["subject_id"],
             "run_id": claim["run_id"],
+            "task_id": claim.get("task_id"),
+            "trace_root_id": claim.get("trace_root_id"),
             "auth_version": claim["auth_version"],
             "payload_hash": payload_hash,
             "status": "queued",
@@ -236,13 +262,112 @@ def status(job_id: str, request: Request):
     job = db().tool_jobs.find_one({"_id": job_id})
     if not job:
         failure("JOB_NOT_FOUND", 404)
-    claim = authorize_request(request, job["tool"])
+    claim = authorize_request(request, "lineage.check")
     if job["subject_id"] != claim["subject_id"] or job["run_id"] != claim["run_id"]:
         failure("JOB_NOT_FOUND", 404)
     return job.get("result") or {"job_id": job_id, "status": job["status"]}
 
 
+@router.post("/internal/v1/tool-jobs/{job_id}/cancel")
+def cancel(job_id: str, request: Request):
+    job = db().tool_jobs.find_one({"_id": job_id})
+    if not job:
+        failure("JOB_NOT_FOUND", 404)
+    claim = authorize_request(request, "lineage.check")
+    if job["subject_id"] != claim["subject_id"] or job["run_id"] != claim["run_id"]:
+        failure("JOB_NOT_FOUND", 404)
+
+    def stop(session):
+        current = db().tool_jobs.find_one({"_id": job_id}, session=session)
+        if current["status"] in {"succeeded", "partial", "failed", "cancelled"}:
+            return current["status"]
+        if current["status"] == "queued":
+            result = ToolResult(
+                job_id=job_id, logical_call_id=job_id, status="cancelled"
+            ).model_dump(mode="json")
+            db().tool_jobs.update_one(
+                {"_id": job_id, "status": "queued"},
+                {
+                    "$set": {
+                        "status": "cancelled",
+                        "result": result,
+                        "result_hash": digest(canonical(result)),
+                        "cancel_requested_at": now(),
+                        "completed_at": now(),
+                    }
+                },
+                session=session,
+            )
+            return "cancelled"
+        db().tool_jobs.update_one(
+            {"_id": job_id, "status": {"$in": ["running", "cancelling"]}},
+            {"$set": {"status": "cancelling", "cancel_requested_at": now()}},
+            session=session,
+        )
+        return "cancelling"
+
+    return {"job_id": job_id, "status": transaction(stop)}
+
+
 def execute_one():
+    for expired in (
+        db()
+        .tool_jobs.find(
+            {
+                "lease_until": {"$lt": now()},
+                "$or": [
+                    {"status": "cancelling"},
+                    {"status": "running", "tool": {"$regex": "^web\\."}},
+                ],
+            }
+        )
+        .limit(20)
+    ):
+        confirmed = bool(expired.get("query_stopped_at") and expired.get("cancel_requested_at"))
+        terminal = ToolResult(
+            job_id=expired["_id"],
+            logical_call_id=expired["logical_call_id"],
+            status="cancelled" if confirmed else "failed",
+            error=None
+            if confirmed
+            else ErrorInfo(
+                code="EXECUTION_CONFIRMATION_LOST",
+                message="执行进程失联，无法确认外部执行结果，未自动重复请求。",
+                trace_id=expired["_id"],
+            ),
+        ).model_dump(mode="json")
+
+        def expire(session):
+            changed = db().tool_jobs.update_one(
+                {
+                    "_id": expired["_id"],
+                    "fence": expired["fence"],
+                    "status": expired["status"],
+                    "lease_until": {"$lt": now()},
+                },
+                {
+                    "$set": {
+                        "status": terminal["status"],
+                        "result": terminal,
+                        "result_hash": digest(canonical(terminal)),
+                        "completed_at": now(),
+                    }
+                },
+                session=session,
+            )
+            if changed.modified_count:
+                publish(
+                    db(),
+                    "stream:business",
+                    "tool.completed",
+                    expired["_id"],
+                    {"job_id": expired["_id"], "status": terminal["status"]},
+                    session,
+                    aggregate_type="tool",
+                )
+
+        transaction(expire)
+
     def exhausted(row):
         result = ToolResult(
             job_id=row["_id"],
@@ -259,14 +384,21 @@ def execute_one():
     fence = uid()
     job = db().tool_jobs.find_one_and_update(
         {
-            "$or": [{"status": "queued"}, {"status": "running", "lease_until": {"$lt": now()}}],
+            "$or": [
+                {"status": "queued"},
+                {
+                    "status": "running",
+                    "lease_until": {"$lt": now()},
+                    "tool": {"$not": {"$regex": "^web\\."}},
+                },
+            ],
             "attempt": {"$lt": 3},
         },
         {
             "$set": {
                 "status": "running",
                 "fence": fence,
-                "lease_until": now() + timedelta(seconds=30),
+                "lease_until": now() + timedelta(seconds=90),
             },
             "$inc": {"attempt": 1},
         },
@@ -274,6 +406,18 @@ def execute_one():
     )
     if not job:
         return False
+    span = Observation(
+        job["run_id"],
+        "tool." + job["tool"],
+        kind="tool",
+        service="business",
+        parent_span_id=job.get("trace_root_id"),
+        task_id=job.get("task_id"),
+        logical_call_id=job["logical_call_id"],
+        job_id=job["_id"],
+        attempt=job["attempt"],
+        tool=job["tool"],
+    )
     try:
         # Re-check current identity from non-secret references after any queue wait or retry.
         call(
@@ -284,10 +428,19 @@ def execute_one():
                 "subject_id": job["subject_id"],
                 "auth_version": job["auth_version"],
                 "run_id": job["run_id"],
+                "operation": job["tool"],
             },
         )
         tool = REGISTRY[job["tool"]]
-        data = tool["function"](tool["schema"].model_validate(job["arguments"]))
+        form = tool["schema"].model_validate(job["arguments"])
+        with CancellationScope(db(), job):
+            data = (
+                calculate(form, job)
+                if job["tool"] == "business.statistics"
+                else tool["function"](form, job)
+                if job["tool"].startswith("web.")
+                else tool["function"](form)
+            )
         data = json.loads(canonical(data))
         assert_no_credentials(data)
         warnings = []
@@ -316,8 +469,8 @@ def execute_one():
             source_version=w.METRIC_VERSION,
             content_hash=digest(canonical(data)),
             scope_ref="demo",
-            kind="query",
-            data_origin="synthetic",
+            kind="web" if job["tool"].startswith("web.") else "query",
+            data_origin="public" if job["tool"].startswith("web.") else "synthetic",
             observed_at=now(),
             locator={"logical_call_id": job["logical_call_id"], "tool": job["tool"]},
         )
@@ -332,28 +485,45 @@ def execute_one():
         )
     except Exception as exc:
         code = (
-            "QUERY_TIMEOUT"
+            str(exc)
+            if isinstance(exc, WebError)
+            else "QUERY_TIMEOUT"
             if isinstance(exc, DBAPIError) and getattr(exc.orig, "sqlstate", None) == "57014"
             else "TOOL_EXECUTION_FAILED"
         )
         result = ToolResult(
             job_id=job["_id"],
             logical_call_id=job["logical_call_id"],
-            status="failed",
+            status="cancelled" if isinstance(exc, QueryCancelled) else "failed",
             error=ErrorInfo(
-                code=code, message="查询未完成，请缩小范围或稍后重试。", trace_id=job["_id"]
+                code=code, message="工具未完成，请核对范围或稍后重试。", trace_id=job["_id"]
             ),
         )
     wire = result.model_dump(mode="json")
+    span.end(
+        status=wire["status"],
+        error_code=wire.get("error", {}).get("code") if wire.get("error") else None,
+    )
 
     def complete(session):
+        final_wire = wire
+        current = db().tool_jobs.find_one({"_id": job["_id"], "fence": fence}, session=session)
+        if current and current.get("cancel_requested_at"):
+            final_wire = ToolResult(
+                job_id=job["_id"], logical_call_id=job["logical_call_id"], status="cancelled"
+            ).model_dump(mode="json")
         saved = db().tool_jobs.update_one(
-            {"_id": job["_id"], "fence": fence, "status": "running", "lease_until": {"$gt": now()}},
+            {
+                "_id": job["_id"],
+                "fence": fence,
+                "status": {"$in": ["running", "cancelling"]},
+                "lease_until": {"$gt": now()},
+            },
             {
                 "$set": {
-                    "status": result.status,
-                    "result": wire,
-                    "result_hash": digest(canonical(wire)),
+                    "status": final_wire["status"],
+                    "result": final_wire,
+                    "result_hash": digest(canonical(final_wire)),
                     "completed_at": now(),
                 }
             },
@@ -365,7 +535,7 @@ def execute_one():
                 "stream:business",
                 "tool.completed",
                 job["_id"],
-                {"job_id": job["_id"], "status": result.status},
+                {"job_id": job["_id"], "status": final_wire["status"]},
                 session,
                 aggregate_type="tool",
             )

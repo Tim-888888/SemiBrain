@@ -1,6 +1,7 @@
 from semibrain_common.runtime import consume, relay
-from semibrain_common.worker import worker_app
+from semibrain_common.worker import PollTask, worker_app
 
+from semibrain_agent.control import reconcile_cancellations
 from semibrain_agent.runs import accept, db, execute_one
 from semibrain_agent.storage import initialize
 
@@ -13,14 +14,15 @@ def command(event, session):
     accept(event["payload"], session)
 
 
-@app.task(name="agent.tick")
+@app.task(name="agent.tick", base=PollTask)
 def tick():
     initialize()
     consume(db(), "stream:runs", "agent-run-requests", command)
     relay(db())
+    reconcile_cancellations()
     work.delay()
 
 
-@app.task(name="agent.work")
+@app.task(name="agent.work", base=PollTask)
 def work():
     execute_one()

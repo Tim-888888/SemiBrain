@@ -9,7 +9,7 @@ x-api: &api
   networks: [core]
   mem_limit: 1g
   environment:
-    SEMIBRAIN_STAGE: knowledge-platform
+    SEMIBRAIN_STAGE: single-agent
   healthcheck:
     test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
     interval: 10s

@@ -368,6 +368,54 @@ class SearchInput(BaseModel):
     top_k: int = Field(default=5, ge=1, le=8)
 
 
+class ReadDocumentInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    document_id: UUID
+    version: UUID
+    offset: int = Field(default=0, ge=0, le=1000000)
+    length: int = Field(default=6000, ge=500, le=8000)
+
+
+@router.post("/internal/v1/knowledge/read")
+def read_document(form: ReadDocumentInput, request: Request):
+    claim = authorize_request(request, "knowledge.read")
+    document = authorized_document(
+        str(form.document_id), claim, active=True, version=str(form.version)
+    )
+    version = db().document_versions.find_one(
+        {"_id": str(form.version), "document_id": document["_id"]}
+    )
+    if not version:
+        failure("VERSION_NOT_FOUND", 404)
+    parsed = db().assets.find_one({"_id": version["parsed_asset_id"]})
+    content = read_asset(parsed).decode("utf-8")
+    if form.offset > len(content):
+        failure("READ_OFFSET_INVALID")
+    end = min(len(content), form.offset + form.length)
+    text = content[form.offset : end]
+    return {
+        "evidence": [
+            {
+                "asset_id": version["raw_asset_id"],
+                "document_id": document["_id"],
+                "version": version["_id"],
+                "title": document["title"],
+                "text": text,
+                "truncated": form.offset > 0 or end < len(content),
+                "next_offset": end if end < len(content) else None,
+                "content_hash": digest(text),
+                "data_origin": document["data_origin"],
+                "location": {
+                    "representation": "parsed_markdown",
+                    "character_start": form.offset,
+                    "character_end": end,
+                },
+                "lineage_ref": "document:" + document["_id"] + ":" + version["_id"],
+            }
+        ]
+    }
+
+
 @router.get("/internal/v1/attachments/context")
 def attachment_context(request: Request):
     claim = authorize_request(request, "knowledge.read")
@@ -415,7 +463,8 @@ def retrieve(form: SearchInput, request: Request):
 
 class LineageInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    refs: list[str] = Field(max_length=60)
+    # A run may hold 50 evidence items with both a query and a web snapshot reference.
+    refs: list[str] = Field(max_length=120)
 
 
 @router.post("/internal/v1/lineage/check")

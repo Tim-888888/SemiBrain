@@ -2,7 +2,21 @@
 name = "semibrain-business-service"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
-dependencies = ["semibrain-contracts", "semibrain-common", "uvicorn>=0.34", "sqlalchemy>=2.0", "psycopg[binary]>=3.2", "weknora-docreader-subset", "python-multipart>=0.0.20", "markdown-it-py>=3.0", "minio>=7.2", "pymilvus>=2.6,<2.7", "sqlglot>=27", "jieba>=0.42.1"]
+dependencies = [
+    "semibrain-contracts",
+    "semibrain-common",
+    "uvicorn>=0.34",
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.2",
+    "weknora-docreader-subset",
+    "python-multipart>=0.0.20",
+    "markdown-it-py>=3.0",
+    "minio>=7.2",
+    "pymilvus>=2.6,<2.7",
+    "sqlglot>=27",
+    "jieba>=0.42.1",
+    "beautifulsoup4>=4.13,<5",
+]
 [build-system]
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"

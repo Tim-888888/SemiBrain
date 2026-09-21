@@ -6,7 +6,17 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from pymongo import ReturnDocument
-from semibrain_common.runtime import canonical, digest, failure, now, publish, transaction, uid
+from semibrain_common.runtime import (
+    call,
+    canonical,
+    digest,
+    failure,
+    now,
+    publish,
+    transaction,
+    uid,
+)
+from semibrain_common.telemetry import Observation
 from semibrain_contracts.models import InputSnapshot, RunRequest, parse_sse_cursor
 
 from semibrain_conversation.access import POLICY, run_snapshot
@@ -83,18 +93,45 @@ class MessageInput(BaseModel):
     resource_restrictions: list[UUID] = Field(default_factory=list, max_length=30)
     attachment_refs: list[UUID] = Field(default_factory=list, max_length=10)
     allow_web: bool = False
+    continuation_of: UUID | None = None
 
 
 @router.post("/v1/conversations/{conversation_id}/messages", status_code=202)
 def submit(conversation_id: str, form: MessageInput, request: Request, user=Depends(current_user)):
     request_key(request, form.request_id)
-    if form.mode != "quick_qa" or form.allow_web:
+    if form.mode == "quick_qa" and form.allow_web:
         failure("CAPABILITY_UNAVAILABLE", 409)
     if not form.text.strip():
         failure("EMPTY_MESSAGE")
     key = digest(user["_id"] + ":" + conversation_id + ":" + str(form.request_id))
     payload_hash = digest(canonical(form.model_dump(mode="json")))
     run_id, turn_id, task_id = uid(), uid(), uid()
+    continuation = None
+    if form.continuation_of:
+        prior = db().gateway_runs.find_one(
+            {
+                "_id": str(form.continuation_of),
+                "owner_id": user["_id"],
+                "input.conversation_id": conversation_id,
+            }
+        )
+        if not prior or run_snapshot(user, prior["_id"])["status"] != "waiting_input":
+            failure("CONTINUATION_UNAVAILABLE", 409)
+        same_scope = all(
+            prior["input"].get(key) == value
+            for key, value in {
+                "mode": form.mode,
+                "allow_web": form.allow_web,
+                "resource_restrictions": [str(x) for x in form.resource_restrictions],
+                "attachment_refs": [str(x) for x in form.attachment_refs],
+            }.items()
+        )
+        continuation = {
+            "from_run_id": prior["_id"],
+            "kind": "clarification" if same_scope else "scope_change",
+        }
+        if same_scope:
+            task_id = prior["task_id"]
 
     def accept(session):
         existing = db().gateway_runs.find_one({"request_key": key}, session=session)
@@ -116,6 +153,7 @@ def submit(conversation_id: str, form: MessageInput, request: Request, user=Depe
             input_revision=conv["revision"],
             question=form.text,
             mode=form.mode,
+            allow_web=form.allow_web,
             resource_restrictions=[str(x) for x in form.resource_restrictions],
             attachment_refs=form.attachment_refs,
         )
@@ -138,6 +176,7 @@ def submit(conversation_id: str, form: MessageInput, request: Request, user=Depe
             "payload_hash": payload_hash,
             "status": "dispatching",
             "created_at": now(),
+            "continuation": continuation,
         }
         db().gateway_runs.insert_one(row, session=session)
         db().turns.insert_one(
@@ -165,6 +204,22 @@ def submit(conversation_id: str, form: MessageInput, request: Request, user=Depe
         return row
 
     row = transaction(accept)
+    if (
+        db()
+        .gateway_runs.update_one(
+            {"_id": row["_id"], "trace_root_claimed": {"$exists": False}},
+            {"$set": {"trace_root_claimed": True}},
+        )
+        .modified_count
+    ):
+        span = Observation(
+            row["_id"], "conversation.accepted", service="conversation", task_id=row["task_id"]
+        )
+        if span.span:
+            db().gateway_runs.update_one(
+                {"_id": row["_id"]}, {"$set": {"trace_root_id": span.span.id}}
+            )
+        span.end(status=row["status"])
     return {
         "run_id": row["_id"],
         "turn_id": row["input"]["turn_id"],
@@ -172,6 +227,7 @@ def submit(conversation_id: str, form: MessageInput, request: Request, user=Depe
         "status": row["status"],
         "status_url": "/v1/runs/" + row["_id"],
         "events_url": "/v1/runs/" + row["_id"] + "/events",
+        "continuation": row.get("continuation"),
     }
 
 
@@ -227,6 +283,53 @@ def snapshot(run_id: str, user=Depends(current_user)):
     return run_snapshot(user, run_id)
 
 
+@router.get("/admin/v1/runs/{run_id}/prompt-preview")
+def prompt_preview(run_id: str, user=Depends(current_user)):
+    if user["role"] != "admin":
+        failure("ADMIN_REQUIRED", 403)
+    run_snapshot(user, run_id)  # Ownership and current lineage remain required for administrators.
+    return call("agent", "GET", "/internal/v1/runs/" + run_id + "/prompt-preview").json()
+
+
+class RunControlInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: UUID
+
+
+@router.post("/v1/runs/{run_id}/cancel")
+def cancel_run(run_id: str, form: RunControlInput, request: Request, user=Depends(current_user)):
+    request_key(request, form.request_id)
+    if not db().gateway_runs.find_one({"_id": run_id, "owner_id": user["_id"]}):
+        failure("RUN_NOT_FOUND", 404)
+    # Durable gateway intent also covers cancellation before asynchronous acceptance.
+    db().gateway_runs.update_one(
+        {"_id": run_id, "status": {"$nin": ["succeeded", "partial", "failed", "cancelled"]}},
+        {"$set": {"cancel_requested_at": now(), "cancel_request_id": str(form.request_id)}},
+    )
+    try:
+        return call(
+            "agent",
+            "POST",
+            "/internal/v1/runs/" + run_id + "/cancel",
+            json={"request_id": str(form.request_id)},
+        ).json()
+    except Exception:
+        return {"run_id": run_id, "status": "cancelling", "confirmation_pending": True}
+
+
+@router.post("/v1/runs/{run_id}/disable-web")
+def disable_web(run_id: str, form: RunControlInput, request: Request, user=Depends(current_user)):
+    request_key(request, form.request_id)
+    row = db().gateway_runs.find_one_and_update(
+        {"_id": run_id, "owner_id": user["_id"]},
+        {"$set": {"web_disabled_at": now()}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not row:
+        failure("RUN_NOT_FOUND", 404)
+    return {"run_id": run_id, "allow_web": False}
+
+
 @router.get("/v1/runs/{run_id}/events")
 def events(run_id: str, request: Request, user=Depends(current_user)):
     raw_cursor = request.headers.get("Last-Event-ID") or request.query_params.get("cursor")
@@ -254,7 +357,7 @@ def events(run_id: str, request: Request, user=Depends(current_user)):
                 previous = value
             else:
                 yield ": heartbeat\n\n"
-            if state["status"] in {"succeeded", "partial", "failed", "cancelled"}:
+            if state["status"] in {"succeeded", "partial", "failed", "cancelled", "waiting_input"}:
                 return
             time.sleep(1)
 

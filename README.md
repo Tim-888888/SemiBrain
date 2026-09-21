@@ -5,8 +5,17 @@ Stage B adds account registration and login, a knowledge workspace, asynchronous
 PDF/DOCX/Markdown/CSV ingestion, governed hybrid retrieval, read-only business tools,
 streamed Markdown answers and persistent conversation history. The three Python
 services and two Vue applications run against real storage and configured model APIs.
-Single-agent investigations, multi-agent coordination, Web Search, sandbox execution
-and advanced administration remain later-stage work. Their UI entry is disabled.
+Stage C adds bounded single-agent investigations with native tool calling, versioned
+runtime prompts, explicit fenced MongoDBSaver checkpoints, shared budgets, cancellation,
+fixed statistics over authorized results, optional public Web Search and static-page
+snapshots. A reviewer checks investigation drafts before Markdown publication.
+Stage C development is closed with known issues at the project owner's request;
+acceptance is partial. The final synthetic batch passed 115/120 task checks and
+60/60 numeric checks. Citation coverage missed its original threshold and two
+offline reviews remained unavailable. Original failures are retained, and repeated
+full-batch evaluations have stopped. This is not production quality certification.
+Text roles default to DeepSeek Flash through its Responses API.
+Multi-agent coordination, sandbox execution and advanced administration remain later-stage work.
 
 ## Repository layout
 
@@ -26,6 +35,57 @@ Each service owns its database and accesses other services through authenticated
 Final answers use ordinary Markdown. Typed tool and event contracts do not impose a
 fixed report schema on user-facing answers.
 
+Understanding, investigation, review and RCA share the configurable `deepseek-flash`
+default; role-specific overrides are available. DeepSeek uses non-thinking mode because
+its Responses interface does not provide encrypted reasoning replay. Native tools and
+the application Agent loop remain enabled. Plain reasoning is never stored or exposed.
+Providers with verified encrypted replay can enable it explicitly. Running checkpoints
+with different model profiles are rejected after a model migration; old final answers
+remain readable and follow-ups create new runs. Vision, embedding, reranking and public
+search keep their independently configured providers.
+
+The shared Markdown renderer supports bracket and dollar math through KaTeX. It
+disables trusted TeX commands, bounds macros and expression size, and sanitizes the
+rendered HTML/MathML. Copying preserves the original Markdown, including formulas.
+
+Investigation runs default to 12 reasoning rounds, 20 tool calls, 80,000 tokens and
+180 seconds. Unknown provider usage remains reserved and visible as unreconciled;
+unknown pricing is never reported as zero. Workers restore only the explicitly committed
+checkpoint ID, reconcile immutable model/tool observations, and reject stale writes.
+The service coordinator commits checkpoints around LangGraph node transitions rather
+than using an unfenced latest-checkpoint lookup. Restarting does not reset the budget.
+The normal loop reserves 12,000 tokens and 30 seconds for tool-free synthesis and review.
+Independent read-only requests may share one model turn; the executor processes their
+native calls sequentially under the same budget. At a soft limit, one closeout attempt
+uses registered observations and still requires review. If that cannot finish, a bounded
+Markdown fallback preserves validated raw counts, their actual query scope and citations.
+Cancellation and lease loss never publish this fallback. Recognized credit exhaustion
+is reported separately from transient transport failure and is not automatically retried.
+
+Measured input usage calibrates subsequent reservations only for matching model, system,
+tool-schema and message-prefix fingerprints. Changed content is still estimated conservatively.
+Unselected library directories are discovered through search instead of repeating opaque IDs
+each turn. Bounded tool views retain citation handles and search URLs; full evidence stays
+available for rereading. A source-gap review can return to authorized retrieval once, while
+an honest but incomplete answer remains partial. These changes keep the same run limits.
+
+Web access is off by default and can be disabled during a run. Search results are URLs,
+not fabricated source excerpts. The static fetcher validates DNS, the connected peer,
+and every redirect, accepts no credentials, and stores private immutable snapshots.
+It does not execute JavaScript, log into websites, or publish pages into the knowledge base.
+
+For enabled public-knowledge investigations, the prompt requires one search in the
+current run. A deterministic check of durable tool observations adds a single search
+if the model selects only local tools or attempts to answer without searching. It uses
+public topic keywords and the existing authorization, outbound-data checks, budgets
+and idempotency journal. Failed or empty searches do not cause mandatory retry loops;
+fetching and using relevant sources still depend on the task. Greetings, transformations
+of supplied content, explicit source-only tasks and internal-only queries are exempt.
+Cancellation, revoked access and execution limits still take precedence; an unattempted
+required search is disclosed rather than reported as successful.
+Langfuse uses the configured regional endpoint and exports allowlisted identifiers,
+status and usage only; business persistence does not depend on the telemetry service.
+
 `.env.example` contains configuration names and public defaults only. Actual credentials,
 source documents, local product and development records, acceptance evidence, and data
 volumes must remain outside this public repository.
@@ -40,6 +100,7 @@ uv sync --frozen --all-packages
 pnpm install --frozen-lockfile
 uv run --all-packages pytest -q
 uv run --all-packages ruff check packages services tests scripts
+node --test packages/ui/tests/*.test.mjs
 pnpm build
 uv run --all-packages python scripts/verify/export_contracts.py
 uv run --all-packages python scripts/verify/engineering.py
@@ -159,8 +220,9 @@ remain later-stage work. A parser subprocess is not the D-stage model code sandb
 even when a newer orphan exists. It does not implement durable leases or recovery.
 
 The sealed evaluation generator, oracle and evaluator run offline. Generate holdouts
-outside the repository, never mount them into running services, and leave them unused
-until the appropriate acceptance stage. Evaluation envelopes may contain measurement
+outside the repository; send only approved inputs and synthetic source tables to the
+runtime during acceptance. Never mount oracle files, expected answers or evaluation
+verdicts into running services. Evaluation envelopes may contain measurement
 metadata; the answer body always remains unrestricted Markdown.
 
 ## Provenance

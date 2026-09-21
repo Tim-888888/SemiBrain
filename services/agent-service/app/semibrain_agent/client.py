@@ -26,17 +26,31 @@ class BusinessClient:
         ).json()["access_token"]
         return call("business", method, path, delegation=token, **kwargs).json()
 
-    def tool(self, name, args):
-        logical_id = str(uuid5(NAMESPACE_URL, self.run_id + ":p0-tool:1"))
+    def tool(self, name, args, *, logical_id=None, guard=None, timeout=30):
+        logical_id = logical_id or str(uuid5(NAMESPACE_URL, self.run_id + ":p0-tool:1"))
+        if guard:
+            guard()
         self.request(
             "POST",
             "/internal/v1/tool-jobs",
             json={"logical_call_id": logical_id, "tool": name, "arguments": args},
         )
-        deadline = time.monotonic() + 30
+        deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
+            if guard:
+                try:
+                    guard()
+                except Exception:
+                    try:
+                        self.request("POST", "/internal/v1/tool-jobs/" + logical_id + "/cancel")
+                    except Exception:
+                        pass  # Reconciler retains the original active call and retries stop.
+                    raise
             result = self.request("GET", "/internal/v1/tool-jobs/" + logical_id)
             if result["status"] in {"succeeded", "failed", "partial", "cancelled"}:
                 return result
             time.sleep(0.5)
-        raise TimeoutError("TOOL_DEADLINE")
+        try:
+            self.request("POST", "/internal/v1/tool-jobs/" + logical_id + "/cancel")
+        finally:
+            raise TimeoutError("TOOL_DEADLINE")
