@@ -29,12 +29,12 @@ def test_text_profiles_share_deepseek_default_without_changing_vision(monkeypatc
     monkeypatch.delenv("SEMIBRAIN_LLM_ENCRYPTED_REASONING", raising=False)
     for role in ("understanding", "investigator", "reviewer", "rca"):
         profile = profile_for(role)
-        assert profile.model == "deepseek-v4-pro"
+        assert profile.model == "deepseek-flash"
         assert profile.reasoning_effort == "none" and not profile.encrypted_reasoning
     assert profile_for("vision").credential_prefix == "SEMIBRAIN_VISION"
     monkeypatch.setenv("SEMIBRAIN_LLM_REVIEWER_MODEL", "explicit-override")
     assert profile_for("reviewer").model == "explicit-override"
-    assert profile_for("investigator").model == "deepseek-v4-pro"
+    assert profile_for("investigator").model == "deepseek-flash"
 
 
 def test_responses_without_encrypted_reasoning_streams_only_visible_text(monkeypatch):
@@ -48,7 +48,7 @@ def test_responses_without_encrypted_reasoning_streams_only_visible_text(monkeyp
             "type": "response.completed",
             "response": {
                 "status": "completed",
-                "model": "deepseek-v4-pro",
+                "model": "deepseek-flash",
                 "output": [
                     {
                         "type": "reasoning",
@@ -74,7 +74,7 @@ def test_responses_without_encrypted_reasoning_streams_only_visible_text(monkeyp
     monkeypatch.setattr(httpx, "stream", stream)
     profile = ModelProfile(
         role="investigator",
-        model="deepseek-v4-pro",
+        model="deepseek-flash",
         protocol="responses",
         credential_prefix="SEMIBRAIN_LLM",
     )

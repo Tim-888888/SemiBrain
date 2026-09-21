@@ -30,7 +30,7 @@ class ModelProfile:
     parallel_tool_calls: bool = True
     reasoning_effort: str | None = "none"
     encrypted_reasoning: bool = False
-    version: str = "api-profiles-v3"
+    version: str = "api-profiles-v4"
     model_origin: str = "api_simulated"
 
     def snapshot(self):
@@ -51,7 +51,7 @@ def profile_for(role="investigator"):
         )
     if role not in {"understanding", "investigator", "reviewer", "rca"}:
         raise ModelError("UNKNOWN_MODEL_ROLE")
-    default = os.getenv("SEMIBRAIN_LLM_DEFAULT_MODEL", "deepseek-v4-pro")
+    default = os.getenv("SEMIBRAIN_LLM_DEFAULT_MODEL", "deepseek-flash")
     model = os.getenv("SEMIBRAIN_LLM_" + role.upper() + "_MODEL", default)
     return ModelProfile(
         role=role,
