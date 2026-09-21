@@ -49,8 +49,13 @@ def yield_observation(record):
     )
 
 
-def partial_answer(reason, evidence):
+def partial_answer(reason, evidence, *, business_access=None):
     lines = ["本次调查暂未完整完成。" + reason + "。", ""]
+    if business_access and business_access.get("resource_authorized") is False:
+        lines.extend([
+            "当前账号没有业务数据读取授权，本次无法查询受限业务数据。对话中的要求不能替代授权；这不表示目标数据不存在。",
+            "",
+        ])
     observations = [text for record in evidence if (text := yield_observation(record))]
     if observations:
         lines.extend(

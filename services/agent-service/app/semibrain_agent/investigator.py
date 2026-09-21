@@ -17,6 +17,7 @@ from semibrain_contracts.models import CitationBinding, Report
 
 from semibrain_agent.checkpoints import GRAPH_VERSION, STATE_VERSION, Checkpoints
 from semibrain_agent.client import BusinessClient
+from semibrain_agent.evidence_view import evidence_views
 from semibrain_agent.executor import ToolExecutor, extend_catalog, wire_tools
 from semibrain_agent.harness import BudgetExhausted, Harness, RunStopped, estimate_reservation
 from semibrain_agent.partial import partial_answer
@@ -496,7 +497,7 @@ class Investigator:
                         "question": self.context["input"]["question"],
                         "intent": state["intent"],
                         "stop_reason": state["stop_code"],
-                        "evidence": [self.executor.observation(item) for item in selected],
+                        "evidence": evidence_views(selected),
                         "execution_summary": self.execution_summary(),
                         "omitted_sources": len(evidence) - len(selected),
                     }
@@ -523,7 +524,7 @@ class Investigator:
                         "intent": state["intent"],
                         "capability_names": [item["name"] for item in self.catalog["tools"]],
                         "draft": state["draft"],
-                        "evidence": [self.executor.observation(item) for item in inspected],
+                        "evidence": evidence_views(inspected),
                         "executed": self.execution_summary(),
                     }
                 ),
@@ -568,23 +569,35 @@ class Investigator:
         return state
 
     def revise(self, state):
-        inputs = self.messages(state)
-        inputs.append(
+        # A repair needs the task, draft, verdict and bounded sources, not another
+        # copy of the whole tool transcript that exhausted the expansion budget.
+        inputs = [
+            {
+                "role": "user",
+                "content": canonical({
+                    "question": self.context["input"]["question"],
+                    "intent": state["intent"],
+                    "evidence": evidence_views(self.executor.evidence()),
+                    "execution_summary": self.execution_summary(),
+                }),
+            },
             {
                 "role": "user",
                 "content": "请按审查意见修订，只输出最终 Markdown。证据不足则清楚说明未完成项，不添加事实：\n"
                 + canonical(state["review"])
                 + "\n原草稿：\n"
                 + state["draft"],
-            }
-        )
+            },
+        ]
         turn, _ = self.model_call(state, inputs=inputs, final=True, max_tokens=2400)
         state.update(draft=turn.text, phase="review")
         return state
 
-    @staticmethod
-    def partial_body(reason, evidence):
-        return partial_answer(reason, evidence)
+    def partial_body(self, reason, evidence):
+        return partial_answer(
+            reason, evidence,
+            business_access=getattr(self, "catalog", {}).get("business_access"),
+        )
 
     def execute(self):
         state = self.state
