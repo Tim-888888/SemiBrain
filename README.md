@@ -62,6 +62,13 @@ Markdown fallback preserves validated raw counts, their actual query scope and c
 Cancellation and lease loss never publish this fallback. Recognized credit exhaustion
 is reported separately from transient transport failure and is not automatically retried.
 
+Measured input usage calibrates subsequent reservations only for matching model, system,
+tool-schema and message-prefix fingerprints. Changed content is still estimated conservatively.
+Unselected library directories are discovered through search instead of repeating opaque IDs
+each turn. Bounded tool views retain citation handles and search URLs; full evidence stays
+available for rereading. A source-gap review can return to authorized retrieval once, while
+an honest but incomplete answer remains partial. These changes keep the same run limits.
+
 Web access is off by default and can be disabled during a run. Search results are URLs,
 not fabricated source excerpts. The static fetcher validates DNS, the connected peer,
 and every redirect, accepts no credentials, and stores private immutable snapshots.
