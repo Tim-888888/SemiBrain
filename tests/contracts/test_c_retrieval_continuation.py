@@ -147,7 +147,7 @@ def test_rolling_tool_context_preserves_latest_pairs_old_results_and_source_hand
         agent.call_id("new", "read"): {"observation": {"tool": "web.fetch", "status": "succeeded",
             "evidence": [{"evidence_id": "source", "content": "LATEST_BODY"}]}}}
     agent.db = SimpleNamespace(model_turns=SimpleNamespace(find_one=lambda q: rows[q["_id"]]),
-        observations=SimpleNamespace(find_one=lambda q: observations[q["_id"]]))
+        observations=SimpleNamespace(find_one=lambda q: observations.get(q["_id"])))
     messages = agent.messages({"intent": {"action": "investigate"}, "model_turn_ids": ["old", "new"]})
     calls = [item["call_id"] for item in messages if item.get("type") == "function_call"]
     outputs = [item["call_id"] for item in messages if item.get("type") == "function_call_output"]

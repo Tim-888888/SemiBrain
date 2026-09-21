@@ -73,6 +73,16 @@ Web access is off by default and can be disabled during a run. Search results ar
 not fabricated source excerpts. The static fetcher validates DNS, the connected peer,
 and every redirect, accepts no credentials, and stores private immutable snapshots.
 It does not execute JavaScript, log into websites, or publish pages into the knowledge base.
+
+For enabled public-knowledge investigations, the prompt requires one search in the
+current run. A deterministic check of durable tool observations adds a single search
+if the model selects only local tools or attempts to answer without searching. It uses
+public topic keywords and the existing authorization, outbound-data checks, budgets
+and idempotency journal. Failed or empty searches do not cause mandatory retry loops;
+fetching and using relevant sources still depend on the task. Greetings, transformations
+of supplied content, explicit source-only tasks and internal-only queries are exempt.
+Cancellation, revoked access and execution limits still take precedence; an unattempted
+required search is disclosed rather than reported as successful.
 Langfuse uses the configured regional endpoint and exports allowlisted identifiers,
 status and usage only; business persistence does not depend on the telemetry service.
 

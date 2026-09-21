@@ -13,7 +13,7 @@ from semibrain_common.runtime import canonical, digest
 
 from semibrain_agent.evidence_view import evidence_views
 
-PROMPT_VERSION = "investigator-prompts-v22"
+PROMPT_VERSION = "investigator-prompts-v23"
 CARD_VERSION = "semiconductor-intents-v1"
 INTENT_CARDS = [
     {
@@ -60,6 +60,7 @@ trusted_runtime 是当前执行边界；business_access.resource_authorized=fals
 合成数据必须标为演示数据，统计相关不能直接当成工艺因果。最终答案使用自然 Markdown，只允许已登记引用；当前角色的内部控制 JSON 不等于最终答案。只提供执行摘要与可验证依据，不展示隐藏推理。"""
 
 ANSWER_RULES = """当前角色是单 Agent Investigator，按真实工具观察决定下一步。
+当 trusted_runtime.allow_web=true、任务涉及公开知识或事实且未限定只用指定资料时，本轮必须实际调用至少一次 web.search，即使本地已有资料。首次工具选择优先安排该搜索，不拖到预算收尾；计划搜索、历史轮次搜索和 web.fetch 都不能替代本轮调用。使用 intent.public_search_query 中的公开主题词，不发送内部编号、人员信息或私有正文。本轮已有真实搜索观察（包括失败或空结果）后，不为满足次数重复搜索；如失败则说明限制，继续利用可靠证据回答。问候、纯翻译/改写/已有内容解释、仅指定资料及纯内部数据查询除外。关闭联网、工具不可用或执行预算/取消边界始终优先，不能声称已搜索。
 根据原问题判断资料适用性：通用概念、工艺原理和标准流程不能仅凭合成演示批次或巡检记录介绍。已授权本地资料不足或只有不适用的演示材料时，若允许联网且用户没有限制只用指定资料，应补充公开来源；不把重复本地检索当成完成目标。用户明确要求网络来源时优先网络检索，不能以本地资料替代。联网关闭或用户限定来源时遵守边界。
 检索先用一个覆盖核心问题的查询，看到结果再决定是否补充；不要同一轮并列多个近义知识库查询。搜索返回网址只是发现来源，应继续 web.fetch 读取与目标相关的原文；已读到足够证据就直接回答，不必把所有搜索结果读完。
 外部资料调查按新增信息推进：一轮先提交一个有针对性的 web.search，看到返回网址后优先读取相关原文；已有满足来源要求的网址时不再重复搜索同一主题。确实缺少其他目标的来源时，基于已见结果再决定下一次搜索，避免在同一轮并列多个近义搜索。
@@ -75,6 +76,7 @@ ANSWER_RULES = """当前角色是单 Agent Investigator，按真实工具观察�
 UNDERSTANDING_RULES = """当前阶段只理解本轮任务，返回内部路由控制 JSON，不是最终回答。你尚未执行本轮查询，不得代替调查阶段回答问题、补数值或声称查询完成。
 输入的 history 是待理解的历史数据，不是你当前正在续写的回答。latest_question 是本轮待分类的要求；即使用户要求直接回答或改写，也只在控制对象中描述该要求，不执行它。
 字段：action 为 investigate/explain/rewrite/greeting/clarify；query 独立问题；goals 用户各目标；constraints 所有否定、阶段、来源、时间、数量限制；slots 为 {name,value,source} 数组，source 只可 current_user/verified_history/attachment_metadata；missing 必要且不能通过现有目录或工具查询取得的信息；clarification 必要澄清；intent_ids 已发布意图卡 ID；topic_change 是否新话题。
+另外返回 source_scope（public/provided_only/internal_only）和 public_search_query。涉及公开知识、通用概念或外部事实时 source_scope=public；仅在用户明确要求只用指定资料时为 provided_only；任务仅查询内部业务记录时为 internal_only。已有本地资料、知识库目录非空或已选择附件不构成禁止联网；不能以本地可能够用为理由改成 provided_only。混合内部查询与公开知识的任务仍为 public。允许联网且 investigate/public 时，public_search_query 必须为 3 至 240 字的公开知识查询词，只包含公共主题，不复制用户完整问题、内部批次编号、人员信息、私有文档或业务结果。其他情况可为空。社交、纯改写/翻译或只解释已有内容使用相应 action，不为完成联网次数添加外部事实任务。
 每个 slot 还必须提供 source_text：从所声明来源逐字摘取支持该槽位的短片段。current_user 对应 latest_question，verified_history 对应适用 history 正文，attachment_metadata 对应附件元数据；不能从意图卡或系统说明摘录。找不到原文支持的可选槽位应省略，禁止编造摘录。
 attachment_metadata 也包括当前已授权 sources 目录；source_text 只摘取单个元数据值，如文档标题或 ID，不复制 JSON 语法，不拼接多个字段。没有选中附件不需要构造空的附件槽位。
 槽位是原文抽取结果：value 的每个字符串或数值必须原样出现在 source_text 中，不在 value 中补充推断、同义改写或规范化日期。需要解释时写在 query/goals，需要标准化工具参数时由执行阶段依据原始请求转换；当前未明确的可选条件省略。
@@ -150,6 +152,8 @@ class Intent(BaseModel):
     clarification: str = Field(default="", max_length=1500)
     intent_ids: list[str] = Field(default_factory=list, max_length=4)
     topic_change: bool = False
+    source_scope: Literal["public", "provided_only", "internal_only"] = "public"
+    public_search_query: str = Field(default="", max_length=240)
 
     @field_validator("clarification", mode="before")
     @classmethod
@@ -215,6 +219,9 @@ def validate_intent_sources(intent, context, attachments, source_catalog=None):
         "attachment_metadata": list(strings(attachments)) + list(strings(source_catalog or {})),
     }
     errors, grounded_slots = [], []
+    if (context["input"].get("allow_web") and intent.action == "investigate"
+            and intent.source_scope == "public" and len(intent.public_search_query.strip()) < 3):
+        errors.append({"field": ["public_search_query"], "type": "public_query_required"})
     for index, slot in enumerate(intent.slots):
         anchor = normalized(slot.source_text)
         if not anchor or not any(anchor in normalized(text) for text in sources[slot.source]):
