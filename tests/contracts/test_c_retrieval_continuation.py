@@ -117,3 +117,42 @@ def test_unselected_directory_is_discovered_without_repeating_opaque_ids():
     assert "knowledge.search" in json.dumps(assembler.inputs())
     source["explicit_selection"] = True
     assert "opaque-identifier" in json.dumps(assembler.inputs())
+
+
+def test_duplicate_search_evidence_is_not_repeated_in_model_context():
+    evidence = {"evidence_id": "same", "marker": "1", "content": "UNIQUE_SOURCE_BODY"}
+    messages = [{"type": "function_call_output", "call_id": identity,
+                 "output": json.dumps({"evidence": [evidence]})} for identity in ("a", "b")]
+    result, compressed = compact_messages(messages)
+    assert compressed and json.dumps(result).count("UNIQUE_SOURCE_BODY") == 1
+    assert json.dumps(messages).count("UNIQUE_SOURCE_BODY") == 2
+    assert json.loads(result[0]["output"])["evidence"][0]["projection"]["duplicate_evidence"]
+    assert json.loads(result[1]["output"])["evidence"][0]["content"] == "UNIQUE_SOURCE_BODY"
+
+
+def test_rolling_tool_context_preserves_latest_pairs_old_results_and_source_handles():
+    agent = Investigator.__new__(Investigator)
+    agent.run = {"_id": "rolling"}
+    agent.prompts = SimpleNamespace(inputs=lambda: [{"role": "user", "content": "Only public data"}])
+    agent.executor = SimpleNamespace(evidence=lambda: [{"evidence_id": "source", "marker": "1",
+        "title": "Original", "source": {"data_origin": "public"}}])
+    rows = {"old": {"turn": {"replay": [{"type": "function_call", "call_id": "find",
+        "name": "web__search", "arguments": "{}"}], "calls": [{"call_id": "find"}]}},
+        "new": {"turn": {"replay": [{"type": "function_call", "call_id": "read",
+        "name": "web__fetch", "arguments": "{}"}], "calls": [{"call_id": "read"}]}}}
+    observations = {
+        agent.call_id("old", "find"): {"observation": {"tool": "web.search", "status": "succeeded",
+            "data": {"sources": [{"url": "https://example.org/original"}], "row_count": 1,
+                     "verbose_unused": "OLD_LARGE_BODY"}}},
+        agent.call_id("new", "read"): {"observation": {"tool": "web.fetch", "status": "succeeded",
+            "evidence": [{"evidence_id": "source", "content": "LATEST_BODY"}]}}}
+    agent.db = SimpleNamespace(model_turns=SimpleNamespace(find_one=lambda q: rows[q["_id"]]),
+        observations=SimpleNamespace(find_one=lambda q: observations[q["_id"]]))
+    messages = agent.messages({"intent": {"action": "investigate"}, "model_turn_ids": ["old", "new"]})
+    calls = [item["call_id"] for item in messages if item.get("type") == "function_call"]
+    outputs = [item["call_id"] for item in messages if item.get("type") == "function_call_output"]
+    assert calls == outputs == ["read"]
+    value = json.dumps(messages)
+    for expected in ("Only public data", "LATEST_BODY", "https://example.org/original", "source"):
+        assert expected in value
+    assert "OLD_LARGE_BODY" not in value

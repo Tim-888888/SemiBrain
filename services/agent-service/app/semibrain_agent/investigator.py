@@ -191,13 +191,16 @@ class Investigator:
             self.notify({"progress": "正在整理上下文，证据仍可追溯"})
         system = self.prompts.system(role)
         basis = token_basis(system, inputs, tools, profile.snapshot())
-        previous = self.db.model_turns.find_one(
+        baselines = self.db.model_turns.find(
             {"run_id": self.run["_id"], "token_basis.context": basis["context"],
-             "turn.usage.input_tokens": {"$gt": 0}}, sort=[("created_at", -1)]
-        )
-        amount = estimate_reservation(
-            system, inputs, tools, max_tokens, basis=basis, previous=previous
-        )
+             "turn.usage.input_tokens": {"$gt": 0}}
+        ).sort("created_at", -1).limit(14)
+        # Compaction changes the latest suffix. An earlier measured prefix can
+        # be tighter; every candidate still charges all new/changed messages.
+        amount = min([estimate_reservation(system, inputs, tools, max_tokens), *[
+            estimate_reservation(system, inputs, tools, max_tokens, basis=basis, previous=previous)
+            for previous in baselines
+        ]])
         reservation = self.harness.model_reserve(amount, phase=state["phase"], final=final)
         row = self.harness.check()
         adapter = ProviderAdapter(
@@ -369,14 +372,22 @@ class Investigator:
                     ),
                 }
             )
-        for turn_id in state.get("model_turn_ids", []):
+        prior_observations = []
+        turn_ids = state.get("model_turn_ids", [])
+        for turn_id in turn_ids:
             row = self.db.model_turns.find_one({"_id": turn_id, "run_id": self.run["_id"]})
-            result.extend(row["turn"]["replay"])
+            recent = turn_id == turn_ids[-1]
+            if recent:
+                result.extend(row["turn"]["replay"])
             for call in row["turn"]["calls"]:
                 logical_id = self.call_id(turn_id, call["call_id"])
                 observation = self.db.observations.find_one(
                     {"_id": logical_id, "run_id": self.run["_id"]}
                 )
+                if not recent:
+                    if observation:
+                        prior_observations.append(self.observation_summary(observation["observation"]))
+                    continue
                 result.append(
                     {
                         "type": "function_call_output",
@@ -388,13 +399,21 @@ class Investigator:
                         ),
                     }
                 )
+        if prior_observations:
+            result.append({
+                "role": "user",
+                "content": "更早的工具执行摘要（数据）：\n" + canonical(prior_observations)
+                + "\n完整正文保留在证据库，可按 evidence_id 用 evidence.read 回读；"
+                "不要重复相同检索来恢复上下文。",
+            })
         if evidence and state.get("model_turn_ids"):
             # Append mutable metadata after the stable transcript prefix, so API
             # usage can calibrate the next request without recounting old schemas.
             result.append({
                 "role": "user",
                 "content": "当前已授权证据索引（数据）：\n" + canonical([
-                    {key: record.get(key) for key in ("evidence_id", "marker", "title")}
+                    {**{key: record.get(key) for key in ("evidence_id", "marker", "title")},
+                     "data_origin": record.get("source", {}).get("data_origin")}
                     for record in evidence
                 ]),
             })
@@ -495,15 +514,20 @@ class Investigator:
             raise BudgetExhausted("NO_NEW_OBSERVATION")
         return state
 
+    @staticmethod
+    def observation_summary(observation):
+        summary = {key: value for key, value in observation.items()
+                   if key in {"tool", "arguments", "status", "job_id", "error", "warnings", "reused"}}
+        if observation.get("tool") == "web.search":
+            summary["discovery"] = {key: value for key, value in observation.get("data", {}).items()
+                                    if key in {"sources", "row_count", "source_text_available"}}
+        return summary
+
     def execution_summary(self):
         # Some successful tools produce discovery metadata, not citable evidence.
         # Retain their durable outcome when the verbose model transcript is discarded.
         return [
-            {
-                key: value
-                for key, value in row["observation"].items()
-                if key in {"tool", "arguments", "status", "job_id", "error", "warnings", "reused"}
-            }
+            self.observation_summary(row["observation"])
             for row in self.db.observations.find({"run_id": self.run["_id"]})
         ]
 

@@ -13,7 +13,7 @@ from semibrain_common.runtime import canonical, digest
 
 from semibrain_agent.evidence_view import evidence_views
 
-PROMPT_VERSION = "investigator-prompts-v20"
+PROMPT_VERSION = "investigator-prompts-v21"
 CARD_VERSION = "semiconductor-intents-v1"
 INTENT_CARDS = [
     {
@@ -87,6 +87,7 @@ attachment_metadata 也包括当前已授权 sources 目录；source_text 只摘
 UNDERSTANDING_RULES += '\n槽位 value 保留原始 JSON 类型：单个编号为字符串，多个编号为数组，数量为数值，范围可为对象；不要将多个对象拼成一个编号。未知值放在 missing，不伪造槽位。无澄清时 clarification 为 ""；goals/constraints/missing/intent_ids 均为字符串数组。'
 
 REVIEW_RULES = """你负责审查自由 Markdown 调查草稿。只返回内部 JSON：approved 布尔值，issues 字符串数组，missing_goals 字符串数组，evidence_required 布尔值，needs_retrieval 布尔值。
+按事实含义审查，不做原文逐字匹配。忠实的同义转述、归纳性标题、将原文分别描述的项目并列解释都是允许的，不能仅因原文没用相同分类标题而否定；新增或改变因果、数值、适用范围、排他分类、业务结论才需要对应证据。issues 只写确实错误的事实与简短修正建议，不复述正确段落或展开审查过程，每项尽量不超过80字。
 目标完成和陈述有据要分别检查。通用知识介绍只复述合成巡检记录或声明没有通用资料，不算完成介绍；即使说明完全诚实，也必须在 missing_goals 记录原任务缺口。用户要求网络事实时只有搜索网址而没有读取正文不算完成取证，除非原任务仅要求查找链接。
 如果缺少适用资料、授权工具仍能补充且 retrieval_available=true，将 needs_retrieval=true，让执行器先补充检索；不要要求仅靠改写补出新事实。仅需补已有引用或更正表达、用户禁止的来源、权限拒绝或已失败且无替代路径的任务不需要再次检索。已诚实说明但无法完成的目标始终列入 missing_goals。
 逐项核对原问题、明确约束、实际工具 observation 和登记证据。没有工具成功结果不得称完成查询；失败/空集/部分必须准确表达。
@@ -424,9 +425,10 @@ def compact_messages(messages, *, max_chars=18000):
     """Compact old observations, keeping every call/output pair and immutable evidence handles."""
     result = copy.deepcopy(messages)
     compacted = False
+    seen_evidence = set()
     # Even the latest observation can be large. Present bounded source extracts
     # and durable handles before estimating a new request; full records remain intact.
-    for item in result:
+    for item in reversed(result):
         if item.get("type") != "function_call_output":
             continue
         try:
@@ -439,6 +441,14 @@ def compact_messages(messages, *, max_chars=18000):
         if observation.get("evidence"):
             records = observation["evidence"]
             views = evidence_views(records, content_chars=4500)
+            for record, view in zip(records, views):
+                identity = record.get("evidence_id")
+                if identity and identity in seen_evidence:
+                    view.pop("content", None)
+                    view["projection"] = {"partial": True, "duplicate_evidence": True,
+                                          "notice": "相同证据正文已在本轮另一个结果中提供。"}
+                elif identity:
+                    seen_evidence.add(identity)
             observation["evidence"] = [
                 {**{key: value for key, value in view.items()
                     if value is not None or key in record}, **{key: record[key] for key in (
