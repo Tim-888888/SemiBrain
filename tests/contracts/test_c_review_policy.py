@@ -46,6 +46,27 @@ from semibrain_agent.provider import ModelError
             "succeeded",
             True,
         ),
+        (
+            "The recorded count is zero.",
+            {"approved": True, "evidence_required": True},
+            [{"marker": "1", "title": "Authorized query result"}],
+            "partial",
+            False,
+        ),
+        (
+            "The result is production data [1].",
+            {"approved": True, "issues": ["The source is synthetic data."]},
+            [{"marker": "1", "title": "Synthetic query result"}],
+            "partial",
+            False,
+        ),
+        (
+            "The requested source is unavailable; no new result can be confirmed.",
+            {"approved": True, "evidence_required": False, "missing_goals": ["new query"]},
+            [{"marker": "1", "title": "Previously available source"}],
+            "partial",
+            True,
+        ),
     ],
 )
 def test_review_publication_gate(draft, verdict, evidence, expected_outcome, preserved):
@@ -67,10 +88,49 @@ def test_review_publication_gate(draft, verdict, evidence, expected_outcome, pre
     assert result["review"]["approved"] is preserved
 
 
+def test_contradictory_approval_routes_to_revision_and_preserves_missing_goals():
+    agent = Investigator.__new__(Investigator)
+    agent.notify = lambda *_: None
+    agent.executor = SimpleNamespace(
+        evidence=lambda: [{"marker": "1", "title": "Query result"}],
+        observation=lambda item: item,
+    )
+    agent.context = {"input": {"question": "Compare two authorized groups."}}
+    agent.catalog = {"tools": []}
+    agent.run = {"_id": "review-revision-fixture"}
+    agent.db = SimpleNamespace(observations=SimpleNamespace(find=lambda *_: []))
+    agent.model_call = lambda *_, **__: (
+        SimpleNamespace(
+            text=json.dumps(
+                {
+                    "approved": True,
+                    "issues": ["The reported value differs from the source."],
+                    "missing_goals": ["Comparison group has no data"],
+                }
+            )
+        ),
+        "review",
+    )
+    state = {
+        "intent": {"action": "investigate"},
+        "draft": "The available group's rate is 75% [1].",
+        "review_count": 0,
+    }
+
+    result = agent.review(state)
+
+    assert result["phase"] == "revise"
+    assert result["review"]["approved"] is False
+    assert result["review"]["missing_goals"] == ["Comparison group has no data"]
+    assert "75%" in result["draft"]
+
+
 def test_malformed_control_is_not_reported_as_missing_user_information():
     agent = Investigator.__new__(Investigator)
     agent.notify = lambda *_: None
-    agent.prompts = SimpleNamespace(inputs=lambda role: [{"role": "user", "content": "Known scope"}])
+    agent.prompts = SimpleNamespace(
+        inputs=lambda role: [{"role": "user", "content": "Known scope"}]
+    )
     calls = []
 
     def malformed(*_, **kwargs):

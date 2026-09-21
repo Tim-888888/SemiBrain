@@ -530,13 +530,17 @@ class Investigator:
         except ValueError:
             review = Review(approved=False, issues=["审查结果无法校验"])
         valid = {record["marker"] for record in evidence}
-        if set(re.findall(r"\[(\d+)\]", state["draft"])) - valid:
-            review = Review(approved=False, issues=[*review.issues, "引用编号未登记"])
+        issues = list(review.issues)
+        if cited - valid:
+            issues.append("引用编号未登记")
         if state["intent"]["action"] == "investigate" and not evidence and review.evidence_required:
-            review = Review(
-                approved=False,
-                issues=[*review.issues, "未取得可引用证据，不得给出有依据的调查结论"],
-            )
+            issues.append("未取得可引用证据，不得给出有依据的调查结论")
+        if review.evidence_required and evidence and not cited:
+            issues.append("正文缺少引用，请在相应事实附近标注已登记且支持该事实的来源")
+        # A source card does not cite a claim. Contradictory model approval must not
+        # bypass either reviewer defects or the deterministic publication checks.
+        if issues:
+            review = review.model_copy(update={"approved": False, "issues": issues})
         state["review"] = review.model_dump()
         state["review_count"] += 1
         if review.approved:

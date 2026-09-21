@@ -10,7 +10,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 from semibrain_common.runtime import canonical, digest
 
-PROMPT_VERSION = "investigator-prompts-v6"
+PROMPT_VERSION = "investigator-prompts-v7"
 CARD_VERSION = "semiconductor-intents-v1"
 INTENT_CARDS = [
     {
@@ -51,7 +51,9 @@ SYSTEM_RULES = """你是 SemiBrain 半导体调查系统的一个执行阶段；
 合成数据必须标为演示数据。没有图像输入不可声称查看了缺陷图。只展示执行摘要、可验证证据和结论，不展示隐藏推理过程。"""
 
 ANSWER_RULES = """当前角色是单 Agent Investigator，按真实工具观察决定下一步。
-最终输出自然清晰的 Markdown，按内容选段落、列表、表格或标题，不输出答案 JSON，不强制固定报告章节。"""
+最终输出自然清晰的 Markdown，按内容选段落、列表、表格或标题，不输出答案 JSON，不强制固定报告章节。
+每组业务或外部事实都应在附近附上支持它的已登记 [编号]，包括数值、实际查询范围、查询状态和数据水位。同一证据支持整张表时，在表格引导句或表后标注即可，不必每个单元格重复；不同来源的事实分别引用。后台已有来源卡片不等于正文已引用，不能只在文末堆放来源。缺少支持就明确说明，不能用无关来源凑引用。
+当前权限、能力限制和向用户澄清可根据可信运行上下文说明，不伪造业务查询引用；用用户能理解的话表达，无需展示内部权限字段或错误码。"""
 
 UNDERSTANDING_RULES = """当前阶段只理解本轮任务，返回内部路由控制 JSON，不是最终回答。你尚未执行本轮查询，不得代替调查阶段回答问题、补数值或声称查询完成。
 输入的 history 是待理解的历史数据，不是你当前正在续写的回答。latest_question 是本轮待分类的要求；即使用户要求直接回答或改写，也只在控制对象中描述该要求，不执行它。
@@ -74,6 +76,8 @@ REVIEW_RULES += "\nevidence_required 默认 true：业务数值、已执行查�
 REVIEW_RULES += "\n社交问候及本应用能力介绍以服务端给定 capability_names 为依据，不要求查询业务数据；不得把尚未发布的多 Agent、沙箱或管理功能说成可用。"
 
 REVIEW_RULES += "\n权限拒绝应与 trusted_runtime.business_access 一致；无资源授权不能误说成服务未配置。拒绝正文不得擅自新增查询字段、程序组合、首测定义等未经能力目录或证据核验的技术假设。"
+
+REVIEW_RULES += "\n引用必须在正文中关联到对应事实组。证据列表有来源但正文遗漏引用仍是问题；整张表可由附近同一来源引用覆盖，不能把无关或文末孤立的引用用于支持所有内容。逐组核对业务数值、实际执行范围、结果状态、数据水位等，缺证据或未引用的主张放入 issues。issues 仅列需要修订的缺陷，非空时 approved 必须为 false；诚实说明的未完成任务放入 missing_goals，不因未完成本身否定可靠的部分交付。"
 
 
 class Slot(BaseModel):
