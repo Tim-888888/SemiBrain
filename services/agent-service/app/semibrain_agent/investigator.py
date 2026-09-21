@@ -593,6 +593,7 @@ class Investigator:
             # One bounded return to tools; a prose-only revision cannot supply missing sources.
             state.update(phase="model", retrieval_repair_count=1,
                          retrieval_feedback=state["review"])
+            state["intent"] = {**state["intent"], "action": "investigate"}
             self.notify({"progress": "现有来源不足以回答问题，正在补充相关资料"})
         elif review.approved:
             state.update(

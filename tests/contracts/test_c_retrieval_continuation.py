@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 from semibrain_agent.harness import estimate_reservation, estimate_text, token_basis
 from semibrain_agent.investigator import Investigator
-from semibrain_agent.prompts import compact_messages
+from semibrain_agent.prompts import PromptAssembler, compact_messages
 
 
 def test_measured_prefix_leaves_room_for_read_after_search():
@@ -62,9 +62,10 @@ def test_latest_large_source_is_projected_with_durable_handles():
     result, compressed = compact_messages(messages)
     assert compressed and messages == original
     record = json.loads(result[-1]["output"])["evidence"][0]
-    for key in ("evidence_id", "marker", "lineage_ref", "source"):
+    for key in ("evidence_id", "marker", "lineage_ref"):
         assert record[key] == evidence[key]
-    assert record["projection"]["partial"] and len(record["content"]) < 3000
+    assert record["source"]["data_origin"] == "public"
+    assert record["projection"]["partial"] and len(record["content"]) < 4500
     assert result[0]["call_id"] == result[1]["call_id"]
 
 
@@ -92,7 +93,7 @@ def test_source_gap_returns_to_tools_once_or_finishes_partial(closing, repaired,
     # Even an inconsistent reviewer cannot call an unmet source requirement success.
     agent.model_call = lambda *_, **__: (SimpleNamespace(text=json.dumps({
         "approved": True, "needs_retrieval": True, "evidence_required": False})), "review")
-    state = {"intent": {"action": "investigate", "goals": ["General explanation"]},
+    state = {"intent": {"action": "explain", "goals": ["General explanation"]},
              "draft": "Only a demonstration record is available.", "review_count": 0,
              "closing": closing, "retrieval_repair_count": int(repaired)}
     result = agent.review(state)
@@ -102,3 +103,17 @@ def test_source_gap_returns_to_tools_once_or_finishes_partial(closing, repaired,
         assert result["outcome"] == "partial"
     else:
         assert result["retrieval_repair_count"] == 1
+        assert result["intent"]["action"] == "investigate"
+
+
+def test_unselected_directory_is_discovered_without_repeating_opaque_ids():
+    context = {"input": {"question": "Describe a topic", "mode": "investigation",
+                         "allow_web": True, "input_revision": 1}, "history": []}
+    source = {"explicit_selection": False, "documents": [
+        {"document_id": "opaque-identifier", "version": "immutable-version", "title": "Manual"}]}
+    assembler = PromptAssembler(context, {"tools": []}, source, [])
+    assert "opaque-identifier" not in json.dumps(assembler.inputs())
+    assert "Manual" in json.dumps(assembler.inputs("understanding"))
+    assert "knowledge.search" in json.dumps(assembler.inputs())
+    source["explicit_selection"] = True
+    assert "opaque-identifier" in json.dumps(assembler.inputs())
