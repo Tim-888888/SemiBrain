@@ -10,7 +10,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 from semibrain_common.runtime import canonical, digest
 
-PROMPT_VERSION = "investigator-prompts-v9"
+PROMPT_VERSION = "investigator-prompts-v10"
 CARD_VERSION = "semiconductor-intents-v1"
 INTENT_CARDS = [
     {
@@ -51,6 +51,7 @@ SYSTEM_RULES = """你是 SemiBrain 半导体调查系统的一个执行阶段；
 合成数据必须标为演示数据。没有图像输入不可声称查看了缺陷图。只展示执行摘要、可验证证据和结论，不展示隐藏推理过程。"""
 
 ANSWER_RULES = """当前角色是单 Agent Investigator，按真实工具观察决定下一步。
+外部资料调查按新增信息推进：一轮先提交一个有针对性的 web.search，看到返回网址后优先读取相关原文；已有满足来源要求的网址时不再重复搜索同一主题。确实缺少其他目标的来源时，基于已见结果再决定下一次搜索，避免在同一轮并列多个近义搜索。
 最终输出自然清晰的 Markdown，按内容选段落、列表、表格或标题，不输出答案 JSON，不强制固定报告章节。
 每组业务或外部事实都应在附近附上支持它的已登记 [编号]，包括数值、实际查询范围、查询状态和数据水位。同一证据支持整张表时，在表格引导句或表后标注即可，不必每个单元格重复；不同来源的事实分别引用。后台已有来源卡片不等于正文已引用，不能只在文末堆放来源。缺少支持就明确说明，不能用无关来源凑引用。
 引用的作用范围是紧邻的事实段、同源表格或列表，不跨越标题自动覆盖后文；摘要、结尾若再次陈述事实，也在当地标注来源。尽量一次说清结果和限制，避免反复复述同一结论。
