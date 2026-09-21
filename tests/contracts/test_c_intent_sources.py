@@ -78,9 +78,10 @@ def test_selected_knowledge_metadata_is_also_a_valid_source():
 def test_real_quote_cannot_ground_an_invented_slot_value():
     value = intent("current_user", "查 L-27 的公开资料")
     value.slots[0].value = "最近公开资料"
-    with pytest.raises(IntentSourceError, match="INTENT_SOURCE_UNVERIFIED") as caught:
-        validate_intent_sources(value, CONTEXT, [])
-    assert caught.value.fields[0]["type"] == "value_not_in_source_text"
+    grounded = validate_intent_sources(value, CONTEXT, [])
+    assert grounded.slots[0].value == CONTEXT["input"]["question"]
+    assert "最近" not in grounded.slots[0].value
+    assert value.slots[0].value == "最近公开资料"  # Preserve the raw control for diagnosis.
 
 
 def test_source_repair_identifies_history_without_accepting_or_exposing_its_value():
@@ -98,8 +99,9 @@ def test_iso_date_separator_is_equivalent_but_different_dates_are_not():
     parsed.slots[0].value = {"start": "2026-09-10T00:00", "end": "2026-09-11T00:00"}
     assert validate_intent_sources(parsed, context, []) is parsed
     parsed.slots[0].value["end"] = "2026-09-12T00:00"
-    with pytest.raises(IntentSourceError):
-        validate_intent_sources(parsed, context, [])
+    grounded = validate_intent_sources(parsed, context, [])
+    assert grounded.slots[0].value == context["input"]["question"]
+    assert "2026-09-12" not in grounded.slots[0].value
 
 
 @pytest.mark.parametrize("value,valid", [(["L-27", "L-28"], True), (12, True), (1, False), ([], False)])
@@ -109,6 +111,15 @@ def test_typed_extracts_preserve_lists_and_numeric_boundaries(value, valid):
     parsed.slots[0].value = value
     if valid:
         assert validate_intent_sources(parsed, context, []) is parsed
-    else:
+    elif value == []:
         with pytest.raises(IntentSourceError):
             validate_intent_sources(parsed, context, [])
+    else:
+        assert validate_intent_sources(parsed, context, []).slots[0].value == context["input"]["question"]
+
+
+def test_synonym_or_unit_normalization_keeps_source_words_without_domain_aliases():
+    context = {"input": {"question": "筛选超过百分之二十的记录"}}
+    parsed = intent("current_user", "百分之二十")
+    parsed.slots[0].value = 0.2
+    assert validate_intent_sources(parsed, context, []).slots[0].value == "百分之二十"

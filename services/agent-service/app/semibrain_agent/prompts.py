@@ -11,7 +11,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 from semibrain_common.runtime import canonical, digest
 
-PROMPT_VERSION = "investigator-prompts-v15"
+PROMPT_VERSION = "investigator-prompts-v16"
 CARD_VERSION = "semiconductor-intents-v1"
 INTENT_CARDS = [
     {
@@ -160,7 +160,7 @@ class IntentSourceError(ValueError):
 
 
 def validate_intent_sources(intent, context, attachments, source_catalog=None):
-    """Require extractive slot values and anchors; task semantics still need review."""
+    """Anchor slots to real input; retain the source wording for unverified normalization."""
     def normalized(text):
         text = " ".join(unicodedata.normalize("NFKC", text).split())
         # ISO's date/time separator changes representation, not the selected time.
@@ -201,7 +201,7 @@ def validate_intent_sources(intent, context, attachments, source_catalog=None):
         "verified_history": [item["content"] for item in context.get("history", [])],
         "attachment_metadata": list(strings(attachments)) + list(strings(source_catalog or {})),
     }
-    errors = []
+    errors, grounded_slots = [], []
     for index, slot in enumerate(intent.slots):
         anchor = normalized(slot.source_text)
         if not anchor or not any(anchor in normalized(text) for text in sources[slot.source]):
@@ -214,11 +214,22 @@ def validate_intent_sources(intent, context, attachments, source_catalog=None):
                 if found_in else
                 {"field": ["slots", index, "source_text"], "type": "source_text_not_found"}
             )
-        elif not (leaves := list(values(slot.value))) or not all(present(v, anchor) for v in leaves):
-            errors.append({"field": ["slots", index, "value"], "type": "value_not_in_source_text"})
+        elif not (leaves := list(values(slot.value))):
+            errors.append({"field": ["slots", index, "value"], "type": "empty_extracted_value"})
+        elif not all(present(v, anchor) for v in leaves):
+            # A synonym, converted unit or inferred value is not a verified extract.
+            # Keep the user's actual words instead of inventing a normalization or
+            # making them resubmit a perfectly clear request. Tool arguments have
+            # their own schema and scope checks against the original question.
+            grounded_slots.append(slot.model_copy(update={"value": slot.source_text}))
+            continue
+        grounded_slots.append(slot)
     if errors:
         raise IntentSourceError(errors[:6])
-    return intent
+    return (
+        intent.model_copy(update={"slots": grounded_slots})
+        if any(a is not b for a, b in zip(intent.slots, grounded_slots)) else intent
+    )
 
 
 def parse_control(text, schema):
