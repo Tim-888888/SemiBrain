@@ -22,12 +22,14 @@ from semibrain_agent.harness import BudgetExhausted, Harness, RunStopped, estima
 from semibrain_agent.partial import partial_answer
 from semibrain_agent.prompts import (
     Intent,
+    IntentSourceError,
     PromptAssembler,
     Review,
     RoutePolicy,
     compact_messages,
     parse_control,
     redact_preview,
+    validate_intent_sources,
 )
 from semibrain_agent.provider import (
     ModelError,
@@ -247,7 +249,10 @@ class Investigator:
                 state, role="understanding", inputs=inputs, suffix=str(retry), max_tokens=2000
             )
             try:
-                intent = parse_control(turn.text, Intent)
+                candidate = parse_control(turn.text, Intent)
+                intent = validate_intent_sources(
+                    candidate, self.context, self.attachments, self.prompts.sources
+                )
                 break
             except ValueError as exc:
                 errors = (
@@ -256,6 +261,8 @@ class Investigator:
                         for error in exc.errors(include_input=False, include_url=False)[:6]
                     ]
                     if isinstance(exc, ValidationError)
+                    else exc.fields
+                    if isinstance(exc, IntentSourceError)
                     else [{"type": "invalid_json"}]
                 )
                 inputs = [

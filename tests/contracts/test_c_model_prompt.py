@@ -272,6 +272,9 @@ def test_prompt_layers_preserve_roles_and_current_metadata_only():
     assert "RAW_PRIVATE_DOCUMENT" not in json.dumps(control_messages)
     assert assembler.preview("understanding")["messages"] == control_messages
     assert "不输出答案 JSON" in assembler.system("investigator")
+    assert any(s["name"] == "published_intent_cards" for s in assembler.sections("understanding"))
+    for role in ("investigator", "reviewer"):
+        assert all(s["name"] != "published_intent_cards" for s in assembler.sections(role))
     for role in ("understanding", "reviewer"):
         assert "不输出答案 JSON" not in assembler.system(role)
         assert "UNTRUSTED_OVERRIDE" not in assembler.system(role)
