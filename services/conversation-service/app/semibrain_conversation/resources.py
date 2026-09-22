@@ -13,6 +13,23 @@ from semibrain_conversation.auth import admin, current_user
 router = APIRouter()
 
 
+@router.post("/v1/attachments/images", status_code=201)
+def upload_image(file: UploadFile = File(...), allow_external: bool = Form(False),
+                 user=Depends(current_user)):
+    raw = file.file.read(3 * 1024**2 + 1)
+    if not raw or len(raw) > 3 * 1024**2:
+        failure("IMAGE_SIZE_INVALID", 413)
+    return business(user, "POST", "/internal/v1/attachments/images", operation="attachment.upload",
+                    files={"file": (file.filename, raw, file.content_type)},
+                    data={"allow_external": str(allow_external).lower()}).json()
+
+
+@router.post("/v1/attachments/{asset_id}/revoke")
+def revoke_attachment(asset_id: UUID, user=Depends(current_user)):
+    return business(user, "POST", f"/internal/v1/attachments/{asset_id}/revoke",
+                    operation="attachment.upload").json()
+
+
 @router.get("/v1/knowledge/documents")
 def documents(user=Depends(current_user)):
     return business(

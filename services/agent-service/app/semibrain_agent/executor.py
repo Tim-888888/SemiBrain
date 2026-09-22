@@ -173,7 +173,7 @@ class ToolExecutor:
                 source_version=chunk["version"],
                 content_hash=chunk["content_hash"],
                 scope_ref="demo",
-                kind="document",
+                kind="image" if chunk.get("media_type", "").startswith("image/") else "document",
                 data_origin=chunk["data_origin"],
                 observed_at=now(),
                 locator=chunk["location"],
@@ -240,7 +240,7 @@ class ToolExecutor:
                     args,
                     logical_id=logical_id,
                     guard=self.harness.check,
-                    timeout=65 if name.startswith("web.") else 30,
+                    timeout=65 if name.startswith(("web.", "sandbox.", "vision.")) else 30,
                 )
                 observation = {
                     "status": result["status"],
@@ -248,7 +248,7 @@ class ToolExecutor:
                     "warnings": result.get("warnings", []),
                     "error": result.get("error"),
                 }
-                if name == "web.search":
+                if name in {"web.search", "vision.inspect"}:
                     self.harness.settle_external_tool(
                         logical_id, (result.get("data") or {}).get("usage")
                     )
@@ -269,6 +269,8 @@ class ToolExecutor:
                             result["data"].get("title") or result["data"].get("url") or "公开网页"
                         )
                         if name.startswith("web.")
+                        else "图片观察" if name == "vision.inspect"
+                        else "沙箱分析 · " + name if name.startswith("sandbox.")
                         else "合成演示数据 · " + name,
                         refs=refs,
                         job_id=result["job_id"],
@@ -289,7 +291,7 @@ class ToolExecutor:
         except (RunStopped, BudgetExhausted):
             raise
         except (ValueError, HTTPException, TimeoutError) as exc:
-            if name == "web.search":
+            if name in {"web.search", "vision.inspect"}:
                 self.harness.settle_external_tool(logical_id, None)
             code = (
                 exc.detail.get("code", "TOOL_REQUEST_FAILED")

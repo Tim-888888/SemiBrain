@@ -16,6 +16,7 @@ dependencies = [
     "sqlglot>=27",
     "jieba>=0.42.1",
     "beautifulsoup4>=4.13,<5",
+    "pillow>=11,<13",
 ]
 [build-system]
 requires = ["hatchling>=1.27"]

@@ -22,6 +22,46 @@ from semibrain_business.security import (
 router = APIRouter()
 
 
+@router.post("/internal/v1/attachments/images", status_code=201)
+def upload_image(request: Request, file: UploadFile = File(...),
+                 allow_external: bool = Form(False)):
+    import io
+
+    from PIL import Image
+
+    claim = authorize_request(request, "attachment.upload")
+    if not allow_external:
+        failure("IMAGE_EXTERNAL_USE_NOT_AUTHORIZED", 403)
+    raw = file.file.read(3 * 1024**2 + 1)
+    if not raw or len(raw) > 3 * 1024**2:
+        failure("IMAGE_SIZE_INVALID", 413)
+    try:
+        with Image.open(io.BytesIO(raw)) as image:
+            if image.format not in {"PNG", "JPEG", "WEBP"} or image.width * image.height > 16_000_000:
+                raise ValueError("IMAGE_FORMAT_INVALID")
+            format_name, size = image.format, image.size
+            image.verify()
+    except Exception:
+        failure("IMAGE_FORMAT_INVALID", 400)
+    asset = store_asset(raw, Image.MIME[format_name], claim["subject_id"],
+                        "image." + {"PNG": "png", "JPEG": "jpg", "WEBP": "webp"}[format_name])
+    db().assets.update_one({"_id": asset["_id"]}, {"$set": {
+        "chat_upload": True, "allow_external": True, "data_origin": "authorized_business",
+        "width": size[0], "height": size[1],
+    }})
+    return {"asset_id": asset["_id"], "name": asset["filename"], "width": size[0], "height": size[1]}
+
+
+@router.post("/internal/v1/attachments/{asset_id}/revoke")
+def revoke_attachment(asset_id: UUID, request: Request):
+    claim = authorize_request(request, "attachment.upload")
+    changed = db().assets.update_one({"_id": str(asset_id), "owner_id": claim["subject_id"], "chat_upload": True},
+                                    {"$set": {"revoked": True}})
+    if not changed.matched_count:
+        failure("ASSET_UNAVAILABLE", 403)
+    return {"revoked": True}
+
+
 def document_view(row):
     return {
         "id": row["_id"],
@@ -423,6 +463,15 @@ def attachment_context(request: Request):
     remaining = 24000
     for asset_id in claim.get("attachment_refs", []):
         asset = db().assets.find_one({"_id": asset_id})
+        if asset and asset.get("chat_upload") and asset["owner_id"] == claim["subject_id"] and not asset.get("revoked"):
+            items.append({
+                "asset_id": asset_id, "document_id": asset_id, "version": asset_id,
+                "title": asset["filename"], "text": "用户提供的图片，视觉内容尚待核验。",
+                "media_type": asset["ref"]["media_type"], "content_hash": asset["ref"]["content_hash"],
+                "data_origin": asset["data_origin"], "location": {"width": asset["width"], "height": asset["height"]},
+                "lineage_ref": "asset:" + asset_id + ":" + asset["ref"]["content_hash"],
+            })
+            continue
         if not asset or not asset.get("document_id"):
             failure("ATTACHMENT_UNAVAILABLE", 403)
         document = authorized_document(asset["document_id"], claim, active=True)
@@ -480,6 +529,8 @@ def asset_content(asset_id: str, request: Request):
     asset = db().assets.find_one({"_id": asset_id})
     if not asset:
         failure("ASSET_NOT_FOUND", 404)
+    if asset.get("revoked"):
+        failure("ASSET_UNAVAILABLE", 403)
     if asset.get("document_id"):
         document = authorized_document(asset["document_id"], claim, active=True)
         version = db().document_versions.find_one({"_id": document["active_version"]})
@@ -488,8 +539,11 @@ def asset_content(asset_id: str, request: Request):
             failure("ASSET_VERSION_UNAVAILABLE", 403)
     elif asset.get("job_id"):
         job = db().tool_jobs.find_one({"_id": asset["job_id"], "subject_id": claim["subject_id"]})
-        if not job:
+        if not job or job["status"] not in {"succeeded", "partial"}:
             failure("ASSET_UNAVAILABLE", 403)
+        lineage_check((job.get("result", {}).get("data") or {}).get("lineage_refs", []), claim)
+    elif asset.get("chat_upload") and asset["owner_id"] == claim["subject_id"]:
+        lineage_check(asset.get("source_refs", []), claim)
     else:
         failure("ASSET_UNAVAILABLE", 403)
     content = read_asset(asset)

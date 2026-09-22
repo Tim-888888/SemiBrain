@@ -49,7 +49,8 @@ def profile_for(role="investigator"):
             image_input=True,
             reasoning_effort=None,
         )
-    if role not in {"understanding", "investigator", "reviewer", "rca"}:
+    if role not in {"understanding", "investigator", "reviewer", "rca",
+                    "supervisor", "sqlbot", "rag", "tool"}:
         raise ModelError("UNKNOWN_MODEL_ROLE")
     default = os.getenv("SEMIBRAIN_LLM_DEFAULT_MODEL", "deepseek-flash")
     model = os.getenv("SEMIBRAIN_LLM_" + role.upper() + "_MODEL", default)

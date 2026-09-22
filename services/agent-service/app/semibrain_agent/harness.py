@@ -224,7 +224,7 @@ class Harness:
         if self.db.tool_calls.find_one({"_id": logical_id, "run_id": self.run_id}):
             return
         field = {"web.search": "searches", "web.fetch": "pages"}.get(name)
-        token_reservation = 8000 if name == "web.search" else 0
+        token_reservation = {"web.search": 8000, "vision.inspect": 12000}.get(name, 0)
         limit = row["budget"]["limits"]
 
         def reserve(session):

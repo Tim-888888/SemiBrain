@@ -27,6 +27,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import DBAPIError
 
 from semibrain_business import warehouse as w
+from semibrain_business.analysis_tools import ANALYSIS_TOOLS, sandbox_configured, vision_configured
 from semibrain_business.cancellation import CancellationScope, QueryCancelled, watch_engine
 from semibrain_business.safe_fetch import WebError
 from semibrain_business.security import authorize_request, db
@@ -154,7 +155,7 @@ register(
     "对本运行已成功查询的 job_ids 做均值、样本标准差、百分点差或分组比较。只能读已有授权结果，不接受自填数列、表达式或脚本；百分点比较必须同产品/阶段/程序/时间/口径。",
 )
 
-for _name, (_schema, _function, _description) in WEB_TOOLS.items():
+for _name, (_schema, _function, _description) in {**WEB_TOOLS, **ANALYSIS_TOOLS}.items():
     register(_name, _schema, _function, _description)
 
 
@@ -178,6 +179,8 @@ def catalog(request: Request):
             for name, value in REGISTRY.items()
             if name in claim["allowed_ops"]
             and (not name.startswith("web.") or configured())
+            and (not name.startswith("sandbox.") or sandbox_configured())
+            and (not name.startswith("vision.") or vision_configured())
             and (not name.startswith("business.") or business_authorized)
         ],
         "web_available": configured(),
@@ -308,7 +311,16 @@ def cancel(job_id: str, request: Request):
         )
         return "cancelling"
 
-    return {"job_id": job_id, "status": transaction(stop)}
+    state = transaction(stop)
+    if state == "cancelling" and job["tool"] == "sandbox.python":
+        from semibrain_business.sandbox import provider
+
+        instance = db().sandbox_instances.find_one({"job_id": job_id})
+        if instance:
+            provider().stop(instance["_id"])
+            db().tool_jobs.update_one({"_id": job_id, "status": "cancelling"},
+                                      {"$set": {"query_stopped_at": now()}})
+    return {"job_id": job_id, "status": state}
 
 
 def execute_one():
@@ -319,7 +331,7 @@ def execute_one():
                 "lease_until": {"$lt": now()},
                 "$or": [
                     {"status": "cancelling"},
-                    {"status": "running", "tool": {"$regex": "^web\\."}},
+                    {"status": "running", "tool": {"$regex": "^(web|sandbox|vision)\\."}},
                 ],
             }
         )
@@ -391,7 +403,7 @@ def execute_one():
                 {
                     "status": "running",
                     "lease_until": {"$lt": now()},
-                    "tool": {"$not": {"$regex": "^web\\."}},
+                    "tool": {"$not": {"$regex": "^(web|sandbox|vision)\\."}},
                 },
             ],
             "attempt": {"$lt": 3},
@@ -431,6 +443,7 @@ def execute_one():
                 "auth_version": job["auth_version"],
                 "run_id": job["run_id"],
                 "operation": job["tool"],
+                "task_id": job.get("task_id"),
             },
         )
         tool = REGISTRY[job["tool"]]
@@ -440,13 +453,13 @@ def execute_one():
                 calculate(form, job)
                 if job["tool"] == "business.statistics"
                 else tool["function"](form, job)
-                if job["tool"].startswith("web.")
+                if job["tool"].startswith(("web.", "sandbox.", "vision."))
                 else tool["function"](form)
             )
         data = json.loads(canonical(data))
         assert_no_credentials(data)
         warnings = []
-        assets = []
+        assets = [item["ref"] for item in data.get("artifacts", [])]
         if len(canonical(data).encode()) > 50000:
             from semibrain_business.knowledge import store_asset
 
@@ -468,11 +481,12 @@ def execute_one():
         data["result_state"] = result_state(data)
         source = SourceRef(
             source_id=job["_id"],
-            source_version=w.METRIC_VERSION,
+            source_version="vision-v1" if job["tool"].startswith("vision.")
+            else "docker-v1" if job["tool"].startswith("sandbox.") else w.METRIC_VERSION,
             content_hash=digest(canonical(data)),
             scope_ref="demo",
-            kind="web" if job["tool"].startswith("web.") else "query",
-            data_origin="public" if job["tool"].startswith("web.") else "synthetic",
+            kind="web" if job["tool"].startswith("web.") else "image" if job["tool"].startswith("vision.") else "query",
+            data_origin=data.get("data_origin", "public" if job["tool"].startswith("web.") else "synthetic"),
             observed_at=now(),
             locator={"logical_call_id": job["logical_call_id"], "tool": job["tool"]},
         )

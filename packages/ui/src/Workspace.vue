@@ -12,6 +12,9 @@ const user = ref<User | null>(null), loading = ref(true), view = ref('chat'), er
 const conversations = ref<any[]>([]), conversation = ref<any>(null), messages = ref<Message[]>([]), activeRun = ref<Run | null>(null)
 const attached = ref<string[]>([])
 const mode = ref<'quick_qa' | 'investigation'>('quick_qa'), allowWeb = ref(false)
+const multiAvailable = ref(false), multiAgent = ref(false), uploading = ref(false)
+const imageUploads = ref<{ asset_id: string; name: string }[]>([])
+const submittedStrategy = computed(() => mode.value === 'investigation' ? (multiAgent.value ? 'multi_agent' : 'single_agent') : undefined)
 const cancelling = ref(false), promptPreview = ref('')
 const knowledge = ref<any[]>([]), selectedDocuments = ref<string[]>([]), sending = ref(false), scrollArea = ref<HTMLElement | null>(null)
 const settings = ref(false), oldPassword = ref(''), newPassword = ref('')
@@ -25,9 +28,9 @@ const denied = computed(() => adminPage.value && user.value?.role !== 'admin')
 const running = computed(() => sending.value || (!!activeRun.value && !['succeeded', 'failed', 'partial', 'cancelled', 'waiting_input'].includes(activeRun.value.status)))
 async function loadLists() {
   const current = generation
-  const [page, documents] = await Promise.all([api('/v1/conversations'), api('/v1/knowledge/documents')])
+  const [page, documents, capabilities] = await Promise.all([api('/v1/conversations'), api('/v1/knowledge/documents'), api('/v1/capabilities')])
   if (current !== generation) return
-  conversations.value = page.items; conversationsCursor.value = page.next_cursor
+  multiAvailable.value = capabilities.multi_agent === true; conversations.value = page.items; conversationsCursor.value = page.next_cursor
   knowledge.value = documents.items.filter((item: any) => item.active_version)
   const updated = page.items.find((item: any) => item.id === conversation.value?.id)
   if (updated) conversation.value = updated
@@ -35,17 +38,32 @@ async function loadLists() {
 async function signedIn(value: User) { user.value = value; if (adminPage.value) view.value = 'knowledge'; await loadLists() }
 function closeStream() { source?.close(); source = null }
 async function bottom() { await nextTick(); scrollArea.value?.scrollTo({ top: scrollArea.value.scrollHeight, behavior: 'smooth' }) }
-function newChat() { allowWeb.value = false; generation++; closeStream(); conversation.value = null; messages.value = []; activeRun.value = null; error.value = ''; pending = null; selectedDocuments.value = []; attached.value = []; messagesCursor.value = null; view.value = 'chat' }
+function newChat() { multiAgent.value = false; imageUploads.value = []; allowWeb.value = false; generation++; closeStream(); conversation.value = null; messages.value = []; activeRun.value = null; error.value = ''; pending = null; selectedDocuments.value = []; attached.value = []; messagesCursor.value = null; view.value = 'chat' }
 async function openChat(item: any) {
   const current = ++generation; closeStream(); view.value = 'chat'; error.value = ''; pending = null
   try {
     const result = await api(`/v1/conversations/${item.id}/messages`)
     if (generation !== current) return
-    conversation.value = item; messages.value = result.items; messagesCursor.value = result.next_cursor; activeRun.value = null; selectedDocuments.value = []; attached.value = []
+    multiAgent.value = item.last_investigation_strategy === 'multi_agent'; imageUploads.value = []; conversation.value = item; messages.value = result.items; messagesCursor.value = result.next_cursor; activeRun.value = null; selectedDocuments.value = []; attached.value = []
     const last = messages.value.at(-1)
+    if (last?.input_scope) restoreScope(last)
     if (last?.role === 'user') subscribe(last.run_id, current)
     await bottom()
   } catch (e) { if (generation === current) error.value = (e as Error).message }
+}
+function restoreScope(state: Partial<Run>) {
+  if (!state.input_scope) return
+  mode.value = state.input_scope.mode; allowWeb.value = state.input_scope.allow_web && !state.web_disabled
+  selectedDocuments.value = state.input_scope.resource_restrictions; attached.value = state.input_scope.attachment_refs
+  multiAgent.value = state.input_scope.investigation_strategy === 'multi_agent'
+}
+async function uploadImage(event: Event) {
+  const element = event.target as HTMLInputElement, file = element.files?.[0]; if (!file) return
+  uploading.value = true; const current = generation
+  try { const body = new FormData(); body.append('file', file); body.append('allow_external', 'true')
+    const result = await api('/v1/attachments/images', { method: 'POST', body })
+    if (current !== generation) return; imageUploads.value.push(result); attached.value.push(result.asset_id)
+  } catch (e) { error.value = (e as Error).message } finally { uploading.value = false; element.value = '' }
 }
 function subscribe(runId: string, current = generation) {
   closeStream(); activeRun.value = { run_id: runId, status: 'queued', sequence: 0, body_markdown: '', citations: [], progress: '准备处理' }
@@ -60,7 +78,7 @@ function subscribe(runId: string, current = generation) {
       closeStream()
       const revision = conversation.value?.revision || 1
       if (!messages.value.some(message => message.role === 'assistant' && message.run_id === runId)) messages.value.push({ ...state, id: runId, role: 'assistant', input_revision: revision })
-      activeRun.value = null; if (state.status === 'waiting_input' && state.input_scope) { mode.value = state.input_scope.mode; allowWeb.value = state.input_scope.allow_web && !state.web_disabled; selectedDocuments.value = state.input_scope.resource_restrictions; attached.value = state.input_scope.attachment_refs }; await loadLists()
+      activeRun.value = null; restoreScope(state); await loadLists()
     }
   })
   source.addEventListener('access.unavailable', () => {
@@ -79,16 +97,16 @@ async function send() {
       if (current !== generation) return
       conversation.value = created
     }
-    if (!pending || pending.payload.text !== text.value || pending.payload.mode !== mode.value || pending.payload.allow_web !== allowWeb.value || JSON.stringify(pending.payload.resource_restrictions) !== JSON.stringify(selectedDocuments.value) || JSON.stringify(pending.payload.attachment_refs) !== JSON.stringify(attached.value) || pending.conversationId !== conversation.value.id) pending = {
+    if (!pending || pending.payload.text !== text.value || pending.payload.mode !== mode.value || pending.payload.investigation_strategy !== submittedStrategy.value || pending.payload.allow_web !== allowWeb.value || JSON.stringify(pending.payload.resource_restrictions) !== JSON.stringify(selectedDocuments.value) || JSON.stringify(pending.payload.attachment_refs) !== JSON.stringify(attached.value) || pending.conversationId !== conversation.value.id) pending = {
       conversationId: conversation.value.id, payload: { request_id: crypto.randomUUID(), expected_revision: conversation.value.revision,
-        text: text.value, mode: mode.value, continuation_of: messages.value.at(-1)?.status === 'waiting_input' ? messages.value.at(-1)?.run_id : null, resource_restrictions: [...selectedDocuments.value], attachment_refs: [...attached.value], allow_web: allowWeb.value },
+        text: text.value, mode: mode.value, investigation_strategy: submittedStrategy.value, continuation_of: messages.value.at(-1)?.status === 'waiting_input' ? messages.value.at(-1)?.run_id : null, resource_restrictions: [...selectedDocuments.value], attachment_refs: [...attached.value], allow_web: allowWeb.value },
     }
     const submitted = pending
     const accepted = await post(`/v1/conversations/${submitted.conversationId}/messages`, submitted.payload, submitted.payload.request_id)
     if (current !== generation) { await loadLists(); return }
     conversation.value.revision = accepted.input_revision
     messages.value.push({ id: accepted.turn_id, role: 'user', text: submitted.payload.text, run_id: accepted.run_id, input_revision: accepted.input_revision })
-    text.value = ''; attached.value = []; pending = null; subscribe(accepted.run_id); await loadLists(); await bottom()
+    text.value = ''; pending = null; subscribe(accepted.run_id); await loadLists(); await bottom()
   } catch (e) { if (current === generation) error.value = (e as Error).message }
   finally { sending.value = false }
 }
@@ -136,11 +154,11 @@ onUnmounted(closeStream)
       <template v-else>
         <div ref="scrollArea" class="conversation-scroll">
           <div v-if="!messages.length && !activeRun" class="welcome"><span class="welcome-symbol">✳</span><p class="eyebrow">SEMI BRAIN / KNOWLEDGE ASSISTANT</p><h1>从一个问题开始</h1><p>查阅资料，理解工艺，核验每一条来源。</p><div class="starter-grid"><button @click="text = '知识库中有哪些关于测试良率的资料？'">▤ 查找专业资料<span>从已发布文档中寻找证据 ↗</span></button><button @click="text = '请列出可查询的合成演示批次。'">▦ 查询演示数据<span>了解批次与测试上下文 ↗</span></button></div></div>
-          <div class="message-column"><button v-if="messagesCursor" class="text-button" @click="olderMessages">加载更早消息</button><section v-for="message in messages" :key="message.id" :class="['message', message.role]"><div v-if="message.role === 'user'" class="question-bubble">{{ message.text }}</div><template v-else><div class="assistant-label"><span class="mini-brand">S</span> SemiBrain<span v-if="message.status === 'failed'" class="muted">处理未完成</span></div><RunDetails :run="message" /><button v-if="user.role === 'admin' && message.strategy === 'single_agent'" class="text-button" @click="showPrompt(message.run_id)">查看脱敏提示词</button><MarkdownAnswer :text="message.body_markdown || (message.status === 'failed' ? '本次处理未完成，请稍后重试。' : message.status === 'cancelled' ? '本次执行已停止。' : '')" :citations="message.citations" /></template></section>
-            <section v-if="activeRun" class="message assistant"><div class="assistant-label"><span class="mini-brand">S</span> SemiBrain</div><div class="run-progress" role="status"><span class="pulse-dot"></span>{{ activeRun.progress || '正在处理' }}</div><RunDetails :run="activeRun" /><button v-if="allowWeb" class="text-button" @click="disableWeb">关闭本次联网</button><button class="text-button" :disabled="cancelling || activeRun.status === 'cancelling'" @click="cancelRun">{{ activeRun.status === 'cancelling' ? '正在停止…' : '停止回答' }}</button><MarkdownAnswer :text="activeRun.body_markdown" :citations="activeRun.citations" streaming /></section>
+          <div class="message-column"><button v-if="messagesCursor" class="text-button" @click="olderMessages">加载更早消息</button><section v-for="message in messages" :key="message.id" :class="['message', message.role]"><div v-if="message.role === 'user'" class="question-bubble">{{ message.text }}</div><template v-else><div class="assistant-label"><span class="mini-brand">S</span> SemiBrain<span v-if="message.status === 'failed'" class="muted">处理未完成</span></div><RunDetails :run="message" /><button v-if="user.role === 'admin' && ['single_agent', 'multi_agent'].includes(message.strategy || '')" class="text-button" @click="showPrompt(message.run_id)">查看脱敏提示词</button><MarkdownAnswer :text="message.body_markdown || (message.status === 'failed' ? '本次处理未完成，请稍后重试。' : message.status === 'cancelled' ? '本次执行已停止。' : '')" :citations="message.citations" :artifacts="message.artifacts" /></template></section>
+            <section v-if="activeRun" class="message assistant"><div class="assistant-label"><span class="mini-brand">S</span> SemiBrain</div><div class="run-progress" role="status"><span class="pulse-dot"></span>{{ activeRun.progress || '正在处理' }}</div><RunDetails :run="activeRun" /><button v-if="allowWeb" class="text-button" @click="disableWeb">关闭本次联网</button><button class="text-button" :disabled="cancelling || activeRun.status === 'cancelling'" @click="cancelRun">{{ activeRun.status === 'cancelling' ? '正在停止…' : '停止回答' }}</button><MarkdownAnswer :text="activeRun.body_markdown" :citations="activeRun.citations" :artifacts="activeRun.artifacts" streaming /></section>
           </div>
         </div>
-        <div class="composer-area"><p v-if="error" class="error" role="alert">{{ error }}</p><div class="composer"><textarea v-model="text" :disabled="running" placeholder="向 SemiBrain 提问…" aria-label="问题输入框" rows="2" @keydown="keydown"></textarea><div class="composer-toolbar"><select v-model="mode" :disabled="running" aria-label="问答模式" @change="allowWeb = false"><option value="quick_qa">快速问答</option><option value="investigation">智能调查</option></select><label class="checkbox web-toggle"><input v-model="allowWeb" type="checkbox" :disabled="running" />联网搜索</label><details ref="sourceMenu" class="source-select"><summary>▤ 资料范围{{ selectedDocuments.length ? ` · ${selectedDocuments.length}` : '' }}</summary><div class="source-menu"><p class="small muted">不勾选时检索全部可访问资料</p><label v-for="doc in knowledge" :key="doc.id" class="checkbox"><input v-model="selectedDocuments" type="checkbox" :value="doc.id" />{{ doc.title }}</label><p class="small muted">将已发布文件作为本轮阅读对象</p><label v-for="doc in knowledge.filter(item => item.asset_id)" :key="doc.asset_id" class="checkbox"><input v-model="attached" type="checkbox" :value="doc.asset_id" />阅读：{{ doc.title }}</label><p v-if="!knowledge.length" class="small muted">暂无已发布资料</p></div></details><button class="send-button" :disabled="!text.trim() || running" @click="send" aria-label="发送问题">↑</button></div></div><p class="composer-note">回答可通过引用核验 · 业务数据为合成演示数据 · Enter 发送，Shift + Enter 换行</p></div>
+        <div class="composer-area"><p v-if="error" class="error" role="alert">{{ error }}</p><div class="composer"><textarea v-model="text" :disabled="running" placeholder="向 SemiBrain 提问…" aria-label="问题输入框" rows="2" @keydown="keydown"></textarea><div class="composer-toolbar"><select v-model="mode" :disabled="running" aria-label="问答模式" @change="allowWeb = false"><option value="quick_qa">快速问答</option><option value="investigation">智能调查</option></select><label v-if="mode === 'investigation'" class="checkbox web-toggle"><input v-model="multiAgent" type="checkbox" :disabled="running || (!multiAvailable && !multiAgent)" />多 Agent 协作</label><label class="checkbox web-toggle"><input v-model="allowWeb" type="checkbox" :disabled="running" />联网搜索</label><label v-if="mode === 'investigation' && multiAgent" class="image-upload">＋ 图片<input type="file" accept="image/png,image/jpeg,image/webp" :disabled="running || uploading" @change="uploadImage" /><span class="small muted">上传即允许本轮视觉模型读取（≤3 MB）</span></label><details ref="sourceMenu" class="source-select"><summary>▤ 资料范围{{ selectedDocuments.length ? ` · ${selectedDocuments.length}` : '' }}</summary><div class="source-menu"><p class="small muted">不勾选时检索全部可访问资料</p><label v-for="doc in knowledge" :key="doc.id" class="checkbox"><input v-model="selectedDocuments" :disabled="running" type="checkbox" :value="doc.id" />{{ doc.title }}</label><p class="small muted">将已发布文件作为本轮阅读对象</p><label v-for="doc in knowledge.filter(item => item.asset_id)" :key="doc.asset_id" class="checkbox"><input v-model="attached" :disabled="running" type="checkbox" :value="doc.asset_id" />阅读：{{ doc.title }}</label><label v-for="image in imageUploads" :key="image.asset_id" class="checkbox"><input v-model="attached" :disabled="running" type="checkbox" :value="image.asset_id" />图片：{{ image.name }}</label><p v-if="attached.some(id => !knowledge.some(doc => doc.asset_id === id) && !imageUploads.some(image => image.asset_id === id))" class="small muted">已继承上一轮图片附件 <button type="button" class="text-button" @click="attached = attached.filter(id => knowledge.some(doc => doc.asset_id === id))">移除</button></p><p v-if="!knowledge.length" class="small muted">暂无已发布资料</p></div></details><button class="send-button" :disabled="!text.trim() || running || uploading" @click="send" aria-label="发送问题">↑</button></div></div><p class="composer-note">回答可通过引用核验 · 业务数据为合成演示数据 · Enter 发送，Shift + Enter 换行</p></div>
       </template>
     </main>
     <div v-if="promptPreview" class="modal-backdrop"><section class="small-modal" role="dialog" aria-modal="true" aria-label="脱敏提示词预览"><h2>只读装配预览</h2><p>仅显示本账号且来源仍可访问的已执行模型输入；不包含密钥或隐藏推理。</p><pre class="prompt-preview">{{ promptPreview }}</pre><button class="secondary" @click="promptPreview = ''">关闭</button></section></div>

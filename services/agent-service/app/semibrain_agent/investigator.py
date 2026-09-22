@@ -52,11 +52,19 @@ class GraphState(TypedDict):
 
 
 class Investigator:
+    strategy = "single_agent"
+    graph_version = GRAPH_VERSION
+    state_version = STATE_VERSION
+    limits = None
+    roles = ("understanding", "investigator", "reviewer")
+    phases = ("understand", "model", "tools", "finalize", "review", "revise")
+    prompt_type = PromptAssembler
+
     def __init__(self, run, fence, context, notify):
         self.run, self.context, self.notify = run, context, notify
         self.harness = Harness(run["_id"], fence)
         self.db = self.harness.db
-        self.harness.initialize()
+        self.harness.initialize(self.limits)
         self.client = BusinessClient(
             run["_id"], context["task_id"], context["input"]["input_revision"]
         )
@@ -88,23 +96,26 @@ class Investigator:
             ]
         self.catalog = catalog
         self.wire, self.names = wire_tools(catalog)
-        self.prompts = PromptAssembler(context, catalog, sources, self.attachments)
-        self.checkpoints = Checkpoints(self.harness, context["task_id"], run["attempt"])
+        self.prompts = self.prompt_type(context, catalog, sources, self.attachments)
+        self.checkpoints = Checkpoints(
+            self.harness, context["task_id"], run["attempt"],
+            graph_version=self.graph_version, state_version=self.state_version,
+        )
         self.state = self.checkpoints.restore()
         runtime_models = {
             role: profile_for(role).snapshot()
-            for role in ("understanding", "investigator", "reviewer")
+            for role in self.roles
         }
         self.bundle = run.get("version_bundle") or {
-            "graph_version": GRAPH_VERSION,
-            "state_version": STATE_VERSION,
+            "graph_version": self.graph_version,
+            "state_version": self.state_version,
             **self.prompts.snapshot(),
             "route_version": RoutePolicy().version,
             "models": runtime_models,
             "metric_version": catalog.get("metric_version"),
         }
         if (
-            self.bundle["graph_version"] != GRAPH_VERSION
+            self.bundle["graph_version"] != self.graph_version
             or self.bundle["tool_version"] != catalog.get("version")
             or self.bundle["prompt_version"] != self.prompts.snapshot()["prompt_version"]
             or self.bundle["models"] != runtime_models
@@ -113,13 +124,13 @@ class Investigator:
         self.notify(
             {
                 "version_bundle": self.bundle,
-                "strategy": "single_agent",
+                "strategy": self.strategy,
                 "model_origin": "api_simulated",
                 "progress": "正在准备智能调查",
             }
         )
         builder = StateGraph(GraphState)
-        phases = ("understand", "model", "tools", "finalize", "review", "revise")
+        phases = self.phases
         for phase in phases:
             builder.add_node(phase, self.node(phase))
             builder.add_edge(phase, END)
@@ -230,6 +241,7 @@ class Investigator:
                 identity,
                 {
                     "turn": asdict(turn),
+                    "task_id": self.context["task_id"],
                     "phase": state["phase"],
                     "profile": profile.snapshot(),
                     "token_basis": basis,

@@ -6,6 +6,7 @@ RUN pip install --no-cache-dir --index-url https://pypi.tuna.tsinghua.edu.cn/sim
 COPY pyproject.toml uv.lock ./
 COPY packages/common/pyproject.toml packages/common/pyproject.toml
 COPY packages/contracts/pyproject.toml packages/contracts/pyproject.toml
+COPY packages/sandbox-runtime/pyproject.toml packages/sandbox-runtime/pyproject.toml
 COPY services/conversation-service/pyproject.toml services/conversation-service/pyproject.toml
 COPY services/agent-service/pyproject.toml services/agent-service/pyproject.toml
 COPY services/business-service/pyproject.toml services/business-service/pyproject.toml

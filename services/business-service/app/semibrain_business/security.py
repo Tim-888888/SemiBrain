@@ -63,8 +63,14 @@ def require_manager(claim):
         failure("ADMIN_REQUIRED", 403)
 
 
-def lineage_check(refs, claim):
+def lineage_check(refs, claim, _seen=None):
+    seen = set() if _seen is None else _seen
     for ref in refs:
+        if ref in seen:
+            continue
+        if len(seen) >= 256:
+            failure("LINEAGE_DEPTH_LIMIT", 403)
+        seen.add(ref)
         if not isinstance(ref, str) or len(ref.split(":")) != 3:
             failure("INVALID_LINEAGE", 403)
         kind, identity, version = ref.split(":", 2)
@@ -75,6 +81,14 @@ def lineage_check(refs, claim):
             job = db().tool_jobs.find_one({"_id": identity, "subject_id": claim["subject_id"]})
             if not job or job.get("result_hash") != version:
                 failure("EVIDENCE_UNAVAILABLE", 403)
+            if job.get("tool", "").startswith("business.") and "demo" not in claim["resource_ids"]:
+                failure("RESOURCE_SCOPE_DENIED", 403)
+            lineage_check((job.get("result", {}).get("data") or {}).get("lineage_refs", []), claim, seen)
+        elif kind == "asset":
+            asset = db().assets.find_one({"_id": identity, "owner_id": claim["subject_id"]})
+            if not asset or asset.get("revoked") or asset["ref"]["content_hash"] != version:
+                failure("ASSET_UNAVAILABLE", 403)
+            lineage_check(asset.get("source_refs", []), claim, seen)
         elif kind == "web":
             snapshot = db().web_snapshots.find_one(
                 {"_id": identity, "owner_id": claim["subject_id"], "content_hash": version}

@@ -263,18 +263,20 @@ def parse_control(text, schema):
 class RoutePolicy:
     """The model cannot enable a mode, a provider or additional tool privileges."""
 
-    version: str = "single-agent-route-v1"
+    version: str = "user-strategy-route-v2"
 
     def choose(self, snapshot, intent: Intent, available_tools):
         if snapshot["mode"] != "investigation":
             raise ValueError("INVESTIGATION_MODE_REQUIRED")
+        if snapshot.get("investigation_strategy") not in {None, "single_agent", "multi_agent"}:
+            raise ValueError("INVALID_INVESTIGATION_STRATEGY")
         tools = [
             tool
             for tool in available_tools
             if snapshot.get("allow_web") or not tool["name"].startswith("web.")
         ]
         return {
-            "strategy": "single_agent",
+            "strategy": snapshot.get("investigation_strategy") or "single_agent",
             "action": intent.action,
             "allow_web": bool(snapshot.get("allow_web")),
             "tools": tools,

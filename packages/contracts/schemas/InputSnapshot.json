@@ -39,6 +39,22 @@
       "title": "Allow Web",
       "type": "boolean"
     },
+    "investigation_strategy": {
+      "anyOf": [
+        {
+          "enum": [
+            "single_agent",
+            "multi_agent"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Investigation Strategy"
+    },
     "resource_restrictions": {
       "items": {
         "type": "string"

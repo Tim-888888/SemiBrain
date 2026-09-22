@@ -1,6 +1,7 @@
 from semibrain_common.runtime import relay
 from semibrain_common.worker import PollTask, worker_app
 
+from semibrain_business.analysis_tools import reclaim_revoked
 from semibrain_business.knowledge import process_one
 from semibrain_business.security import db
 from semibrain_business.storage import initialize
@@ -15,6 +16,12 @@ def tick():
     relay(db())
     query.delay()
     ingest.delay()
+    sandbox_cleanup.delay()
+
+
+@app.task(name="business.sandbox_cleanup", base=PollTask)
+def sandbox_cleanup():
+    reclaim_revoked()
 
 
 @app.task(name="business.query", base=PollTask)

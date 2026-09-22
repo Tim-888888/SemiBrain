@@ -1,3 +1,4 @@
+import os
 import re
 import time
 from datetime import timedelta
@@ -25,6 +26,30 @@ from semibrain_agent.model import ModelAdapter
 router = APIRouter()
 
 
+@router.get("/internal/v1/capabilities")
+def capabilities(request: Request):
+    internal_identity(request, {"conversation"})
+    return {"multi_agent": os.getenv("SEMIBRAIN_MULTI_AGENT_ENABLED", "false").lower() == "true"}
+
+
+@router.get("/internal/v1/runs/{run_id}/tasks/{task_id}/authorization")
+def task_authorization(run_id: str, task_id: str, request: Request):
+    internal_identity(request, {"conversation"})
+    from semibrain_agent.multi_policy import ROLE_TOOLS
+    run = db().runs.find_one({"_id": run_id, "strategy": "multi_agent"})
+    task = db().tasks.find_one({"_id": task_id, "run_id": run_id})
+    if not run or not task or task["role"] not in ROLE_TOOLS:
+        failure("TASK_BINDING_UNAVAILABLE", 403)
+    return {
+        "task_id": task_id, "run_id": run_id,
+        "active": run["status"] == "running" and task["status"] == "running"
+        and not run.get("cancel_requested_at") and run.get("lease_until", now()) > now()
+        and task.get("parent_fence") == run.get("fence"),
+        "allowed_ops": sorted((ROLE_TOOLS[task["role"]] - {"evidence.read"})
+                              | {"lineage.check", "business.catalog"}),
+    }
+
+
 def db():
     return database("agent")
 
@@ -35,7 +60,9 @@ def accept(command, session):
     payload_hash = digest(canonical(payload))
     existing = db().runs.find_one({"_id": str(command.run_id)}, session=session)
     if existing:
-        if existing["payload_hash"] != payload_hash:
+        legacy = {**payload, "input": {k: v for k, v in payload["input"].items() if k != "investigation_strategy"}}
+        compatible = command.input.investigation_strategy is None and existing["payload_hash"] == digest(canonical(legacy))
+        if existing["payload_hash"] != payload_hash and not compatible:
             failure("IDEMPOTENCY_CONFLICT", 409)
         return existing
     row = {
@@ -50,6 +77,8 @@ def accept(command, session):
         "citations": [],
         "progress": "正在准备问题",
         "created_at": now(),
+        **({"strategy": command.input.investigation_strategy or "single_agent"}
+           if command.input.mode == "investigation" else {}),
     }
     db().runs.insert_one(row, session=session)
     publish(db(), "stream:agent", "run.queued", row["_id"], {"status": "queued"}, session)
@@ -97,6 +126,8 @@ def snapshot(run_id: str, request: Request):
         "stop_code",
         "web_disabled",
         "web_activity",
+        "task_tree",
+        "plan_version",
     ):
         if key in row:
             result[key] = row[key]
@@ -110,6 +141,20 @@ def snapshot(run_id: str, request: Request):
                 "revision": report["revision"],
             }
         )
+    if row.get("strategy") == "multi_agent":
+        task_fields = ("role", "key", "goals", "depends_on", "plan_version", "status", "attempt",
+                       "role_round", "error", "model_calls", "tool_calls", "settled_tokens")
+        result["task_tree"] = [{"task_id": task["_id"], **{k: task.get(k) for k in task_fields}}
+                               for task in db().tasks.find({"run_id": run_id}).sort("created_at", 1)]
+        # Artifacts are server-registered references, never URLs parsed from model prose.
+        result["artifacts"] = []
+        if row.get("report_id"):
+            for evidence in db().evidence.find({"run_id": run_id}):
+                content = evidence.get("content")
+                if isinstance(content, dict):
+                    result["artifacts"].extend({"name": a["name"], "asset_id": a["asset_id"],
+                                                "media_type": a["ref"]["media_type"]}
+                                               for a in content.get("artifacts", []))
     return result
 
 
@@ -184,8 +229,11 @@ def execute_one():
         client = BusinessClient(run["_id"], context["task_id"], context["input"]["input_revision"])
         if context["input"]["mode"] == "investigation":
             from semibrain_agent.investigator import Investigator
-
-            Investigator(
+            runner = Investigator
+            if context["input"].get("investigation_strategy") == "multi_agent":
+                from semibrain_agent.multi_agent import MultiAgent
+                runner = MultiAgent
+            runner(
                 run,
                 fence,
                 context,

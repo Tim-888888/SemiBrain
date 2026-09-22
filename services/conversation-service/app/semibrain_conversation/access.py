@@ -27,6 +27,7 @@ RUN_OPS = {
     "lineage.check",
 }
 WEB_OPS = {"web.search", "web.fetch", "web.read"}
+MULTI_OPS = {"sandbox.python", "sandbox.files", "vision.inspect"}
 
 
 def web_allowed(run):
@@ -38,13 +39,21 @@ def web_allowed(run):
     )
 
 
-def make_grant(user, *, run=None, operations=None):
+def make_grant(user, *, run=None, operations=None, child=None):
     token = secrets.token_urlsafe(32)
     allowed = set(operations or RUN_OPS)
+    if (
+        run
+        and run["input"].get("investigation_strategy") == "multi_agent"
+        and (operations is None or operations == RUN_OPS)
+    ):
+        allowed |= MULTI_OPS
     if web_allowed(run) and (operations is None or operations == RUN_OPS):
         allowed |= WEB_OPS
     elif not web_allowed(run):
         allowed -= WEB_OPS
+    if child:
+        allowed &= set(child["allowed_ops"]) if child["active"] else {"lineage.check"}
     claim = {
         "schema_version": "1.0",
         "subject_id": user["_id"],
@@ -54,7 +63,8 @@ def make_grant(user, *, run=None, operations=None):
         "policy_version": POLICY,
         "expires_at": (now() + timedelta(seconds=60)).isoformat(),
         "run_id": run["_id"] if run else None,
-        "task_id": run["task_id"] if run else None,
+        "task_id": child["task_id"] if child else run["task_id"] if run else None,
+        "child_task": bool(child),
         "trace_root_id": run.get("trace_root_id") if run else None,
         "input_revision": run["input"]["input_revision"] if run else None,
         "allowed_ops": sorted(allowed),
@@ -94,9 +104,16 @@ def trusted_run(run_id):
 def delegation(form: DelegationRequest, request: Request):
     internal_identity(request, {"agent"})
     run, user = trusted_run(str(form.run_id))
-    if str(form.task_id) != run["task_id"] or form.input_revision != run["input"]["input_revision"]:
+    if form.input_revision != run["input"]["input_revision"]:
         failure("RUN_BINDING_MISMATCH", 403)
-    return {"access_token": make_grant(user, run=run), "expires_in": 60}
+    child = None
+    if str(form.task_id) != run["task_id"]:
+        if run["input"].get("investigation_strategy") != "multi_agent":
+            failure("RUN_BINDING_MISMATCH", 403)
+        child = call(
+            "agent", "GET", f"/internal/v1/runs/{run['_id']}/tasks/{form.task_id}/authorization"
+        ).json()
+    return {"access_token": make_grant(user, run=run, child=child), "expires_in": 60}
 
 
 class IntrospectInput(BaseModel):
@@ -118,11 +135,20 @@ def introspect(form: IntrospectInput, request: Request):
         failure("DELEGATION_REVOKED", 403)
     if claim["run_id"]:
         run, _ = trusted_run(claim["run_id"])
-        if (
-            run["task_id"] != claim["task_id"]
-            or run["input"]["input_revision"] != claim["input_revision"]
-        ):
+        if (not claim.get("child_task") and run["task_id"] != claim["task_id"]) or run["input"][
+            "input_revision"
+        ] != claim["input_revision"]:
             failure("RUN_BINDING_MISMATCH", 403)
+        if claim.get("child_task"):
+            child = call(
+                "agent",
+                "GET",
+                f"/internal/v1/runs/{run['_id']}/tasks/{claim['task_id']}/authorization",
+            ).json()
+            claim["allowed_ops"] = sorted(
+                set(claim["allowed_ops"])
+                & (set(child["allowed_ops"]) if child["active"] else {"lineage.check"})
+            )
         if not web_allowed(run):
             claim["allowed_ops"] = sorted(set(claim["allowed_ops"]) - WEB_OPS)
     return claim
@@ -144,6 +170,7 @@ class ExecutionAuthorization(BaseModel):
     subject_id: str
     auth_version: int
     run_id: str | None = None
+    task_id: str | None = None
     operation: str | None = None
 
 
@@ -156,22 +183,46 @@ def execution_authorization(form: ExecutionAuthorization, request: Request):
     if not user:
         failure("EXECUTION_REVOKED", 403)
     mode = None
+    run = None
+    strategy, conversation_id = None, None
     if form.run_id:
         run, _ = trusted_run(form.run_id)
         mode = run["input"]["mode"]
+        strategy = run["input"].get("investigation_strategy") or "single_agent"
+        conversation_id = run["input"]["conversation_id"]
         if run["owner_id"] != form.subject_id:
             failure("EXECUTION_BINDING_MISMATCH", 403)
         if run.get("cancel_requested_at"):
             failure("EXECUTION_CANCELLED", 409)
         if form.operation and form.operation.startswith("web.") and not web_allowed(run):
             failure("WEB_DISABLED", 403)
+        if form.operation in MULTI_OPS and strategy != "multi_agent":
+            failure("MULTI_AGENT_REQUIRED", 403)
+        if form.task_id and form.task_id != run["task_id"]:
+            child = call(
+                "agent", "GET", f"/internal/v1/runs/{run['_id']}/tasks/{form.task_id}/authorization"
+            ).json()
+            if not child["active"] or form.operation not in child["allowed_ops"]:
+                failure("CHILD_EXECUTION_DENIED", 403)
         if (
             form.operation
             and form.operation.startswith("business.")
             and "demo" not in user.get("resource_ids", ["demo"])
         ):
             failure("RESOURCE_SCOPE_DENIED", 403)
-    return {"active": True, "policy_version": POLICY, "mode": mode}
+    return {
+        "active": True,
+        "policy_version": POLICY,
+        "mode": mode,
+        "investigation_strategy": strategy,
+        "conversation_id": conversation_id,
+        "subject_id": user["_id"],
+        "role": user["role"],
+        "auth_version": user["auth_version"],
+        "resource_ids": user.get("resource_ids", ["demo"]),
+        "document_ids": run["input"]["resource_restrictions"] if run else [],
+        "attachment_refs": run["input"]["attachment_refs"] if run else [],
+    }
 
 
 def run_snapshot(user, run_id):
@@ -185,7 +236,13 @@ def run_snapshot(user, run_id):
     check_lineage(user, response.get("lineage_refs", []))
     response["input_scope"] = {
         key: gateway["input"].get(key)
-        for key in ("mode", "allow_web", "resource_restrictions", "attachment_refs")
+        for key in (
+            "mode",
+            "allow_web",
+            "resource_restrictions",
+            "attachment_refs",
+            "investigation_strategy",
+        )
     }
     response["continuation"] = gateway.get("continuation")
     if gateway.get("web_disabled_at"):

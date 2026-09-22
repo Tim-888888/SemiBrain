@@ -14,8 +14,10 @@ STATE_VERSION = "1.0"
 
 
 class Checkpoints:
-    def __init__(self, harness, task_id, attempt):
+    def __init__(self, harness, task_id, attempt, *, graph_version=GRAPH_VERSION,
+                 state_version=STATE_VERSION):
         self.harness = harness
+        self.graph_version, self.state_version = graph_version, state_version
         self.saver = MongoDBSaver(mongo(), db_name="agent_db")
         self.namespace = f"{task_id}/attempt-{attempt}"
 
@@ -35,7 +37,8 @@ class Checkpoints:
         if not saved:
             raise RuntimeError("COMMITTED_CHECKPOINT_MISSING")
         values = saved.checkpoint["channel_values"]
-        if values["graph_version"] != GRAPH_VERSION or values["state_version"] != STATE_VERSION:
+        if (values["graph_version"] != self.graph_version
+                or values["state_version"] != self.state_version):
             raise RuntimeError("CHECKPOINT_VERSION_INCOMPATIBLE")
         return values["state"]
 
@@ -45,8 +48,8 @@ class Checkpoints:
         generation = current.get("checkpoint_generation", 0)
         checkpoint = empty_checkpoint()
         checkpoint["channel_values"] = {
-            "graph_version": GRAPH_VERSION,
-            "state_version": STATE_VERSION,
+            "graph_version": self.graph_version,
+            "state_version": self.state_version,
             "state": state,
         }
         config = {
