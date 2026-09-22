@@ -90,3 +90,30 @@ def test_old_message_replay_is_compatible_but_cannot_change_strategy():
                "input": {"investigation_strategy": "single_agent"}}
     assert submission_matches(current, form)
     assert not submission_matches(current, form.model_copy(update={"text": "changed"}))
+
+
+def test_disabled_multi_capability_rejects_new_request_but_preserves_accepted_replay(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from fastapi import HTTPException
+    from semibrain_common.runtime import canonical, digest
+    from semibrain_conversation import conversations as api
+    from starlette.requests import Request
+
+    form = MessageInput(request_id=uuid4(), expected_revision=0, text="Read", mode="investigation", investigation_strategy="multi_agent")
+    request = Request({"type": "http", "headers": [(b"idempotency-key", str(form.request_id).encode())]})
+    storage = Mock()
+    storage.gateway_runs.find_one.return_value = None
+    monkeypatch.setattr(api, "db", lambda: storage)
+    capability = Mock(return_value=SimpleNamespace(json=lambda: {"multi_agent": False}))
+    monkeypatch.setattr(api, "call", capability)
+    with pytest.raises(HTTPException) as error:
+        api.submit("conversation", form, request, {"_id": "owner"})
+    assert error.value.status_code == 409
+    existing = {"_id": "accepted", "payload_hash": digest(canonical(form.model_dump(mode="json"))),
+                "input": {"turn_id": "turn", "input_revision": 1, "investigation_strategy": "multi_agent"}, "status": "queued"}
+    storage.gateway_runs.find_one.return_value = existing
+    capability.reset_mock()
+    assert api.submit("conversation", form, request, {"_id": "owner"})["run_id"] == "accepted"
+    capability.assert_not_called()
