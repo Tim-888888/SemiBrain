@@ -24,13 +24,32 @@ from semibrain_agent.prompts import (
 from semibrain_agent.provider import ModelError
 from semibrain_agent.quick_web import QuickClient
 
-MULTI_VERSION = "multi-supervisor-v3"
+MULTI_VERSION = "multi-supervisor-v4"
 ROLE_RULES = {
     "sqlbot": "你是 SQLBot。使用授权业务工具核验目标、阶段、程序、时间与分母。先确认目录中的真实编号，不猜参数。交回引用证据与缺口，不给无证据根因。",
     "rag": "你是 RAG Agent。检索并读取与分配目标相关的授权原文，保留版本、否定和限制。缺少内容明确记录，不用常识填成引用。",
     "tool": "你是 Tool Agent。按目标使用公开网络、已有查询结果统计或受控 Python 沙箱。联网摘要只作导航，读取正文才是证据。计算从实际输入文件/查询 job 读取，不抄造数列；产物必须保存到工作目录且请求导出。",
     "vision": "你是 Vision Agent。只查看授权图片，报告可观察现象、图像质量和不确定性；缺图、域外、低清明确拒绝判定，不推断工艺根因、概率或未经支持的框。",
 }
+
+
+def multi_evidence_views(records):
+    views = evidence_views(records)
+    for record, view in zip(records, views):
+        data = record.get("content")
+        if not record.get("job_id") or not isinstance(data, dict) or not isinstance(data.get("sandbox"), dict):
+            continue
+        # Keep executable results legible: transport lineage and binary asset metadata must
+        # not crowd the stdout and registered export manifest out of the review context.
+        stdout = data.get("stdout", "")
+        view["content"] = {"exit_code": data.get("exit_code"), "stdout": stdout[:4000],
+                           "artifacts": [{k: a.get(k) for k in ("name", "asset_id")}
+                                         for a in data.get("artifacts", [])],
+                           "data_origin": data.get("data_origin"), "truncated": data.get("truncated")}
+        view["projection"] = {"partial": True, "transport_metadata_omitted": True,
+                              "stdout_omitted_characters": max(0, len(stdout) - 4000),
+                              "notice": "省略传输元数据；统计只核对已显示stdout，artifacts为服务器登记的实际产物。"}
+    return views
 
 
 class MultiPrompts(PromptAssembler):
@@ -343,7 +362,7 @@ class MultiAgent(Investigator):
                         "history": self.context["history"][-6:]
                         if state["intent"]["action"] != "investigate"
                         else [],
-                        "evidence": evidence_views(evidence),
+                        "evidence": multi_evidence_views(evidence),
                         "branches": [
                             {k: t.get(k) for k in ("role", "goals", "status", "summary", "error")}
                             for t in tasks
@@ -372,7 +391,7 @@ class MultiAgent(Investigator):
                         "question": self.context["input"]["question"],
                         "intent": state["intent"],
                         "draft": state["draft"],
-                        "evidence": evidence_views(evidence),
+                        "evidence": multi_evidence_views(evidence),
                         "executed": self.execution_summary(),
                         "retrieval_available": not state.get("closing")
                         and state.get("replan_count", 0) < 2,

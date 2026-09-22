@@ -34,3 +34,16 @@ def test_recent_read_result_reaches_professional_even_without_new_evidence():
     assert json.loads(captured["inputs"][-1]["output"]) == observation
     assert captured["inputs"][-1]["call_id"] == "c1"
     assert state["phase"] == "done"
+
+
+def test_registered_export_and_computation_survive_large_transport_metadata():
+    from semibrain_agent.multi_agent import multi_evidence_views
+
+    record = {"marker": "8", "job_id": "job", "content": {
+        "sandbox": {"backend": "docker"}, "stdout": "A: 10\nB: 2\ntotal: 12", "exit_code": 0,
+        "lineage_refs": ["reference" * 100] * 50,
+        "artifacts": [{"name": "counts.csv", "asset_id": "file", "ref": {"hash": "x" * 3000}}]}}
+    view = multi_evidence_views([record])[0]
+    assert view["content"]["stdout"] == record["content"]["stdout"]
+    assert view["content"]["artifacts"] == [{"name": "counts.csv", "asset_id": "file"}]
+    assert view["projection"]["stdout_omitted_characters"] == 0
