@@ -4,6 +4,7 @@ import AuthPanel from './AuthPanel.vue'
 import KnowledgePanel from './KnowledgePanel.vue'
 import MarkdownAnswer from './MarkdownAnswer.vue'
 import RunDetails from './RunDetails.vue'
+import RunComparison from './RunComparison.vue'
 import UsersPanel from './UsersPanel.vue'
 import { api, post, setCsrf, type Message, type Run, type User } from './api'
 import './style.css'
@@ -144,13 +145,13 @@ onUnmounted(closeStream)
   <div v-else class="workspace">
     <aside class="sidebar"><a class="wordmark" href="/"><span class="brand-icon">S</span> SemiBrain</a><span v-if="adminPage" class="admin-caption">管理控制台</span>
       <button v-if="!adminPage" class="new-chat" @click="newChat">＋ 新会话</button>
-      <nav><button v-if="!adminPage" :class="{ active: view === 'chat' }" @click="view = 'chat'">◈ 对话工作台</button><button :class="{ active: view === 'knowledge' }" @click="view = 'knowledge'">▤ 知识库</button><button v-if="adminPage" :class="{ active: view === 'users' }" @click="view = 'users'">♙ 用户管理</button></nav>
+      <nav><button v-if="!adminPage" :class="{ active: view === 'chat' }" @click="view = 'chat'">◈ 对话工作台</button><button :class="{ active: view === 'knowledge' }" @click="view = 'knowledge'">▤ 知识库</button><button v-if="adminPage" :class="{ active: view === 'users' }" @click="view = 'users'">♙ 用户管理</button><button v-if="adminPage" :class="{ active: view === 'comparison' }" @click="view = 'comparison'">运行对照</button></nav>
       <div v-if="!adminPage" class="history"><p class="eyebrow">最近会话</p><button v-for="item in conversations" :key="item.id" :class="{ selected: conversation?.id === item.id }" @click="openChat(item)">{{ item.title }}</button><button v-if="conversationsCursor" @click="olderChats">加载更早会话</button><p v-if="!conversations.length" class="small muted">你的会话会保存在这里</p></div>
       <div class="sidebar-bottom"><a v-if="user.role === 'admin' && !adminPage" class="admin-link" href="/admin/">管理控制台 ↗</a><a v-if="adminPage" class="admin-link" href="/">返回工作台 ↗</a><div class="profile"><span class="avatar">{{ user.username.slice(0, 1).toUpperCase() }}</span><div><strong>{{ user.username }}</strong><small>{{ user.role === 'admin' ? '管理员' : '普通用户' }}</small></div><button class="text-button" @click="settings = true" aria-label="账号设置">⚙</button></div><button class="text-button logout" @click="logout">退出登录</button></div>
     </aside>
-    <main class="main-panel"><header class="topbar"><span>{{ view === 'chat' ? conversation?.title || '对话工作台' : view === 'knowledge' ? '知识库' : '用户管理' }}</span><span class="workspace-tag">半导体知识空间</span></header>
+    <main class="main-panel"><header class="topbar"><span>{{ view === 'chat' ? conversation?.title || '对话工作台' : view === 'knowledge' ? '知识库' : view === 'comparison' ? '运行对照' : '用户管理' }}</span><span class="workspace-tag">半导体知识空间</span></header>
       <KnowledgePanel v-if="view === 'knowledge'" :manage="adminPage && user.role === 'admin'" />
-      <UsersPanel v-else-if="view === 'users'" />
+      <UsersPanel v-else-if="view === 'users'" /><RunComparison v-else-if="view === 'comparison'" />
       <template v-else>
         <div ref="scrollArea" class="conversation-scroll">
           <div v-if="!messages.length && !activeRun" class="welcome"><span class="welcome-symbol">✳</span><p class="eyebrow">SEMI BRAIN / KNOWLEDGE ASSISTANT</p><h1>从一个问题开始</h1><p>查阅资料，理解工艺，核验每一条来源。</p><div class="starter-grid"><button @click="text = '知识库中有哪些关于测试良率的资料？'">▤ 查找专业资料<span>从已发布文档中寻找证据 ↗</span></button><button @click="text = '请列出可查询的合成演示批次。'">▦ 查询演示数据<span>了解批次与测试上下文 ↗</span></button></div></div>

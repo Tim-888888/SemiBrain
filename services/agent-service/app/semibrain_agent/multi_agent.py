@@ -14,6 +14,7 @@ from semibrain_agent.executor import ToolExecutor, wire_tools
 from semibrain_agent.harness import BudgetExhausted, RunStopped
 from semibrain_agent.investigator import GraphState, Investigator
 from semibrain_agent.multi_policy import MULTI_LIMITS, ROLE_TOOLS, Plan, ready_tasks, validate_plan
+from semibrain_agent.multi_review import evidence_issues
 from semibrain_agent.prompts import (
     CONTROL_SAFETY_RULES,
     PromptAssembler,
@@ -379,7 +380,7 @@ class MultiAgent(Investigator):
             verdict = parse_control(turn.text, Review)
         except ValueError:
             verdict = Review(approved=False, issues=["审查结果无法校验"])
-        issues = list(verdict.issues)
+        issues = list(verdict.issues) + evidence_issues(evidence)
         if cited - {x["marker"] for x in evidence}:
             issues.append("引用未登记")
         if verdict.evidence_required and (not evidence or not cited):

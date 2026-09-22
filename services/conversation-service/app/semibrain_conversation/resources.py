@@ -7,10 +7,26 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
 from semibrain_common.runtime import failure
 
-from semibrain_conversation.access import business
-from semibrain_conversation.auth import admin, current_user
+from semibrain_conversation.access import business, run_snapshot
+from semibrain_conversation.auth import admin, current_user, db
 
 router = APIRouter()
+
+
+@router.get("/admin/v1/runs/comparison")
+def compare_recent(user=Depends(admin)):
+    rows = db().gateway_runs.find({"owner_id": user["_id"], "input.mode": "investigation"}).sort("created_at", -1).limit(12)
+    items = []
+    for row in rows:
+        try:
+            run = run_snapshot(user, row["_id"])
+        except Exception:
+            continue  # Revoked sources are not exposed through a management shortcut.
+        items.append({"run_id": row["_id"], "question": row["input"]["question"][:160],
+                      "strategy": run.get("strategy", "single_agent"), "status": run["status"],
+                      "budget": run.get("budget"), "elapsed_ms": run.get("elapsed_ms"),
+                      "professional_count": len(run.get("task_tree", []))})
+    return {"items": items, "scope": "own_authorized_runs", "currency_cost": None}
 
 
 @router.post("/v1/attachments/images", status_code=201)

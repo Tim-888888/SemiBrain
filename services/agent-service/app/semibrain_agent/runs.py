@@ -155,6 +155,8 @@ def snapshot(run_id: str, request: Request):
                     result["artifacts"].extend({"name": a["name"], "asset_id": a["asset_id"],
                                                 "media_type": a["ref"]["media_type"]}
                                                for a in content.get("artifacts", []))
+    if row.get("started_at"):
+        result["elapsed_ms"] = max(0, round(((row.get("completed_at") or now()) - row["started_at"]).total_seconds() * 1000))
     return result
 
 

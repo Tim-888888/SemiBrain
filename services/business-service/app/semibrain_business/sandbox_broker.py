@@ -130,23 +130,37 @@ class Engine:
             self.request("DELETE", "/containers/" + row["Id"], params={"force": True})
 
     def put(self, container, files):
-        total, stream = 0, io.BytesIO()
-        with tarfile.open(fileobj=stream, mode="w") as archive:
-            for name, raw in files.items():
-                safe_name(name)
-                total += len(raw)
-                if total > MAX_BYTES:
-                    raise ValueError("SANDBOX_INPUT_SIZE")
-                member = tarfile.TarInfo(name)
-                member.size, member.mode, member.uid, member.gid = len(raw), 0o600, 10001, 10001
-                archive.addfile(member, io.BytesIO(raw))
-        self.request(
-            "PUT",
-            "/containers/" + container + "/archive",
-            params={"path": "/workspace"},
-            content=stream.getvalue(),
-            headers={"Content-Type": "application/x-tar"},
+        # Archive upload rejects a read-only root even for a writable tmpfs.
+        # Fixed non-root helper; content is a data argument, never shell syntax.
+        if sum(map(len, files.values())) > MAX_BYTES:
+            raise ValueError("SANDBOX_INPUT_SIZE")
+        deadline = time.monotonic() + 20
+        helper = (
+            "import os,sys,base64; "
+            "flags=os.O_WRONLY|os.O_CREAT|os.O_NOFOLLOW|"
+            "(os.O_TRUNC if sys.argv[3]=='0' else os.O_APPEND); "
+            "fd=os.open(sys.argv[1],flags,0o600); "
+            "f=os.fdopen(fd,'wb');f.write(base64.b64decode(sys.argv[2],validate=True));f.close()"
         )
+        for name, raw in files.items():
+            safe_name(name)
+            for offset in range(0, max(1, len(raw)), 48 * 1024):
+                exec_id = self.request("POST", "/containers/" + container + "/exec", json={
+                    "User": "10001:10001", "WorkingDir": "/workspace",
+                    "AttachStdout": False, "AttachStderr": False,
+                    "Cmd": ["/opt/runtime/bin/python", "-I", "-c", helper, "/workspace/" + name,
+                            base64.b64encode(raw[offset:offset + 48 * 1024]).decode(), str(offset)],
+                }).json()["Id"]
+                self.request("POST", "/exec/" + exec_id + "/start", json={"Detach": True, "Tty": False})
+                while True:
+                    state = self.request("GET", "/exec/" + exec_id + "/json").json()
+                    if not state["Running"]:
+                        if state["ExitCode"] != 0:
+                            raise ValueError("SANDBOX_TRANSFER_FAILED")
+                        break
+                    if time.monotonic() >= deadline:
+                        raise ValueError("SANDBOX_TRANSFER_TIMEOUT")
+                    time.sleep(0.01)
 
     def get(self, container, name):
         safe_name(name)

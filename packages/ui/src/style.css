@@ -9,3 +9,5 @@
 .markdown .katex-display{overflow-x:auto;overflow-y:hidden;padding:6px 0}.markdown .katex{font-size:1.08em}.markdown .katex-error{white-space:pre-wrap;overflow-wrap:anywhere}
 
 .task-tree{padding-left:22px}.task-tree li{margin:14px 0;padding-left:4px}.task-tree li p{margin:5px 0}.answer-artifacts figure{margin:18px 0;border:1px solid var(--border);padding:12px;border-radius:8px}.answer-artifacts img{max-width:100%;max-height:500px;object-fit:contain}.image-upload{cursor:pointer;display:flex;flex-direction:row;align-items:center;gap:6px;flex-wrap:wrap}.image-upload input{max-width:190px;padding:3px;font-size:11px}.image-upload span{font-size:10px}
+
+.comparison-scroll{overflow-x:auto}.comparison-table{border-collapse:collapse;width:100%;font-size:12px}.comparison-table th,.comparison-table td{border:1px solid var(--border);padding:12px;text-align:left}.comparison-table th{background:#f8fbf9}.comparison-table td:first-child{min-width:200px;max-width:360px}

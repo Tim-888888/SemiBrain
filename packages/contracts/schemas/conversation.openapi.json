@@ -817,6 +817,22 @@
         }
       }
     },
+    "/admin/v1/runs/comparison": {
+      "get": {
+        "summary": "Compare Recent",
+        "operationId": "compare_recent_admin_v1_runs_comparison_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/attachments/images": {
       "post": {
         "summary": "Upload Image",
