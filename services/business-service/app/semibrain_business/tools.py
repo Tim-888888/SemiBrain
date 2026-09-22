@@ -45,7 +45,8 @@ class SearchLots(BaseModel):
         max_length=80,
         description="仅用于匹配用户明确给出的原始批次编号或编号片段；列出可用批次时留空。不是自然语言、产品或晶圆厂搜索。",
     )
-    limit: int = Field(default=20, ge=1, le=50)
+    limit: int = Field(default=20, ge=1, le=50,
+                       description="按lot_id升序返回前N条，用户明确条数时用该条数，不先读取更多再截取。")
 
 
 class LotInput(BaseModel):
@@ -84,12 +85,19 @@ def read_rows(statement):
 
 
 def search_lots(form):
-    return read_rows(
+    result = read_rows(
         select(w.lots)
         .where(w.lots.c.lot_id.contains(form.query, autoescape=True))
         .order_by(w.lots.c.lot_id)
         .limit(form.limit)
     )
+    result["query_scope"] = {
+        "table": "lots", "order_by": [{"field": "lot_id", "direction": "asc"}],
+        "limit": form.limit, "filter": {"lot_id_contains": form.query},
+        "limited_result": True,
+        "notice": "按lot_id升序的有限结果；row_count仅为返回行数，不是全库总量。",
+    }
+    return result
 
 
 def context(form):
@@ -127,7 +135,8 @@ def alerts(form):
     )
 
 
-register("business.search_lots", SearchLots, search_lots, "查找合成演示批次，保留源批次编号。")
+register("business.search_lots", SearchLots, search_lots,
+         "读取合成演示批次基础信息（lot_id、product_id、family_id），固定按lot_id升序取前limit条；query空表示不筛编号。仅查询lots，不查询测试明细；无需另写SQL排序。")
 register(
     "business.get_lot_context",
     LotInput,

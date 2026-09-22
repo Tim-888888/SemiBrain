@@ -331,6 +331,8 @@ def run_python(form, job):
         )
         return {
             "stdout": output["stdout"],
+            "input_job_ids": [str(value) for value in form.job_ids],
+            "input_asset_ids": [str(value) for value in form.asset_ids],
             "exit_code": output["exit_code"],
             "truncated": output["stdout_truncated"] or output["exit_code"] != 0,
             "artifacts": artifacts,

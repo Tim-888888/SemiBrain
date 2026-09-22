@@ -33,7 +33,10 @@ def test_recent_read_result_reaches_professional_even_without_new_evidence():
     assert captured["inputs"][-2] == {"type": "function_call", **call}
     assert json.loads(captured["inputs"][-1]["output"]) == observation
     assert captured["inputs"][-1]["call_id"] == "c1"
-    assert state["phase"] == "done"
+    assert state["phase"] == "model"
+    assert state["completion_issues"] == ["EXPLICIT_TASK_COMPLETION_REQUIRED"]
+    state = expert.task_model(state)
+    assert state["phase"] == "done" and state["outcome"] == "partial"
 
 
 def test_registered_export_and_computation_survive_large_transport_metadata():

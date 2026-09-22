@@ -1,6 +1,7 @@
 """Independent Supervisor graph and bounded, durable professional subgraphs."""
 
 import copy
+import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from uuid import NAMESPACE_URL, uuid5
@@ -23,8 +24,17 @@ from semibrain_agent.prompts import (
 )
 from semibrain_agent.provider import ModelError
 from semibrain_agent.quick_web import QuickClient
+from semibrain_agent.task_outputs import (
+    COMPLETE_TOOL,
+    Completion,
+    Deliverables,
+    bind_arguments,
+    check_outputs,
+    dependency_inputs,
+    reusable_task,
+)
 
-MULTI_VERSION = "multi-supervisor-v5"
+MULTI_VERSION = "multi-supervisor-v6"
 ROLE_RULES = {
     "sqlbot": "你是 SQLBot。使用授权业务工具核验目标、阶段、程序、时间与分母。先确认目录中的真实编号，不猜参数。交回引用证据与缺口，不给无证据根因。",
     "rag": "你是 RAG Agent。检索并读取与分配目标相关的授权原文，保留版本、否定和限制。缺少内容明确记录，不用常识填成引用。",
@@ -55,6 +65,7 @@ def multi_evidence_views(records):
         # not crowd the stdout and registered export manifest out of the review context.
         stdout = data.get("stdout", "")
         view["content"] = {"exit_code": data.get("exit_code"), "stdout": stdout[:4000],
+                           "input_job_ids": data.get("input_job_ids", []),
                            "artifacts": [{k: a.get(k) for k in ("name", "asset_id")}
                                          for a in data.get("artifacts", [])],
                            "data_origin": data.get("data_origin"), "truncated": data.get("truncated")}
@@ -76,6 +87,10 @@ class MultiPrompts(PromptAssembler):
                     "已有job_id须通过sandbox.python的job_ids显式装入，文件不会自动出现在沙箱；"
                     "文件名query-<job_id>.json，按实际JSON字段计算，不能手抄或猜测数组。"
                     "最近工具输出提供真实读页/执行结果，失败、空集、未调用分别说明。"
+                    "结束时必须单独调用task__complete；没完成填completed=false并列missing，普通文本不表示成功。"
+                    "input_manifest列出的查询会在sandbox.python执行前由服务端装入，直接按path读取JSON的rows，"
+                    "无需检查空目录；依赖摘要不能推翻服务器query_scope排序与条数。"
+                    "仅评价自己的goals，原问题的其他目标由协调器负责。"
                     "仅可经授权sandbox.python执行代码，不可在宿主执行。\ntrusted_runtime:\n" + runtime)
         if role == "supervisor":
             return (
@@ -84,6 +99,12 @@ class MultiPrompts(PromptAssembler):
                 "独立取证任务不设依赖；计算/绘图依赖提供数据的角色。"
                 "缺图不要规划视觉，纯知识可只用RAG；不能扩大资料权限或联网范围。"
                 "补查仅安排能补足所列缺口的分支，不重复已完成工作。\n"
+                "每项必须声明deliverables：读取表格数据用dataset；Python统计/文件导出用python并完整列artifact_formats；"
+                "其他取证用evidence。用户要求按编号升序前N个批次时，dataset填写lot_limit=N，"
+                "business.search_lots已保证lot_id升序，无需另查SQL。计算依赖dataset任务。"
+                "仅输出格式、范围声明、禁止事项不是独立取证任务；放synthesis_goal_indices并作为各任务约束，"
+                "不要派RAG查询这类说明。补查若依赖已完成任务，用reuse_key保留其相同goal_indices和deliverables，"
+                "服务器复用产物不再执行。\n"
                 + canonical(Plan.model_json_schema())
             )
         result = super().system(role)
@@ -200,6 +221,9 @@ class MultiAgent(Investigator):
             role: names for role, names in available.items() if set(names) - {"evidence.read"}
         }
         goals = state["intent"]["goals"] or [self.context["input"]["question"]]
+        evidence = self.executor.evidence()
+        previous = list(self.db.tasks.find({"run_id": self.run["_id"],
+                                           "plan_version": state.get("plan_version", 0)}))
         data = {
             "question": self.context["input"]["question"],
             "intent": state["intent"],
@@ -207,9 +231,9 @@ class MultiAgent(Investigator):
             "available_roles": available,
             "sources": self.prompts.sources,
             "attachments": self.attachments,
-            "existing_evidence": [
-                {k: r.get(k) for k in ("evidence_id", "title")} for r in self.executor.evidence()
-            ],
+            "existing_evidence": multi_evidence_views(evidence),
+            "previous_tasks": [{k: t.get(k) for k in ("key", "role", "goal_indices", "status",
+                               "deliverables", "outputs", "completion_issues")} for t in previous],
             "review": state.get("review"),
         }
         plan = None
@@ -219,17 +243,21 @@ class MultiAgent(Investigator):
                 role="supervisor",
                 inputs=[{"role": "user", "content": canonical(data)}],
                 suffix="plan-" + str(retry),
-                max_tokens=1200,
+                max_tokens=1800,
             )
             try:
                 plan = validate_plan(parse_control(turn.text, Plan), goals, available)
+                for spec in plan.tasks:
+                    reusable_task(spec, previous, evidence)
                 break
             except ValueError as exc:
-                data["validation_feedback"] = type(exc).__name__
+                plan = None
+                data["validation_feedback"] = str(exc)[:1200]
         if plan is None:
             raise ModelError("PLAN_INVALID")
         version = state.get("plan_version", 0) + 1
         for spec in plan.tasks:
+            reused = reusable_task(spec, previous, evidence)
             identity = str(uuid5(NAMESPACE_URL, f"{self.run['_id']}:plan:{version}:{spec.key}"))
             self.harness.save_record(
                 "tasks",
@@ -245,9 +273,14 @@ class MultiAgent(Investigator):
                     "role_round": 0,
                     "state": {"phase": "model", "round": 0},
                     "created_at": now(),
+                    **({k: reused.get(k) for k in ("status", "summary", "evidence_ids", "outputs",
+                                                  "input_job_ids", "completion_issues")}
+                       if reused else {}),
+                    **({"reused_from": reused["_id"], "completed_at": now()} if reused else {}),
                 },
             )
-        state.update(plan_version=version, phase="dispatch")
+        state.update(plan_version=version, phase="dispatch",
+                     synthesis_goals=[goals[i] for i in plan.synthesis_goal_indices])
         self.tree()
         return state
 
@@ -286,6 +319,10 @@ class MultiAgent(Investigator):
             "model_calls",
             "tool_calls",
             "settled_tokens",
+            "deliverables",
+            "outputs",
+            "completion_issues",
+            "reused_from",
         )
         rows = list(self.db.tasks.find({"run_id": self.run["_id"]}).sort("created_at", 1))
         for row in rows:
@@ -373,7 +410,8 @@ class MultiAgent(Investigator):
     def synthesize(self, state):
         self.notify({"progress": "正在综合证据与不同解释"})
         evidence = self.executor.evidence()
-        tasks = list(self.db.tasks.find({"run_id": self.run["_id"]}))
+        tasks = list(self.db.tasks.find({"run_id": self.run["_id"],
+                                        "plan_version": state.get("plan_version", 0)}))
         inputs = [
             {
                 "role": "user",
@@ -386,10 +424,12 @@ class MultiAgent(Investigator):
                         else [],
                         "evidence": multi_evidence_views(evidence),
                         "branches": [
-                            {k: t.get(k) for k in ("role", "goals", "status", "summary", "error")}
+                            {k: t.get(k) for k in ("role", "goals", "status", "summary", "error",
+                                                  "outputs", "completion_issues")}
                             for t in tasks
                         ],
                         "instruction": "分支摘要是分析意见；事实须核对evidence。明确成功、缺证据和冲突，不伪造因果。",
+                        "synthesis_goals": state.get("synthesis_goals", []),
                     }
                 ),
             }
@@ -491,6 +531,7 @@ class Expert(Investigator):
             "tools": [t for t in parent.catalog["tools"] if t["name"] in self.allowed],
         }
         self.wire, self.names = wire_tools(self.catalog)
+        self.wire.append(COMPLETE_TOOL)
         self.prompts = MultiPrompts(
             self.context, self.catalog, parent.prompts.sources, parent.attachments
         )
@@ -524,13 +565,21 @@ class Expert(Investigator):
         self.parent.task_update(
             self.task["_id"],
             {
-                "status": state.get("outcome", "succeeded"),
+                "status": state.get("outcome", "partial"),
                 "summary": state.get("summary", ""),
                 "completed_at": now(),
                 "evidence_ids": state.get("evidence_ids", []),
+                "outputs": state.get("outputs", {}),
+                "completion_issues": state.get("completion_issues", []),
+                "input_job_ids": state.get("input_job_ids", []),
             },
             attempt=self.attempt,
         )
+
+    def dependencies(self):
+        return list(self.db.tasks.find({"run_id": self.run["_id"],
+                                       "plan_version": self.task["plan_version"],
+                                       "key": {"$in": self.task["depends_on"]}}))
 
     def task_model(self, state):
         if state["round"] >= 6:
@@ -541,15 +590,13 @@ class Expert(Investigator):
                 "summary": "专业分支达到执行上限",
             }
         evidence = self.executor.evidence()
-        dependencies = list(
-            self.db.tasks.find(
-                {
-                    "run_id": self.run["_id"],
-                    "plan_version": self.task["plan_version"],
-                    "key": {"$in": self.task["depends_on"]},
-                }
-            )
-        )
+        dependencies = self.dependencies()
+        manifest, missing = dependency_inputs(self.task, dependencies, evidence)
+        if missing:
+            return {**state, "phase": "done", "outcome": "partial",
+                    "summary": "上游尚未交付可用数据，本分支未执行计算。",
+                    "completion_issues": ["DEPENDENCY_INPUT_MISSING:" + key for key in missing]}
+        state["input_job_ids"] = [i["job_id"] for i in manifest]
         relevant = set(state.get("evidence_ids", []))
         for dependency in dependencies:
             relevant.update(dependency.get("evidence_ids", []))
@@ -561,6 +608,9 @@ class Expert(Investigator):
                     {
                         "original_question": self.context["input"]["question"],
                         "goals": self.task["goals"],
+                        "deliverables": self.task.get("deliverables", {}),
+                        "input_manifest": manifest,
+                        "completion_feedback": state.get("completion_issues", []),
                         "intent": self.intent,
                         "attachments": [
                             {k: a.get(k) for k in ("asset_id", "title", "media_type", "location")}
@@ -572,7 +622,7 @@ class Expert(Investigator):
                         "table_catalog": self.catalog.get("tables", {})
                         if self.role == "sqlbot"
                         else {},
-                        "evidence": evidence_views(
+                        "evidence": multi_evidence_views(
                             [x for x in evidence if x["evidence_id"] in relevant]
                         ),
                         "dependencies": [
@@ -606,7 +656,11 @@ class Expert(Investigator):
         if turn.calls:
             state.update(phase="tools", calls=turn.calls)
         else:
-            state.update(phase="done", summary=turn.text, outcome="succeeded")
+            state.update(summary=turn.text, completion_issues=["EXPLICIT_TASK_COMPLETION_REQUIRED"])
+            if state.get("completion_retry", 0) < 1:
+                state.update(phase="model", completion_retry=1, last_outputs=[])
+            else:
+                state.update(phase="done", outcome="partial")
         return state
 
     def task_tools(self, state):
@@ -616,10 +670,16 @@ class Expert(Investigator):
             name = self.names.get(item["name"])
             logical_id = str(uuid5(NAMESPACE_URL, state["turn_id"] + ":" + item["call_id"]))
             last_outputs.append({"call": item, "logical_id": logical_id})
+            if item["name"] == "task__complete":
+                if len(state["calls"]) == 1:
+                    return self.complete_task(state, item, logical_id)
+                self.harness.save_record("observations", logical_id, {"observation": {
+                    "status": "failed", "error": "COMPLETE_MUST_BE_SEPARATE"}})
+                continue
             if index >= 4 or not name or name not in self.allowed:
                 observed.append({"status": "failed", "error": "ROLE_TOOL_DENIED"})
                 continue
-            result = self.executor.execute(name, item["arguments"], logical_id)
+            result = self.execute_bound_tool(name, item["arguments"], logical_id)
             ids.update(x["evidence_id"] for x in result.get("evidence", []))
             observed.append(self.observation_summary(result))
             # Search navigation is necessary to select a page; never turn it into fact evidence.
@@ -627,6 +687,52 @@ class Expert(Investigator):
                 observed[-1]["data"] = result.get("data")
         state.update(phase="model", observations=observed[-8:], evidence_ids=sorted(ids),
                      last_outputs=last_outputs)
+        return state
+
+    def execute_bound_tool(self, name, raw_arguments, logical_id):
+        saved = self.db.observations.find_one({"_id": logical_id, "run_id": self.run["_id"]})
+        if saved:
+            self.executor.evidence()  # Recheck authorization even when replaying admission.
+            return saved["observation"]
+        try:
+            requirement = Deliverables.model_validate(self.task.get("deliverables", {}))
+            inputs, missing = dependency_inputs(self.task, self.dependencies(), self.executor.evidence())
+            if missing:
+                raise ValueError("DEPENDENCY_INPUT_MISSING")
+            args = json.loads(raw_arguments)
+            if not isinstance(args, dict):
+                raise ValueError("TOOL_OBJECT_REQUIRED")
+            args = bind_arguments(name, args, requirement, inputs)
+        except ValueError as exc:
+            result = {"status": "failed", "tool": name, "evidence": [],
+                      "error": str(exc)[:300]}
+            self.harness.save_record("observations", logical_id, {"observation": result})
+            return result
+        return self.executor.execute(name, canonical(args), logical_id)
+
+    def complete_task(self, state, item, logical_id):
+        records = self.executor.evidence()
+        own = [r for r in records if r["evidence_id"] in state.get("evidence_ids", [])]
+        requirement = Deliverables.model_validate(self.task.get("deliverables", {}))
+        outputs, issues = check_outputs(requirement, own, input_jobs=state.get("input_job_ids", []))
+        try:
+            completion = Completion.model_validate_json(item["arguments"])
+            if set(completion.evidence_ids) - {r["evidence_id"] for r in own}:
+                issues.append("COMPLETION_EVIDENCE_OUTSIDE_TASK")
+            issues.extend(completion.missing)
+            summary, requested = completion.summary, completion.completed
+        except ValueError:
+            issues.append("COMPLETION_ARGUMENT_INVALID")
+            summary, requested = "专业分支完成声明无效", True
+        state.update(outputs=outputs, summary=summary, completion_issues=issues)
+        # One local repair opportunity; a self-reported partial result never spins.
+        if requested and issues and state.get("completion_retry", 0) < 1:
+            state.update(phase="model", completion_retry=1, last_outputs=[])
+        else:
+            state.update(phase="done", outcome="succeeded" if requested and not issues else "partial")
+        self.harness.save_record("observations", logical_id, {"observation": {
+            "status": "succeeded" if not issues and requested else "partial",
+            "completion_issues": issues, "outputs": outputs}})
         return state
 
     def task_done(self, state):
