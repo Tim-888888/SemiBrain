@@ -4,6 +4,8 @@ from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
+from semibrain_agent.budget_profile import investigation_limits
+from semibrain_agent.harness import DEFAULT_LIMITS
 from semibrain_agent.multi_policy import Plan, ready_tasks, validate_plan
 from semibrain_agent.prompts import Intent, RoutePolicy
 from semibrain_contracts.models import InputSnapshot
@@ -61,3 +63,14 @@ def test_no_more_than_three_professionals_are_dispatched():
     rows = [{**task(key, role), "status": "queued"} for key, role in
             [("a", "rag"), ("b", "sqlbot"), ("c", "vision"), ("d", "tool")]]
     assert len(ready_tasks(rows)) == 3
+
+
+def test_operator_can_freeze_identical_comparison_limits_without_message_overrides(monkeypatch):
+    import json
+
+    from semibrain_agent.multi_policy import MULTI_LIMITS
+    monkeypatch.setenv("SEMIBRAIN_INVESTIGATION_LIMITS", json.dumps(DEFAULT_LIMITS))
+    assert investigation_limits() == investigation_limits(MULTI_LIMITS) == DEFAULT_LIMITS
+    monkeypatch.setenv("SEMIBRAIN_INVESTIGATION_LIMITS", '{"tokens":999999}')
+    with pytest.raises(ValueError):
+        investigation_limits()

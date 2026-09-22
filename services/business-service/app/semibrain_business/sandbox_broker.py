@@ -6,11 +6,9 @@ No model command is ever executed in this process or in an application container
 
 import base64
 import hmac
-import io
 import json
 import os
 import re
-import tarfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler
@@ -30,6 +28,23 @@ def safe_name(name):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,119}", name or "") or ".." in name:
         raise ValueError("SANDBOX_PATH_DENIED")
     return name
+
+
+def demultiplex(raw):
+    stdout, stderr = bytearray(), bytearray()
+    offset = 0
+    while offset < len(raw):
+        if len(raw) - offset < 8 or raw[offset + 1:offset + 4] != b"\x00\x00\x00":
+            raise ValueError("SANDBOX_STREAM_INVALID")
+        channel, length = raw[offset], int.from_bytes(raw[offset + 4:offset + 8], "big")
+        if channel not in {1, 2} or offset + 8 + length > len(raw):
+            raise ValueError("SANDBOX_STREAM_INVALID")
+        target = stdout if channel == 1 else stderr
+        target.extend(raw[offset + 8:offset + 8 + length])
+        if len(stdout) > MAX_BYTES or len(stderr) > 16384:
+            raise ValueError("SANDBOX_OUTPUT_SIZE")
+        offset += 8 + length
+    return bytes(stdout), bytes(stderr)
 
 
 def container_config(identity, image):
@@ -164,24 +179,39 @@ class Engine:
 
     def get(self, container, name):
         safe_name(name)
-        with self.client.stream(
-            "GET", "/containers/" + container + "/archive", params={"path": "/workspace/" + name}
-        ) as response:
-            if response.status_code == 404:
-                return None
+        # Read in the container mount namespace as the sandbox user. Docker's
+        # archive endpoint does not expose this runtime's tmpfs contents reliably.
+        helper = (
+            "import os,sys,stat\n"
+            "try:\n fd=os.open(sys.argv[1],os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)\n"
+            "except FileNotFoundError:\n sys.exit(44)\n"
+            "except OSError:\n sys.exit(45)\n"
+            "with os.fdopen(fd,'rb') as f:\n st=os.fstat(f.fileno())\n"
+            " if not stat.S_ISREG(st.st_mode) or st.st_size>16777216: sys.exit(45)\n"
+            " data=f.read(16777217)\n"
+            "if len(data)>16777216: sys.exit(45)\n"
+            "sys.stdout.buffer.write(data)"
+        )
+        exec_id = self.request("POST", "/containers/" + container + "/exec", json={
+            "User": "10001:10001", "WorkingDir": "/workspace",
+            "AttachStdout": True, "AttachStderr": True,
+            "Cmd": ["/opt/runtime/bin/python", "-I", "-c", helper, "/workspace/" + name],
+        }).json()["Id"]
+        with self.client.stream("POST", "/exec/" + exec_id + "/start",
+                                json={"Detach": False, "Tty": False}) as response:
             response.raise_for_status()
-            buf = bytearray()
-            for block in response.iter_bytes():
-                buf.extend(block)
-                if len(buf) > MAX_BYTES + 10240:
+            buffer = bytearray()
+            for chunk in response.iter_bytes():
+                buffer.extend(chunk)
+                if len(buffer) > MAX_BYTES + 65536:
                     raise ValueError("SANDBOX_OUTPUT_SIZE")
-        with tarfile.open(fileobj=io.BytesIO(buf), mode="r:") as archive:
-            members = archive.getmembers()
-            if len(members) != 1 or not members[0].isfile() or members[0].name != name:
-                raise ValueError("SANDBOX_EXPORT_NOT_REGULAR")
-            if members[0].size > MAX_BYTES:
-                raise ValueError("SANDBOX_OUTPUT_SIZE")
-            return archive.extractfile(members[0]).read(MAX_BYTES + 1)
+        stdout, _ = demultiplex(buffer)
+        state = self.request("GET", "/exec/" + exec_id + "/json").json()
+        if state["Running"] or state["ExitCode"] != 0:
+            if not state["Running"] and state["ExitCode"] == 44:
+                return None
+            raise ValueError("SANDBOX_EXPORT_NOT_REGULAR")
+        return stdout
 
     def execute(self, body):
         identity = body["identity"]

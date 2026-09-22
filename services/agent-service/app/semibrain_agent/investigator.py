@@ -15,6 +15,7 @@ from semibrain_common.runtime import canonical, digest, now, publish, transactio
 from semibrain_common.telemetry import Observation
 from semibrain_contracts.models import CitationBinding, Report
 
+from semibrain_agent.budget_profile import investigation_limits
 from semibrain_agent.checkpoints import GRAPH_VERSION, STATE_VERSION, Checkpoints
 from semibrain_agent.client import BusinessClient
 from semibrain_agent.evidence_view import evidence_views
@@ -64,7 +65,7 @@ class Investigator:
         self.run, self.context, self.notify = run, context, notify
         self.harness = Harness(run["_id"], fence)
         self.db = self.harness.db
-        self.harness.initialize(self.limits)
+        self.harness.initialize(investigation_limits(self.limits))
         self.client = BusinessClient(
             run["_id"], context["task_id"], context["input"]["input_revision"]
         )
