@@ -40,11 +40,19 @@ class PlanCheck(BaseModel):
 
 
 class ModelAdapter:
+    understanding_type = Understanding
+    understanding_rules = ""
+
     def __init__(self):
         self.profile = profile_for("investigator")
         self.model = self.profile.model
         self.usage = None
         self.deadline = time.monotonic() + 210
+
+    def turn(self, system, user, *, max_tokens, on_text, guard):
+        return ProviderAdapter(self.profile, deadline=self.deadline, guard=guard).turn(
+            system, [{"role": "user", "content": user}], max_tokens=max_tokens, on_text=on_text
+        )
 
     def stream(self, system, user, *, max_tokens=4096):
         queue = Queue()
@@ -56,12 +64,12 @@ class ModelAdapter:
 
         def produce():
             try:
-                adapter = ProviderAdapter(self.profile, deadline=self.deadline, guard=guard)
-                turn = adapter.turn(
+                turn = self.turn(
                     system,
-                    [{"role": "user", "content": user}],
+                    user,
                     max_tokens=max_tokens,
                     on_text=lambda text: queue.put(("text", text)),
+                    guard=guard,
                 )
                 self.usage = turn.usage
             except Exception as exc:
@@ -102,12 +110,12 @@ sources 是服务端已核验的本轮资料范围及可访问文档目录；exp
             ensure_ascii=False,
         )
         for attempt in range(2):
-            text = "".join(self.stream(system, prompt, max_tokens=2048))
+            text = "".join(self.stream(system + self.understanding_rules, prompt, max_tokens=2048))
             try:
                 value = text.strip()
                 if value.startswith("```"):
                     value = value.split("\n", 1)[1].rsplit("```", 1)[0]
-                result = Understanding.model_validate_json(value)
+                result = self.understanding_type.model_validate_json(value)
                 if result.action == "business":
                     return self.check_business_plan(question, history, tools, result)
                 return result

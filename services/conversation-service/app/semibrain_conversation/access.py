@@ -155,8 +155,10 @@ def execution_authorization(form: ExecutionAuthorization, request: Request):
     )
     if not user:
         failure("EXECUTION_REVOKED", 403)
+    mode = None
     if form.run_id:
         run, _ = trusted_run(form.run_id)
+        mode = run["input"]["mode"]
         if run["owner_id"] != form.subject_id:
             failure("EXECUTION_BINDING_MISMATCH", 403)
         if run.get("cancel_requested_at"):
@@ -169,7 +171,7 @@ def execution_authorization(form: ExecutionAuthorization, request: Request):
             and "demo" not in user.get("resource_ids", ["demo"])
         ):
             failure("RESOURCE_SCOPE_DENIED", 403)
-    return {"active": True, "policy_version": POLICY}
+    return {"active": True, "policy_version": POLICY, "mode": mode}
 
 
 def run_snapshot(user, run_id):

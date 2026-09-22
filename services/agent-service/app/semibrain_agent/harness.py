@@ -77,14 +77,15 @@ class Harness:
             "cancel_requested_at": {"$exists": False},
         }
 
-    def initialize(self):
+    def initialize(self, limits=None):
+        limits = dict(limits or DEFAULT_LIMITS)
         started = now()
         self.db.runs.update_one(
             {**self.predicate(), "budget": {"$exists": False}},
             {
                 "$set": {
                     "budget": {
-                        "limits": DEFAULT_LIMITS,
+                        "limits": limits,
                         "reserved_tokens": 0,
                         "settled_tokens": 0,
                         "model_calls": 0,
@@ -95,7 +96,7 @@ class Harness:
                         "cost": None,
                     },
                     "started_at": started,
-                    "deadline_at": started + timedelta(seconds=DEFAULT_LIMITS["seconds"]),
+                    "deadline_at": started + timedelta(seconds=limits["seconds"]),
                 }
             },
         )

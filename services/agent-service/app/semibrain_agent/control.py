@@ -2,7 +2,7 @@
 
 from datetime import timedelta
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 from semibrain_common.runtime import (
     call,
@@ -75,6 +75,32 @@ def acknowledge_stopped(run_id, fence):
     )
 
 
+def close_pending_usage(db, run_id, session):
+    """A confirmed stop cannot imply that outstanding provider usage was zero."""
+    models = db.model_calls.update_many(
+        {"run_id": run_id, "status": "reserved"},
+        {"$set": {"status": "unknown", "completed_at": now()}},
+        session=session,
+    ).modified_count
+    tools = db.tool_calls.update_many(
+        {"run_id": run_id, "reserved_tokens": {"$gt": 0}, "usage_settled": {"$exists": False}},
+        {"$set": {"usage_settled": True, "usage": None}},
+        session=session,
+    ).modified_count
+    return models + tools
+
+
+def tool_stop_confirmed(client, call_id):
+    try:
+        result = client.request("POST", "/internal/v1/tool-jobs/" + call_id + "/cancel")
+    except HTTPException:
+        # Transport errors are deliberately sanitized and cannot prove absence.
+        return False
+    return result["status"] in {"succeeded", "partial", "failed", "cancelled"} or (
+        result["status"] == "not_submitted" and result.get("accepted") is False
+    )
+
+
 def reconcile_cancellations():
     db = database("agent")
     for expired in db.runs.find(
@@ -92,13 +118,8 @@ def reconcile_cancellations():
                 client = BusinessClient(
                     run["_id"], context["task_id"], context["input"]["input_revision"]
                 )
-                result = client.request("POST", "/internal/v1/tool-jobs/" + call_id + "/cancel")
-                stopped = stopped and result["status"] in {
-                    "succeeded",
-                    "partial",
-                    "failed",
-                    "cancelled",
-                }
+                confirmed = tool_stop_confirmed(client, call_id)
+                stopped = stopped and confirmed
             except Exception:
                 stopped = False
         timed_out = now() - run["cancel_requested_at"] > timedelta(seconds=125)
@@ -106,6 +127,9 @@ def reconcile_cancellations():
             continue
 
         def finish(session):
+            if not db.runs.find_one({"_id": run["_id"], "status": "cancelling"}, session=session):
+                return
+            pending = close_pending_usage(db, run["_id"], session)
             status = "cancelled" if stopped else "failed"
             updated = db.runs.find_one_and_update(
                 {"_id": run["_id"], "status": "cancelling"},
@@ -120,7 +144,10 @@ def reconcile_cancellations():
                         "error": None if stopped else "CANCEL_UNCONFIRMED",
                         "completed_at": now(),
                     },
-                    "$inc": {"sequence": 1},
+                    "$inc": {
+                        "sequence": 1,
+                        **({"budget.unreconciled_calls": pending} if pending else {}),
+                    },
                 },
                 return_document=True,
                 session=session,

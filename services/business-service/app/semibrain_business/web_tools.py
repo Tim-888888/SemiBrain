@@ -86,7 +86,7 @@ def authorization(job):
     )
     if not row:
         raise WebError("WEB_JOB_STOPPED")
-    call(
+    return call(
         "conversation",
         "POST",
         "/internal/v1/authorization/check",
@@ -96,7 +96,7 @@ def authorization(job):
             "run_id": job["run_id"],
             "operation": job["tool"],
         },
-    )
+    ).json()
 
 
 def quota(job, kind, maximum):
@@ -158,8 +158,10 @@ def search(form, job):
     if not configured():
         raise WebError("WEB_PROVIDER_UNCONFIGURED")
     query = outgoing_query(form.query, protected_values(job))
-    authorization(job)
-    quota(job, "searches", 3)
+    access = authorization(job)
+    quick = access.get("mode") == "quick_qa"
+    search_limit, result_limit = (1, 5) if quick else (3, 10)
+    quota(job, "searches", search_limit)
     payload = {
         "model": os.getenv("SEMIBRAIN_WEB_MODEL", "qwen3.8-max"),
         "input": "Search exactly once for these public keywords: " + query
@@ -214,7 +216,7 @@ def search(form, job):
     if not isinstance(count, int) or isinstance(count, bool) or count != 1:
         # Unknown/multiple billable searches close the quota rather than treating them as zero.
         db().web_budgets.update_one(
-            {"_id": job["run_id"]}, {"$set": {"searches": 3, "provider_count_unreconciled": True}}
+            {"_id": job["run_id"]}, {"$set": {"searches": search_limit, "provider_count_unreconciled": True}}
         )
         raise WebError("WEB_PROVIDER_COUNT_UNEXPECTED")
     sources = []
@@ -232,24 +234,24 @@ def search(form, job):
                 sources.append({"url": url, "title": None, "snippet": None, "published_at": None})
     authorization(job)
     return {
-        "sources": sources[:10],
+        "sources": sources[:result_limit],
         "query": query,
         "data_origin": "public",
         "provider": "bailian_responses_web_search",
         "usage": usage,
         "source_text_available": False,
         "notice": "只有供应商返回的网址；须读取原文后才能引用网页事实。",
-        "row_count": len(sources[:10]),
+        "row_count": len(sources[:result_limit]),
     }
 
 
 def fetch(form, job):
     from semibrain_business.knowledge import store_asset
 
-    authorization(job)
+    access = authorization(job)
     protected = protected_values(job)
     outgoing_url(form.url, protected)
-    quota(job, "pages", 5)
+    quota(job, "pages", 2 if access.get("mode") == "quick_qa" else 5)
     last_checked = [0.0]
 
     def guard():
