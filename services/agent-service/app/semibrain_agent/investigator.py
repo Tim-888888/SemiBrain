@@ -1,7 +1,6 @@
 """A bounded LangGraph transition machine with explicit fenced checkpoint commits."""
 
 import json
-import re
 import time
 from dataclasses import asdict
 from datetime import timedelta
@@ -17,6 +16,7 @@ from semibrain_contracts.models import CitationBinding, Report
 
 from semibrain_agent.budget_profile import investigation_limits
 from semibrain_agent.checkpoints import GRAPH_VERSION, STATE_VERSION, Checkpoints
+from semibrain_agent.citations import cited_markers
 from semibrain_agent.client import BusinessClient
 from semibrain_agent.evidence_view import evidence_views
 from semibrain_agent.executor import ToolExecutor, extend_catalog, wire_tools
@@ -661,7 +661,7 @@ class Investigator:
             return state
         self.notify({"progress": "正在核对结论、数值和来源"})
         evidence = self.executor.evidence()
-        cited = set(re.findall(r"\[(\d+)\]", state["draft"]))
+        cited = cited_markers(state["draft"])
         inspected = [item for item in evidence if item["marker"] in cited] if cited else evidence
         inputs = [
             {

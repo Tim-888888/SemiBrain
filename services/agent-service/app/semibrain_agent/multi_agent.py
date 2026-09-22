@@ -1,7 +1,6 @@
 """Independent Supervisor graph and bounded, durable professional subgraphs."""
 
 import copy
-import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from uuid import NAMESPACE_URL, uuid5
@@ -9,6 +8,7 @@ from uuid import NAMESPACE_URL, uuid5
 from langgraph.graph import END, START, StateGraph
 from semibrain_common.runtime import canonical, now, transaction
 
+from semibrain_agent.citations import cited_markers
 from semibrain_agent.evidence_view import evidence_views
 from semibrain_agent.executor import ToolExecutor, wire_tools
 from semibrain_agent.harness import BudgetExhausted, RunStopped
@@ -404,7 +404,7 @@ class MultiAgent(Investigator):
 
     def review(self, state):
         evidence = self.executor.evidence()
-        cited = set(re.findall(r"\[(\d+)\]", state["draft"]))
+        cited = cited_markers(state["draft"])
         inputs = [
             {
                 "role": "user",
