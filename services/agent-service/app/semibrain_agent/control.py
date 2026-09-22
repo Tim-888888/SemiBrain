@@ -75,6 +75,21 @@ def acknowledge_stopped(run_id, fence):
     )
 
 
+def close_pending_usage(db, run_id, session):
+    """A confirmed stop cannot imply that outstanding provider usage was zero."""
+    models = db.model_calls.update_many(
+        {"run_id": run_id, "status": "reserved"},
+        {"$set": {"status": "unknown", "completed_at": now()}},
+        session=session,
+    ).modified_count
+    tools = db.tool_calls.update_many(
+        {"run_id": run_id, "reserved_tokens": {"$gt": 0}, "usage_settled": {"$exists": False}},
+        {"$set": {"usage_settled": True, "usage": None}},
+        session=session,
+    ).modified_count
+    return models + tools
+
+
 def reconcile_cancellations():
     db = database("agent")
     for expired in db.runs.find(
@@ -106,6 +121,9 @@ def reconcile_cancellations():
             continue
 
         def finish(session):
+            if not db.runs.find_one({"_id": run["_id"], "status": "cancelling"}, session=session):
+                return
+            pending = close_pending_usage(db, run["_id"], session)
             status = "cancelled" if stopped else "failed"
             updated = db.runs.find_one_and_update(
                 {"_id": run["_id"], "status": "cancelling"},
@@ -120,7 +138,10 @@ def reconcile_cancellations():
                         "error": None if stopped else "CANCEL_UNCONFIRMED",
                         "completed_at": now(),
                     },
-                    "$inc": {"sequence": 1},
+                    "$inc": {
+                        "sequence": 1,
+                        **({"budget.unreconciled_calls": pending} if pending else {}),
+                    },
                 },
                 return_document=True,
                 session=session,

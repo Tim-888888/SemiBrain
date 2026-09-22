@@ -210,6 +210,63 @@ def test_cancellation_does_not_publish_an_answer(monkeypatch):
     assert not hasattr(r, "finished") and not r.executed
 
 
+def test_inflight_tool_identity_survives_cancellation_for_stop_reconciliation(monkeypatch):
+    r = runner(monkeypatch)
+    r.executor.execute = lambda *args: (_ for _ in ()).throw(RunStopped("cancelled"))
+    with pytest.raises(RunStopped):
+        r.tool("web.search", {"query": "public topic"}, "search")
+    state = r.notices[-1][0]
+    assert state["active_tool"] == "web.search" and state["active_call_id"]
+
+
+def test_tool_stop_command_can_cross_the_run_cancel_boundary(monkeypatch):
+    c = qw.QuickClient("run", "task", 1)
+    c.check = lambda: (_ for _ in ()).throw(RunStopped("cancelled"))
+    monkeypatch.setattr(
+        qw.BusinessClient, "request", lambda self, *args, **kw: {"status": "cancelled"}
+    )
+    assert c.request("POST", "/internal/v1/tool-jobs/call/cancel")["status"] == "cancelled"
+    with pytest.raises(RunStopped):
+        c.request("POST", "/internal/v1/tool-jobs", json={})
+
+
+def test_stop_keeps_outstanding_usage_unknown_without_double_counting():
+    from semibrain_agent.control import close_pending_usage
+
+    class Collection:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def update_many(self, query, change, **kwargs):
+            updated = 0
+            for row in self.rows:
+                if row["run_id"] != query["run_id"]:
+                    continue
+                if "status" in query and row.get("status") != query["status"]:
+                    continue
+                if "usage_settled" in query and (
+                    "usage_settled" in row or not row.get("reserved_tokens")
+                ):
+                    continue
+                row.update(change["$set"])
+                updated += 1
+            return SimpleNamespace(modified_count=updated)
+
+    known = {
+        "run_id": "r",
+        "reserved_tokens": 8000,
+        "usage_settled": True,
+        "usage": {"total_tokens": 100},
+    }
+    db = SimpleNamespace(
+        model_calls=Collection([{"run_id": "r", "status": "reserved"}]),
+        tool_calls=Collection([known, {"run_id": "r", "reserved_tokens": 8000}]),
+    )
+    assert close_pending_usage(db, "r", None) == 2
+    assert close_pending_usage(db, "r", None) == 0
+    assert known["usage"]["total_tokens"] == 100
+
+
 def test_gathering_budget_preserves_answer_reserve_and_existing_sources(monkeypatch):
     r = runner(monkeypatch, stop_at="knowledge.search")
     r.execute()

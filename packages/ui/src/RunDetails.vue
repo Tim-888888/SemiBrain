@@ -2,6 +2,12 @@
 import type { Run } from './api'
 defineProps<{ run: Partial<Run> }>()
 const webLabels: Record<string, string> = { pending: '等待问题理解', running: '搜索中', succeeded: '已完成', partial: '部分完成', failed: '未取得结果', cancelled: '已停止', disabled: '已关闭', skipped: '本轮无需搜索' }
+function searchLabel(run: Partial<Run>) {
+  if (run.web_disabled) return '已关闭'
+  if (run.status === 'cancelling') return '正在停止'
+  if (run.status === 'cancelled') return '已停止'
+  return webLabels[run.web_activity?.search || 'pending'] || '等待完成'
+}
 </script>
 <template>
   <details v-if="run.strategy === 'single_agent' || run.strategy === 'quick_web'" class="run-details">
@@ -15,7 +21,7 @@ const webLabels: Record<string, string> = { pending: '等待问题理解', runni
     </div>
     <p v-if="run.budget" class="small muted">已发起 {{ run.budget.model_calls }} 次模型请求、{{ run.budget.tools }} 次工具调用；已核验用量 {{ run.budget.settled_tokens }} Token<span v-if="run.budget.unreconciled_calls">，{{ run.budget.unreconciled_calls }} 次请求用量待对账</span>。</p>
     <template v-if="run.web_activity">
-      <p class="small muted">{{ run.web_activity.reason }} · 网络搜索：{{ webLabels[run.web_activity.search] || '等待完成' }}<span v-if="run.web_activity.results !== undefined">（{{ run.web_activity.results }} 个候选来源）</span>。</p>
+      <p class="small muted">{{ run.web_activity.reason }} · 网络搜索：{{ searchLabel(run) }}<span v-if="run.web_activity.results !== undefined">（{{ run.web_activity.results }} 个候选来源）</span>。</p>
       <p v-if="run.web_activity.pages.length" class="small muted">已完成 {{ run.web_activity.pages.length }} 次网页读取尝试，其中 {{ run.web_activity.pages.filter(page => ['succeeded', 'partial'].includes(page.status)).length }} 次取得正文。搜索网址和未读正文不作为回答证据。</p>
     </template>
     <p v-else-if="run.budget" class="small muted">实际网络搜索 {{ run.budget.searches ?? 0 }} 次，网页抓取 {{ run.budget.pages ?? 0 }} 次（调用次数不代表已成功取得正文）。</p>

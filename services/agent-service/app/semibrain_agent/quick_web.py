@@ -103,6 +103,10 @@ class QuickClient(BusinessClient):
                 raise RunStopped("LATE_READ_REJECTED") from None
 
     def request(self, method, path, **kwargs):
+        # Stop commands must still reach the owning tool service after this run
+        # has entered cancelling. Its authenticated endpoint decides whether to act.
+        if method == "POST" and path.endswith("/cancel"):
+            return super().request(method, path, **kwargs)
         result = Queue()
 
         def fetch():
@@ -230,7 +234,10 @@ class QuickWebRunner:
             <= QUICK_LIMITS["final_seconds_reserve"]
         ):
             raise BudgetExhausted("FINAL_TIME_RESERVED")
-        return self.executor.execute(name, canonical(arguments), identity)
+        self.notify({"active_tool": name, "active_call_id": identity})
+        result = self.executor.execute(name, canonical(arguments), identity)
+        self.notify({"active_tool": None, "active_call_id": None})
+        return result
 
     def web_enabled(self):
         context = call(
@@ -264,7 +271,12 @@ class QuickWebRunner:
             )
             self.web_activity["results"] = len(sources)
             if result["status"] not in {"succeeded", "partial"}:
-                self.limitations.append("网络搜索未取得可用结果，仅依据已取得的其他资料回答。")
+                if not self.web_enabled():
+                    self.web_activity.update(search="disabled", reason="用户已关闭本轮联网")
+                    self.notify({"web_disabled": True})
+                    self.limitations.append("用户已关闭本轮联网，仅使用已经取得的资料回答。")
+                else:
+                    self.limitations.append("网络搜索未取得可用结果，仅依据已取得的其他资料回答。")
             elif not sources:
                 self.limitations.append("网络搜索没有返回可读取的来源。")
             urls += [item["url"] for item in sources if item.get("url")]
