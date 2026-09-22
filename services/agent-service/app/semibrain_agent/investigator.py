@@ -642,7 +642,7 @@ class Investigator:
                         "question": self.context["input"]["question"],
                         "intent": state["intent"],
                         "stop_reason": state["stop_code"],
-                        "evidence": evidence_views(selected),
+                        "evidence": self.project_evidence(selected),
                         "execution_summary": self.execution_summary(),
                         "omitted_sources": len(evidence) - len(selected),
                     }

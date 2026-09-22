@@ -24,7 +24,7 @@ from semibrain_agent.prompts import (
 from semibrain_agent.provider import ModelError
 from semibrain_agent.quick_web import QuickClient
 
-MULTI_VERSION = "multi-supervisor-v4"
+MULTI_VERSION = "multi-supervisor-v5"
 ROLE_RULES = {
     "sqlbot": "你是 SQLBot。使用授权业务工具核验目标、阶段、程序、时间与分母。先确认目录中的真实编号，不猜参数。交回引用证据与缺口，不给无证据根因。",
     "rag": "你是 RAG Agent。检索并读取与分配目标相关的授权原文，保留版本、否定和限制。缺少内容明确记录，不用常识填成引用。",
@@ -37,6 +37,18 @@ def multi_evidence_views(records):
     views = evidence_views(records)
     for record, view in zip(records, views):
         data = record.get("content")
+        if (record.get("source", {}).get("kind") == "web" and isinstance(data, dict)
+                and data.get("snapshot_id") and isinstance(data.get("text"), str)):
+            # Preserve an excerpt before duplicative transport metadata consumes the
+            # allowance. It is still source text, never a generated evidence summary.
+            limit = min(4000, max(800, 16000 // max(1, len(records))))
+            view["content"] = {k: data.get(k) for k in
+                               ("snapshot_id", "content_hash", "offset", "next_offset", "partial_page", "data_origin")}
+            view["content"]["text"] = data["text"][:limit]
+            view["projection"] = {"partial": True, "transport_metadata_omitted": True,
+                                  "text_omitted_characters": max(0, len(data["text"]) - limit),
+                                  "notice": "只核验本段实际展示的网页原文，不推断未展示内容；来源URL见source.locator。"}
+            continue
         if not record.get("job_id") or not isinstance(data, dict) or not isinstance(data.get("sandbox"), dict):
             continue
         # Keep executable results legible: transport lineage and binary asset metadata must
@@ -79,6 +91,15 @@ class MultiPrompts(PromptAssembler):
             result = result.replace("当前角色是单 Agent Investigator", "当前角色是多 Agent 协作的专业分支")
         if role == "rca":
             result += "\n整合各分支的真实证据形成用户所需的自然Markdown。保留冲突和反证，统计相关不等于根因。分支失败时回答有证据部分并说明缺口；不复述内部调度日志。"
+        if role in {"rca", "reviewer", "investigator"}:
+            result += (
+                "\n按具体陈述联合核对其引用的所有证据，projection只限制该来源被省略的部分，"
+                "不否定其他来源中实际展示的内容。沙箱stdout中展示的计算结果和明细可用其自身marker引用，"
+                "不要求原查询的摘要再次完整展示同样的行；统计仍必须追溯真实输入和已登记计算，不能从抽样行外推。"
+                "已登记artifacts是服务器返回的产物事实，前端提供下载；正文无需列内部资产ID或编造链接。"
+                "一次辅助工具失败不等于事实冲突，也不自动否定已成功的取证或计算；只有不同证据的事实不一致才叫冲突。"
+                "只有用户要求独立复核或证据本身存在实质缺陷时才要求二次核验，不额外添加验收目标。"
+            )
         return result
 
     def snapshot(self):
@@ -414,6 +435,10 @@ class MultiAgent(Investigator):
             issues.append("缺少支撑事实的可引用证据")
         if issues:
             verdict = verdict.model_copy(update={"approved": False, "issues": issues})
+        if verdict.needs_retrieval and not verdict.missing_goals:
+            verdict = verdict.model_copy(update={
+                "missing_goals": state["intent"].get("goals") or [self.context["input"]["question"]]
+            })
         state["review"], state["review_count"] = verdict.model_dump(), state["review_count"] + 1
         if (
             verdict.needs_retrieval
@@ -425,7 +450,7 @@ class MultiAgent(Investigator):
             state.update(
                 phase="done",
                 outcome="partial"
-                if state.get("has_limitations") or verdict.missing_goals
+                if state.get("closing") or state.get("has_limitations") or verdict.missing_goals
                 else "succeeded",
             )
         elif state.get("revision_count", 0) < 1:
