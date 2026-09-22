@@ -35,9 +35,9 @@ from semibrain_agent.task_outputs import (
     reusable_task,
 )
 
-MULTI_VERSION = "multi-supervisor-v8"
+MULTI_VERSION = "multi-supervisor-v9"
 ROLE_RULES = {
-    "sqlbot": "你是 SQLBot。使用授权业务工具核验目标、阶段、程序、时间与分母。先确认目录中的真实编号，不猜参数。交回引用证据与缺口，不给无证据根因。",
+    "sqlbot": "你是 SQLBot。使用授权业务工具核验目标、阶段、程序、时间与分母。原问题已给出必要参数时直接查询，不为重复确认编号先列目录或读上下文；缺失且可自行补足时才查询目录。仅完成分配给自己的目标，不重复其他分支负责的计算。交回引用证据与缺口，不给无证据根因。",
     "rag": "你是 RAG Agent。检索并读取与分配目标相关的授权原文，保留版本、否定和限制。缺少内容明确记录，不用常识填成引用。",
     "tool": "你是 Tool Agent。按目标使用公开网络、已有查询结果统计或受控 Python 沙箱。联网摘要只作导航，读取正文才是证据。计算从实际输入文件/查询 job 读取，不抄造数列；产物必须保存到工作目录且请求导出。",
     "vision": "你是 Vision Agent。只查看授权图片，报告可观察现象、图像质量和不确定性；缺图、域外、低清明确拒绝判定，不推断工艺根因、概率或未经支持的框。",
@@ -106,6 +106,10 @@ class MultiPrompts(PromptAssembler):
                 "仅输出格式、范围声明、禁止事项不是独立取证任务；放synthesis_goal_indices并作为各任务约束，"
                 "不要派RAG查询这类说明。补查若依赖已完成任务，用reuse_key保留其相同goal_indices和deliverables，"
                 "服务器复用产物不再执行。\n"
+                "优先让一个已具备所需工具的角色完成连贯目标，不能为了展示多Agent而重复派工。"
+                "SQLBot已有statistics，可直接完成良率查询与百分点差，不另派Tool或Python再算一遍。"
+                "聚合数值和指标比较交付evidence；dataset用于需要向下游交付行数据的任务，回答里显示表格不等于dataset。"
+                "只有确需Python、文件或外部资料工具时才安排Tool；artifact_formats仅填写用户明确要求导出的格式，未要求文件时为空。\n"
                 + canonical(Plan.model_json_schema())
             )
         result = super().system(role)

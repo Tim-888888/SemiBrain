@@ -212,7 +212,7 @@ class ToolExecutor:
             args = bind_query(name, args, getattr(self, "intent", {}))
             reusable = {"business.search_lots", "business.get_yield_summary",
                         "business.get_lot_context", "business.get_process_history",
-                        "business.get_fdc_alerts"}
+                        "business.get_fdc_alerts", "business.statistics"}
             if name in reusable:
                 previous = self.db.observations.find_one({
                     "run_id": self.run_id, "observation.tool": name,

@@ -13,7 +13,7 @@ from semibrain_common.runtime import canonical, digest
 
 from semibrain_agent.evidence_view import evidence_views
 
-PROMPT_VERSION = "investigator-prompts-v24"
+PROMPT_VERSION = "investigator-prompts-v25"
 CARD_VERSION = "semiconductor-intents-v1"
 INTENT_CARDS = [
     {
@@ -118,8 +118,10 @@ QUERY_SEMANTICS = """\n良率的stage(CP/FT)、metric(first/final)、首测队�
 model_origin=remote_api表示实际调用远程模型；role_implementation=prompt_role表示角色由提示词分工，不能称为专门训练的模型，也不能称为伪造的模拟调用。data_origin=synthetic仅描述数据来源，与模型是否真实调用无关。旧api_simulated标签不应作为图片或调用伪造的证据。"""
 CONTROL_SAFETY_RULES += QUERY_SEMANTICS
 SYSTEM_RULES += QUERY_SEMANTICS
+ANSWER_RULES += "\n纯压缩、翻译或改写只处理前文实际已有内容，不补齐前文尚未回答的事实。若某一轮未取得资料，就保留该缺口；不能先声明常识未经核验，再借用无关引用为其背书。格式要求不构成新增事实授权。"
 
 REVIEW_RULES += """\n草稿以draft_blocks数组传入，每项id与text合起来就是完整草稿。补充返回presentation_issues（仅篇幅、句数、排版等表达要求的缺陷）和supported_blocks（逐块核验完全正确、有当地有效引用、可独立保留的块id，最多20个）。数值、因果、范围、引用缺陷仍写issues；不要把事实错误归为排版。仅格式未满足且事实全部可靠时approved=true，presentation_issues指出修订点，不放issues或needs_retrieval。事实错误不能通过排版修订自动放行。部分块可靠时可approved=false并给出其supported_blocks；被标为可靠的块中不能夹带待修正事实，不将缺独立引用的块列入。"""
+REVIEW_RULES += "\n同时返回issue_blocks数组，包含issues涉及的所有草稿块id；跨块或全文缺陷列全体相关id。supported_blocks与issue_blocks不得重叠；缺陷块绝不能因为其中另有正确内容就被标为可保留。没有具体事实错误不要将表头措辞、信息分栏、日期等价表达列入issues，纯表达歧义放presentation_issues。"
 
 
 class Slot(BaseModel):
@@ -180,6 +182,7 @@ class Review(BaseModel):
     needs_retrieval: bool = False
     presentation_issues: list[str] = Field(default_factory=list, max_length=10)
     supported_blocks: list[int] = Field(default_factory=list, max_length=20)
+    issue_blocks: list[int] = Field(default_factory=list, max_length=60)
 
 
 class IntentSourceError(ValueError):

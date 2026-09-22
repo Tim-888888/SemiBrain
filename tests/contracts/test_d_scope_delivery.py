@@ -5,6 +5,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from semibrain_agent.evidence_view import evidence_views
 from semibrain_agent.executor import ToolExecutor
 from semibrain_agent.investigator import Investigator
 from semibrain_agent.prompts import Review
@@ -12,6 +13,7 @@ from semibrain_agent.query_contract import QueryScopeError, bind_query
 from semibrain_agent.review_delivery import draft_blocks, retain_reviewed, reviewed_partial
 from semibrain_business.statistics import StatisticsInput, compute
 from semibrain_business.warehouse import compare_yields
+from semibrain_common.runtime import canonical
 
 
 def slot(name, value, source="current_user"):
@@ -118,7 +120,7 @@ def test_format_only_issue_gets_one_repair_and_retains_factual_content():
 
 def test_rejected_answer_retains_only_explicitly_verified_cited_blocks():
     state = {"draft": "Reliable statement [1].\n\nUnsupported claim [2].\n\nUncited claim."}
-    retain_reviewed(state, Review(approved=False, issues=["Second claim wrong"], supported_blocks=[0, 2, 99]),
+    retain_reviewed(state, Review(approved=False, issues=["Second claim wrong"], issue_blocks=[1], supported_blocks=[0, 1, 2, 99]),
                     [{"marker": "1"}, {"marker": "2"}])
     result = reviewed_partial(state, "部分内容无法核验")
     assert "Reliable statement" in result and "Unsupported" not in result and "Uncited" not in result
@@ -129,6 +131,36 @@ def test_rejected_answer_retains_only_explicitly_verified_cited_blocks():
 def test_code_fence_is_not_split_into_unbalanced_review_blocks():
     blocks = draft_blocks("Text.\n\n```python\na=1\n\nprint(a)\n```\n\nNext.")
     assert len(blocks) == 3 and blocks[1]["text"].count("```") == 2
+
+
+def test_unlocated_review_defects_cannot_retain_ambiguous_fragments():
+    state = {"draft": "May be wrong [1]."}
+    retain_reviewed(state, Review(approved=False, issues=["Factual defect"],
+                                 supported_blocks=[0]), [{"marker": "1"}])
+    assert reviewed_partial(state, "Not complete") is None
+
+
+def test_yield_and_comparison_survive_many_documents_without_inventing_fields():
+    first, final = yields()
+    first["query_scope"].update(stage="CP", program_version="v2", metric="first",
+                               start=first["cohort_start"], end=first["cohort_end"], as_of=first["as_of"])
+    first.update(watermark="2026-01-01T10:00:00Z", semantics={"explanation": "x"*4000})
+    rate = {"marker": "1", "job_id": "yield-job", "content": first,
+            "source": {"locator": {"tool": "business.get_yield_summary"}}}
+    comparison = {"marker": "2", "job_id": "difference-job",
+        "source": {"locator": {"tool": "business.statistics"}},
+        "content": {"unit": "percentage_points", "difference_percentage_points": 15,
+                    "comparison_mode": "first_vs_final", "difference_definition": "final_minus_first",
+                    "target": final, "control": first, "input_job_ids": ["j1","j2"]}}
+    docs = [{"marker": str(i), "content": "Unrelated long source " * 500} for i in range(3,16)]
+    originals = copy.deepcopy([rate, comparison, *docs])
+    views = evidence_views([rate, comparison, *docs])
+    for field in ["numerator", "denominator", "value", "query_scope", "watermark", "cohort_signature"]:
+        assert views[0]["content"][field] == first[field]
+    assert views[1]["content"]["difference_percentage_points"] == 15
+    assert views[1]["content"]["input_job_ids"] == ["j1","j2"]
+    assert sum(len(canonical(v["content"])) for v in views) <= 6000
+    assert [rate,comparison,*docs] == originals
 
 
 def test_repeated_read_reuses_authorized_result_but_never_sandbox_execution():

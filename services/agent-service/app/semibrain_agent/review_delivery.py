@@ -33,7 +33,9 @@ def retain_reviewed(state, verdict, evidence):
         state["reviewed_content"] = state["draft"]
         return
     valid = {e["marker"] for e in evidence}
-    supported = set(verdict.supported_blocks)
+    if verdict.issues and not verdict.issue_blocks:
+        return  # Unlocated defects cannot justify retaining model-selected fragments.
+    supported = set(verdict.supported_blocks) - set(verdict.issue_blocks)
     keep = []
     for block in draft_blocks(state["draft"]):
         markers = cited_markers(block["text"])
