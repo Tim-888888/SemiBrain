@@ -127,6 +127,22 @@ def rerank(query, chunks, top_k):
     return [{**chunks[row["index"]], "rerank_score": row["relevance_score"]} for row in ranked]
 
 
+def rank_candidates(query, chunks, top_k):
+    """An optional provider cannot erase already authorized hybrid results."""
+    if not chunks:
+        return [], {"status": "skipped_empty"}
+    try:
+        return rerank(query, chunks, top_k), {"status": "succeeded"}
+    except httpx.HTTPError as exc:
+        code = ("RERANK_HTTP_" + str(exc.response.status_code)
+                if isinstance(exc, httpx.HTTPStatusError) else "RERANK_TRANSPORT_ERROR")
+        # Keep RRF order and do not fabricate reranker scores. Resource authorization
+        # failures are deliberately outside this catch, and checked again by search.
+        return chunks[:top_k], {"status": "degraded", "reason": code,
+                               "fallback": "authorized_hybrid_rrf",
+                               "notice": "外部重排不可用，按已授权混合检索顺序返回；未生成重排分数。"}
+
+
 def search(query, claim, top_k=5):
     import json
 
@@ -221,7 +237,7 @@ def search(query, claim, top_k=5):
         chunks = authorized_chunks(hits)
         refilled = True
     # Authorization and current version checks above precede external reranking.
-    ranked = rerank(query, chunks, top_k)
+    ranked, ranking = rank_candidates(query, chunks, top_k)
     final = []
     for row in ranked:
         authorized_document(row["document_id"], claim, active=True, version=row["version"])
@@ -235,4 +251,5 @@ def search(query, claim, top_k=5):
         "fusion": "RRF",
         "sparse": "BM25",
         "embedding_version": EMBEDDING_VERSION,
+        "rerank": ranking,
     }

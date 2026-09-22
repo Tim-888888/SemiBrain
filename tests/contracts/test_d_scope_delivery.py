@@ -140,6 +140,20 @@ def test_unlocated_review_defects_cannot_retain_ambiguous_fragments():
     assert reviewed_partial(state, "Not complete") is None
 
 
+def test_only_unchanged_previously_checked_blocks_survive_later_review():
+    evidence = [{"marker": "1"}, {"marker": "2"}]
+    state = {"draft": "Checked rate [1].\n\nChecked explanation [2].\n\nWrong detail [2]."}
+    retain_reviewed(state, Review(approved=False, issues=["Wrong detail"], issue_blocks=[2],
+                                 supported_blocks=[0,1]), evidence)
+    state["draft"] = "Checked rate [1].\n\nChecked explanation [2].\n\nRewritten detail [2]."
+    retain_reviewed(state, Review(approved=False, issues=["Detail still wrong"], issue_blocks=[2]), evidence)
+    assert state["reviewed_content"] == "Checked rate [1].\n\nChecked explanation [2]."
+    # A new defect can revoke a previously accepted block; changed text needs fresh review.
+    state["draft"] = "Changed rate [1].\n\nChecked explanation [2]."
+    retain_reviewed(state, Review(approved=False, issues=["Explanation wrong"], issue_blocks=[1]), evidence)
+    assert reviewed_partial(state, "Not complete") is None
+
+
 def test_yield_and_comparison_survive_many_documents_without_inventing_fields():
     first, final = yields()
     first["query_scope"].update(stage="CP", program_version="v2", metric="first",

@@ -39,7 +39,7 @@ def yield_observation(record):
         scope = {}
     lots = inline(scope.get("lot_ids", "旧结果未附批次条件，请核对来源"))
     metric = "首测" if data["metric"] == "first" else "最终"
-    ratio = "无有效分母，比例未计算" if value is None else f"原始比例 {inline(value)}（fraction）"
+    ratio = "无有效分母，良率未计算" if value is None else f"良率 {value:.2%}"
     origin = "合成演示数据" if data.get("data_origin") == "synthetic" else "查询观察"
     return (
         f"- {origin}：{metric}，分子 {numerator}、分母 {denominator}；{ratio} [{record['marker']}]。  \n"
