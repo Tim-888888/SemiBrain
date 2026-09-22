@@ -34,7 +34,7 @@ from semibrain_agent.task_outputs import (
     reusable_task,
 )
 
-MULTI_VERSION = "multi-supervisor-v6"
+MULTI_VERSION = "multi-supervisor-v7"
 ROLE_RULES = {
     "sqlbot": "你是 SQLBot。使用授权业务工具核验目标、阶段、程序、时间与分母。先确认目录中的真实编号，不猜参数。交回引用证据与缺口，不给无证据根因。",
     "rag": "你是 RAG Agent。检索并读取与分配目标相关的授权原文，保留版本、否定和限制。缺少内容明确记录，不用常识填成引用。",
@@ -713,11 +713,18 @@ class Expert(Investigator):
     def complete_task(self, state, item, logical_id):
         records = self.executor.evidence()
         own = [r for r in records if r["evidence_id"] in state.get("evidence_ids", [])]
+        # A consumer may cite its declared producer's evidence. Only its own
+        # execution results can prove that it computed/exported the requested work.
+        claimable = {r["evidence_id"] for r in own}
+        for dependency in self.dependencies():
+            if dependency["key"] in self.task.get("depends_on", []):
+                claimable.update(dependency.get("evidence_ids", []))
+        claimable &= {r["evidence_id"] for r in records}
         requirement = Deliverables.model_validate(self.task.get("deliverables", {}))
         outputs, issues = check_outputs(requirement, own, input_jobs=state.get("input_job_ids", []))
         try:
             completion = Completion.model_validate_json(item["arguments"])
-            if set(completion.evidence_ids) - {r["evidence_id"] for r in own}:
+            if set(completion.evidence_ids) - claimable:
                 issues.append("COMPLETION_EVIDENCE_OUTSIDE_TASK")
             issues.extend(completion.missing)
             summary, requested = completion.summary, completion.completed

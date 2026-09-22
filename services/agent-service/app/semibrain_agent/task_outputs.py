@@ -9,7 +9,10 @@ class Completion(BaseModel):
     model_config = ConfigDict(extra="forbid")
     completed: bool
     summary: str = Field(min_length=1, max_length=4000)
-    evidence_ids: list[str] = Field(default_factory=list, max_length=50)
+    evidence_ids: list[str] = Field(
+        default_factory=list, max_length=50,
+        description="可省略；填写时只用本分支或声明依赖中已登记的evidence_id，不填marker或job_id。",
+    )
     missing: list[str] = Field(default_factory=list, max_length=12)
 
 

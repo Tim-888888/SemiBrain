@@ -114,6 +114,7 @@ def expert(records=()):
     instance.task = {"_id": "task", "plan_version": 1, "depends_on": [],
                      "deliverables": {"kind": "python", "artifact_formats": ["csv", "png"]}}
     instance.executor = SimpleNamespace(evidence=lambda: list(records))
+    instance.dependencies = lambda: []
     instance.harness = Mock()
     return instance
 
@@ -134,6 +135,21 @@ def test_explicit_incomplete_result_is_not_green_even_when_some_evidence_exists(
     result = instance.complete_task({"evidence_ids": ["python-evidence"]}, {"arguments": json.dumps({
         "completed": False, "summary": "Did not finish.", "missing": ["grouping unverified"]})}, "call")
     assert result["phase"] == "done" and result["outcome"] == "partial"
+
+
+def test_completion_can_cite_declared_input_but_not_claim_its_execution_as_own():
+    instance = expert([query_record(), python_record()])
+    instance.task["depends_on"] = ["rows"]
+    instance.dependencies = lambda: [producer()]
+    item = {"arguments": json.dumps({"completed": True, "summary": "Computed from input.",
+                                     "evidence_ids": ["query-evidence", "python-evidence"]})}
+    result = instance.complete_task({"evidence_ids": ["python-evidence"],
+                                     "input_job_ids": ["query-job"]}, item, "call")
+    assert result["outcome"] == "succeeded"
+    result = instance.complete_task({"evidence_ids": [], "input_job_ids": ["query-job"],
+                                     "completion_retry": 1}, item, "another-call")
+    assert result["outcome"] == "partial"
+    assert "SUCCESSFUL_PYTHON_WITH_REQUIRED_INPUTS_MISSING" in result["completion_issues"]
 
 
 def test_missing_dependency_stops_before_model_or_sandbox_call():
