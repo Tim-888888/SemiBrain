@@ -24,7 +24,7 @@ from semibrain_agent.prompts import (
 from semibrain_agent.provider import ModelError
 from semibrain_agent.quick_web import QuickClient
 
-MULTI_VERSION = "multi-supervisor-v2"
+MULTI_VERSION = "multi-supervisor-v3"
 ROLE_RULES = {
     "sqlbot": "你是 SQLBot。使用授权业务工具核验目标、阶段、程序、时间与分母。先确认目录中的真实编号，不猜参数。交回引用证据与缺口，不给无证据根因。",
     "rag": "你是 RAG Agent。检索并读取与分配目标相关的授权原文，保留版本、否定和限制。缺少内容明确记录，不用常识填成引用。",
@@ -35,6 +35,17 @@ ROLE_RULES = {
 
 class MultiPrompts(PromptAssembler):
     def system(self, role="investigator"):
+        if role in ROLE_RULES:
+            runtime = next(s["text"] for s in self.sections(role) if s["name"] == "trusted_runtime")
+            return (CONTROL_SAFETY_RULES + "\n" + ROLE_RULES[role]
+                    + "\n你只负责原目标中属于本角色的工作，其他分支负责的工作不属于你的能力缺失。"
+                    "交回简短证据摘要供协调器汇总，不代替协调器写完整报告。"
+                    "只用服务端已登记的数字marker引用，不将UUID截断当引用。"
+                    "读到足够原文立即结束，不重复同义检索或重复读同一区段。"
+                    "已有job_id须通过sandbox.python的job_ids显式装入，文件不会自动出现在沙箱；"
+                    "文件名query-<job_id>.json，按实际JSON字段计算，不能手抄或猜测数组。"
+                    "最近工具输出提供真实读页/执行结果，失败、空集、未调用分别说明。"
+                    "仅可经授权sandbox.python执行代码，不可在宿主执行。\ntrusted_runtime:\n" + runtime)
         if role == "supervisor":
             return (
                 CONTROL_SAFETY_RULES + "\n你是任务协调器，只返回计划控制对象，不输出用户答案。"
@@ -47,12 +58,6 @@ class MultiPrompts(PromptAssembler):
         result = super().system(role)
         if role in {*ROLE_RULES, "rca"}:
             result = result.replace("当前角色是单 Agent Investigator", "当前角色是多 Agent 协作的专业分支")
-        if role in ROLE_RULES:
-            result += (
-                "\n"
-                + ROLE_RULES[role]
-                + "\n输出简洁工作结论，使用已登记引用；不要代替其他角色编造结果。"
-            )
         if role == "rca":
             result += "\n整合各分支的真实证据形成用户所需的自然Markdown。保留冲突和反证，统计相关不等于根因。分支失败时回答有证据部分并说明缺口；不复述内部调度日志。"
         return result
@@ -535,6 +540,14 @@ class Expert(Investigator):
                 ),
             }
         ]
+        # Replay the last native call/result pairs. A status-only summary cannot tell a
+        # professional what evidence.read, page reads or Python actually returned.
+        for item in state.get("last_outputs", []):
+            inputs.append({"type": "function_call", **item["call"]})
+            row = self.db.observations.find_one({"_id": item["logical_id"], "run_id": self.run["_id"]})
+            observation = row["observation"] if row else {"status": "failed", "error": "ROLE_TOOL_DENIED"}
+            inputs.append({"type": "function_call_output", "call_id": item["call"]["call_id"],
+                           "output": canonical(observation)})
         callstate = {
             "step": self.task["_id"] + ":" + str(state["round"]),
             "phase": "expert." + self.role,
@@ -553,19 +566,22 @@ class Expert(Investigator):
 
     def task_tools(self, state):
         observed, ids = list(state.get("observations", [])), set(state.get("evidence_ids", []))
-        for item in state["calls"][:4]:
+        last_outputs = []
+        for index, item in enumerate(state["calls"]):
             name = self.names.get(item["name"])
-            if not name or name not in self.allowed:
+            logical_id = str(uuid5(NAMESPACE_URL, state["turn_id"] + ":" + item["call_id"]))
+            last_outputs.append({"call": item, "logical_id": logical_id})
+            if index >= 4 or not name or name not in self.allowed:
                 observed.append({"status": "failed", "error": "ROLE_TOOL_DENIED"})
                 continue
-            logical_id = str(uuid5(NAMESPACE_URL, state["turn_id"] + ":" + item["call_id"]))
             result = self.executor.execute(name, item["arguments"], logical_id)
             ids.update(x["evidence_id"] for x in result.get("evidence", []))
             observed.append(self.observation_summary(result))
             # Search navigation is necessary to select a page; never turn it into fact evidence.
             if name == "web.search":
                 observed[-1]["data"] = result.get("data")
-        state.update(phase="model", observations=observed[-8:], evidence_ids=sorted(ids))
+        state.update(phase="model", observations=observed[-8:], evidence_ids=sorted(ids),
+                     last_outputs=last_outputs)
         return state
 
     def task_done(self, state):
