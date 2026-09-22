@@ -53,6 +53,7 @@ class GraphState(TypedDict):
 
 
 class Investigator:
+    project_evidence = staticmethod(evidence_views)
     strategy = "single_agent"
     graph_version = GRAPH_VERSION
     state_version = STATE_VERSION
@@ -740,7 +741,7 @@ class Investigator:
                 "content": canonical({
                     "question": self.context["input"]["question"],
                     "intent": state["intent"],
-                    "evidence": evidence_views(self.executor.evidence()),
+                    "evidence": self.project_evidence(self.executor.evidence()),
                     "execution_summary": self.execution_summary(),
                 }),
             },

@@ -119,6 +119,7 @@ class ConcurrentExecutor(ToolExecutor):
 
 
 class MultiAgent(Investigator):
+    project_evidence = staticmethod(multi_evidence_views)
     strategy = "multi_agent"
     graph_version = MULTI_VERSION
     limits = MULTI_LIMITS
