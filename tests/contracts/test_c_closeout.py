@@ -163,7 +163,7 @@ def test_verified_fallback_keeps_actual_scope_raw_ratio_and_synthetic_label():
         "[2]",
     ):
         assert text in result
-    assert "77.78%" not in result  # No new numeric transformation by the fallback.
+    assert "77.78%" in result  # Display the validated fraction; preserve its raw counts above.
 
 
 def test_empty_denominator_is_not_a_zero_yield():
