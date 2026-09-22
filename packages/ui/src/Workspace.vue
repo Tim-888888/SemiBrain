@@ -37,9 +37,20 @@ async function loadLists() {
   if (updated) conversation.value = updated
 }
 async function signedIn(value: User) { user.value = value; if (adminPage.value) view.value = 'knowledge'; await loadLists() }
+function rememberChat(id?: string) {
+  if (!user.value) return
+  try { const key = `semibrain:${props.audience}:${user.value.id}:conversation`; if (id) sessionStorage.setItem(key, id); else sessionStorage.removeItem(key) } catch { /* Storage-disabled browsers can still use the workspace. */ }
+}
+async function restoreChat() {
+  if (!user.value) return
+  try {
+    const id = sessionStorage.getItem(`semibrain:${props.audience}:${user.value.id}:conversation`)
+    if (id && /^[a-f0-9-]{36}$/i.test(id)) await openChat(conversations.value.find(item => item.id === id) || { id, title: '历史会话', revision: 0 })
+  } catch { /* Saved state is a navigation hint; the server authorizes every read. */ }
+}
 function closeStream() { source?.close(); source = null }
 async function bottom() { await nextTick(); scrollArea.value?.scrollTo({ top: scrollArea.value.scrollHeight, behavior: 'smooth' }) }
-function newChat() { multiAgent.value = false; imageUploads.value = []; allowWeb.value = false; generation++; closeStream(); conversation.value = null; messages.value = []; activeRun.value = null; error.value = ''; pending = null; selectedDocuments.value = []; attached.value = []; messagesCursor.value = null; view.value = 'chat' }
+function newChat() { rememberChat(); multiAgent.value = false; imageUploads.value = []; allowWeb.value = false; generation++; closeStream(); conversation.value = null; messages.value = []; activeRun.value = null; error.value = ''; pending = null; selectedDocuments.value = []; attached.value = []; messagesCursor.value = null; view.value = 'chat' }
 async function openChat(item: any) {
   const current = ++generation; closeStream(); view.value = 'chat'; error.value = ''; pending = null
   try {
@@ -47,8 +58,10 @@ async function openChat(item: any) {
     if (generation !== current) return
     multiAgent.value = item.last_investigation_strategy === 'multi_agent'; imageUploads.value = []; conversation.value = item; messages.value = result.items; messagesCursor.value = result.next_cursor; activeRun.value = null; selectedDocuments.value = []; attached.value = []
     const last = messages.value.at(-1)
+    conversation.value.revision = Math.max(item.revision || 0, ...messages.value.map(message => message.input_revision))
+    rememberChat(item.id)
     if (last?.input_scope) restoreScope(last)
-    if (last?.role === 'user') subscribe(last.run_id, current)
+    if (last?.role === 'user') { const state: Run = await api(`/v1/runs/${last.run_id}`); if (generation !== current) return; restoreScope(state); subscribe(last.run_id, current) }
     await bottom()
   } catch (e) { if (generation === current) error.value = (e as Error).message }
 }
@@ -97,6 +110,7 @@ async function send() {
       const created = await post('/v1/conversations', { request_id: requestId, title: '新会话' }, requestId)
       if (current !== generation) return
       conversation.value = created
+      rememberChat(created.id)
     }
     if (!pending || pending.payload.text !== text.value || pending.payload.mode !== mode.value || pending.payload.investigation_strategy !== submittedStrategy.value || pending.payload.allow_web !== allowWeb.value || JSON.stringify(pending.payload.resource_restrictions) !== JSON.stringify(selectedDocuments.value) || JSON.stringify(pending.payload.attachment_refs) !== JSON.stringify(attached.value) || pending.conversationId !== conversation.value.id) pending = {
       conversationId: conversation.value.id, payload: { request_id: crypto.randomUUID(), expected_revision: conversation.value.revision,
@@ -135,7 +149,7 @@ async function showPrompt(runId: string) {
   catch (e) { error.value = (e as Error).message }
 }
 function keydown(event: KeyboardEvent) { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); send() } }
-onMounted(async () => { try { const result = await api('/v1/auth/me'); setCsrf(result.csrf); await signedIn(result.user) } catch { user.value = null } finally { loading.value = false } })
+onMounted(async () => { try { const result = await api('/v1/auth/me'); setCsrf(result.csrf); await signedIn(result.user); await restoreChat() } catch { user.value = null } finally { loading.value = false } })
 onUnmounted(closeStream)
 </script>
 <template>
