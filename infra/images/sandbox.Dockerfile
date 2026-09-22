@@ -11,7 +11,8 @@ RUN sed -i 's|http://deb.debian.org/debian|https://mirrors.aliyun.com/debian|g' 
     && apt-get -o Acquire::Retries=2 -o Acquire::https::Timeout=30 install -y --no-install-recommends fonts-noto-cjk=1:20220127+repack1-1 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /opt/runtime /opt/runtime
-COPY infra/images/sandbox-matplotlibrc /opt/runtime/lib/python3.12/site-packages/matplotlib/mpl-data/matplotlibrc
+COPY infra/images/configure-matplotlib.py /tmp/configure-matplotlib.py
+RUN /opt/runtime/bin/python /tmp/configure-matplotlib.py && rm /tmp/configure-matplotlib.py
 RUN groupadd -g 10001 sandbox && useradd -u 10001 -g 10001 -M sandbox
 USER 10001:10001
 WORKDIR /workspace
