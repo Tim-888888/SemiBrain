@@ -289,6 +289,8 @@ class ToolExecutor:
         except (RunStopped, BudgetExhausted):
             raise
         except (ValueError, HTTPException, TimeoutError) as exc:
+            if name == "web.search":
+                self.harness.settle_external_tool(logical_id, None)
             code = (
                 exc.detail.get("code", "TOOL_REQUEST_FAILED")
                 if isinstance(exc, HTTPException) and isinstance(exc.detail, dict)

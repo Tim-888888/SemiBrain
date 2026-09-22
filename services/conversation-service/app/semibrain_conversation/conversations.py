@@ -99,8 +99,6 @@ class MessageInput(BaseModel):
 @router.post("/v1/conversations/{conversation_id}/messages", status_code=202)
 def submit(conversation_id: str, form: MessageInput, request: Request, user=Depends(current_user)):
     request_key(request, form.request_id)
-    if form.mode == "quick_qa" and form.allow_web:
-        failure("CAPABILITY_UNAVAILABLE", 409)
     if not form.text.strip():
         failure("EMPTY_MESSAGE")
     key = digest(user["_id"] + ":" + conversation_id + ":" + str(form.request_id))

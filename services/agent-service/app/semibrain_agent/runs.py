@@ -96,6 +96,7 @@ def snapshot(run_id: str, request: Request):
         "budget",
         "stop_code",
         "web_disabled",
+        "web_activity",
     ):
         if key in row:
             result[key] = row[key]
@@ -188,6 +189,14 @@ def execute_one():
                 run,
                 fence,
                 context,
+                lambda values, event="task.started": update(run, fence, values, event),
+            ).execute()
+            return True
+        if context["input"].get("allow_web"):
+            from semibrain_agent.quick_web import QuickWebRunner
+
+            QuickWebRunner(
+                run, fence, context,
                 lambda values, event="task.started": update(run, fence, values, event),
             ).execute()
             return True
