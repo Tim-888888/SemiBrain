@@ -93,16 +93,12 @@ def close_pending_usage(db, run_id, session):
 def tool_stop_confirmed(client, call_id):
     try:
         result = client.request("POST", "/internal/v1/tool-jobs/" + call_id + "/cancel")
-    except HTTPException as exc:
-        # The run may be cancelled after recording its logical call but before
-        # submission. A stopped worker plus the owner's JOB_NOT_FOUND confirms
-        # that no accepted job remains; other errors cannot prove a stop.
-        return (
-            exc.status_code == 404
-            and isinstance(exc.detail, dict)
-            and exc.detail.get("code") == "JOB_NOT_FOUND"
-        )
-    return result["status"] in {"succeeded", "partial", "failed", "cancelled"}
+    except HTTPException:
+        # Transport errors are deliberately sanitized and cannot prove absence.
+        return False
+    return result["status"] in {"succeeded", "partial", "failed", "cancelled"} or (
+        result["status"] == "not_submitted" and result.get("accepted") is False
+    )
 
 
 def reconcile_cancellations():

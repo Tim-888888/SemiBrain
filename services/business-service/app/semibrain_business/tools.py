@@ -270,10 +270,12 @@ def status(job_id: str, request: Request):
 
 @router.post("/internal/v1/tool-jobs/{job_id}/cancel")
 def cancel(job_id: str, request: Request):
+    claim = authorize_request(request, "lineage.check")
     job = db().tool_jobs.find_one({"_id": job_id})
     if not job:
-        failure("JOB_NOT_FOUND", 404)
-    claim = authorize_request(request, "lineage.check")
+        # The agent records a logical call before submitting it. Cancelling the
+        # parent can win that race; expose this only after authenticating the caller.
+        return {"job_id": job_id, "status": "not_submitted", "accepted": False}
     if job["subject_id"] != claim["subject_id"] or job["run_id"] != claim["run_id"]:
         failure("JOB_NOT_FOUND", 404)
 

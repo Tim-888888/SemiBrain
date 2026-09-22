@@ -270,7 +270,7 @@ def test_stop_keeps_outstanding_usage_unknown_without_double_counting():
 @pytest.mark.parametrize(
     "code,status,confirmed",
     [
-        ("JOB_NOT_FOUND", 404, True),
+        ("JOB_NOT_FOUND", 404, False),
         ("RUN_REVOKED", 403, False),
         ("UNAVAILABLE", 503, False),
     ],
@@ -285,6 +285,25 @@ def test_cancel_before_submission_is_distinct_from_an_unconfirmed_tool_stop(
         request=lambda *args: (_ for _ in ()).throw(HTTPException(status, detail={"code": code}))
     )
     assert tool_stop_confirmed(client, "call") is confirmed
+
+
+def test_cancel_before_submission_requires_authenticated_owner_service_response(monkeypatch):
+    from fastapi import HTTPException
+    from semibrain_agent.control import tool_stop_confirmed
+    from semibrain_business import tools
+
+    monkeypatch.setattr(
+        tools, "authorize_request", lambda *args: {"subject_id": "user", "run_id": "r"}
+    )
+    monkeypatch.setattr(tools, "db", lambda: SimpleNamespace(tool_jobs=Journal()))
+    result = tools.cancel("never-submitted", None)
+    assert result == {"job_id": "never-submitted", "status": "not_submitted", "accepted": False}
+    assert tool_stop_confirmed(SimpleNamespace(request=lambda *args: result), "never-submitted")
+    monkeypatch.setattr(
+        tools, "authorize_request", lambda *args: (_ for _ in ()).throw(HTTPException(403))
+    )
+    with pytest.raises(HTTPException):
+        tools.cancel("never-submitted", None)
 
 
 def test_gathering_budget_preserves_answer_reserve_and_existing_sources(monkeypatch):
