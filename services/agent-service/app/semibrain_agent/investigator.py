@@ -214,7 +214,9 @@ class Investigator:
             estimate_reservation(system, inputs, tools, max_tokens, basis=basis, previous=previous)
             for previous in baselines
         ]])
-        reservation = self.harness.model_reserve(amount, phase=state["phase"], final=final)
+        reservation = self.harness.model_reserve(
+            amount, phase=state["phase"], final=final, task_id=self.context["task_id"]
+        )
         row = self.harness.check()
         adapter = ProviderAdapter(
             profile,

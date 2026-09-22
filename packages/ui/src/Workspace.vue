@@ -88,7 +88,7 @@ function subscribe(runId: string, current = generation) {
   })
 }
 async function send() {
-  if (!text.value.trim() || running.value) return
+  if (!text.value.trim() || running.value || uploading.value) return
   if (sourceMenu.value) sourceMenu.value.open = false
   sending.value = true; error.value = ''; const current = generation
   try {

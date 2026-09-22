@@ -24,7 +24,7 @@ from semibrain_agent.prompts import (
 from semibrain_agent.provider import ModelError
 from semibrain_agent.quick_web import QuickClient
 
-MULTI_VERSION = "multi-supervisor-v1"
+MULTI_VERSION = "multi-supervisor-v2"
 ROLE_RULES = {
     "sqlbot": "你是 SQLBot。使用授权业务工具核验目标、阶段、程序、时间与分母。先确认目录中的真实编号，不猜参数。交回引用证据与缺口，不给无证据根因。",
     "rag": "你是 RAG Agent。检索并读取与分配目标相关的授权原文，保留版本、否定和限制。缺少内容明确记录，不用常识填成引用。",
@@ -45,6 +45,8 @@ class MultiPrompts(PromptAssembler):
                 + canonical(Plan.model_json_schema())
             )
         result = super().system(role)
+        if role in {*ROLE_RULES, "rca"}:
+            result = result.replace("当前角色是单 Agent Investigator", "当前角色是多 Agent 协作的专业分支")
         if role in ROLE_RULES:
             result += (
                 "\n"
@@ -242,7 +244,7 @@ class MultiAgent(Investigator):
         rows = list(self.db.tasks.find({"run_id": self.run["_id"]}).sort("created_at", 1))
         for row in rows:
             calls = list(
-                self.db.model_turns.find({"run_id": self.run["_id"], "task_id": row["_id"]})
+                self.db.model_calls.find({"run_id": self.run["_id"], "task_id": row["_id"]})
             )
             tools = list(
                 self.db.tool_calls.find({"run_id": self.run["_id"], "task_id": row["_id"]})
@@ -251,7 +253,7 @@ class MultiAgent(Investigator):
                 model_calls=len(calls),
                 tool_calls=len(tools),
                 settled_tokens=sum(
-                    (c.get("turn", {}).get("usage") or {}).get("total_tokens", 0) for c in calls
+                    (c.get("usage") or {}).get("total_tokens", 0) for c in calls
                 )
                 + sum((t.get("usage") or {}).get("total_tokens", 0) for t in tools),
             )

@@ -24,7 +24,8 @@ router = APIRouter()
 
 @router.post("/internal/v1/attachments/images", status_code=201)
 def upload_image(request: Request, file: UploadFile = File(...),
-                 allow_external: bool = Form(False)):
+                 allow_external: bool = Form(False),
+                 data_origin: Literal["synthetic", "public", "authorized_business"] = Form("authorized_business")):
     import io
 
     from PIL import Image
@@ -46,7 +47,7 @@ def upload_image(request: Request, file: UploadFile = File(...),
     asset = store_asset(raw, Image.MIME[format_name], claim["subject_id"],
                         "image." + {"PNG": "png", "JPEG": "jpg", "WEBP": "webp"}[format_name])
     db().assets.update_one({"_id": asset["_id"]}, {"$set": {
-        "chat_upload": True, "allow_external": True, "data_origin": "authorized_business",
+        "chat_upload": True, "allow_external": True, "data_origin": data_origin,
         "width": size[0], "height": size[1],
     }})
     return {"asset_id": asset["_id"], "name": asset["filename"], "width": size[0], "height": size[1]}

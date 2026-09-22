@@ -1,5 +1,6 @@
 """Authenticated gateway routes; knowledge and query records stay in the business service."""
 
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
@@ -31,13 +32,14 @@ def compare_recent(user=Depends(admin)):
 
 @router.post("/v1/attachments/images", status_code=201)
 def upload_image(file: UploadFile = File(...), allow_external: bool = Form(False),
+                 data_origin: Literal["synthetic", "public", "authorized_business"] = Form("authorized_business"),
                  user=Depends(current_user)):
     raw = file.file.read(3 * 1024**2 + 1)
     if not raw or len(raw) > 3 * 1024**2:
         failure("IMAGE_SIZE_INVALID", 413)
     return business(user, "POST", "/internal/v1/attachments/images", operation="attachment.upload",
                     files={"file": (file.filename, raw, file.content_type)},
-                    data={"allow_external": str(allow_external).lower()}).json()
+                    data={"allow_external": str(allow_external).lower(), "data_origin": data_origin}).json()
 
 
 @router.post("/v1/attachments/{asset_id}/revoke")

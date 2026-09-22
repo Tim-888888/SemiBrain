@@ -682,6 +682,16 @@
             "type": "boolean",
             "title": "Allow External",
             "default": false
+          },
+          "data_origin": {
+            "type": "string",
+            "enum": [
+              "synthetic",
+              "public",
+              "authorized_business"
+            ],
+            "title": "Data Origin",
+            "default": "authorized_business"
           }
         },
         "type": "object",

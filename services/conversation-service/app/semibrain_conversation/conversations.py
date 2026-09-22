@@ -109,6 +109,26 @@ def capabilities(user=Depends(current_user)):
     return call("agent", "GET", "/internal/v1/capabilities").json()
 
 
+def submission_response(row):
+    return {
+        "run_id": row["_id"], "turn_id": row["input"]["turn_id"],
+        "input_revision": row["input"]["input_revision"], "status": row["status"],
+        "status_url": "/v1/runs/" + row["_id"],
+        "events_url": "/v1/runs/" + row["_id"] + "/events",
+        "continuation": row.get("continuation"),
+    }
+
+
+def submission_matches(row, form):
+    payload = form.model_dump(mode="json")
+    if row["payload_hash"] == digest(canonical(payload)):
+        return True
+    if "investigation_strategy" not in row["input"] and form.investigation_strategy is None:
+        payload.pop("investigation_strategy", None)
+        return row["payload_hash"] == digest(canonical(payload))
+    return False
+
+
 @router.post("/v1/conversations/{conversation_id}/messages", status_code=202)
 def submit(conversation_id: str, form: MessageInput, request: Request, user=Depends(current_user)):
     request_key(request, form.request_id)
@@ -116,6 +136,12 @@ def submit(conversation_id: str, form: MessageInput, request: Request, user=Depe
         failure("EMPTY_MESSAGE")
     key = digest(user["_id"] + ":" + conversation_id + ":" + str(form.request_id))
     payload_hash = digest(canonical(form.model_dump(mode="json")))
+    existing = db().gateway_runs.find_one({"request_key": key})
+    if existing:
+        if not submission_matches(existing, form):
+            failure("IDEMPOTENCY_CONFLICT", 409)
+        # Admission flags and current run state cannot invalidate an accepted replay.
+        return submission_response(existing)
     run_id, turn_id, task_id = uid(), uid(), uid()
     strategy = (
         (form.investigation_strategy or "single_agent") if form.mode == "investigation" else None
@@ -178,7 +204,7 @@ def submit(conversation_id: str, form: MessageInput, request: Request, user=Depe
     def accept(session):
         existing = db().gateway_runs.find_one({"request_key": key}, session=session)
         if existing:
-            if existing["payload_hash"] != payload_hash:
+            if not submission_matches(existing, form):
                 failure("IDEMPOTENCY_CONFLICT", 409)
             return existing
         active = db().gateway_runs.find_one(
@@ -280,15 +306,7 @@ def submit(conversation_id: str, form: MessageInput, request: Request, user=Depe
                 {"_id": row["_id"]}, {"$set": {"trace_root_id": span.span.id}}
             )
         span.end(status=row["status"])
-    return {
-        "run_id": row["_id"],
-        "turn_id": row["input"]["turn_id"],
-        "input_revision": row["input"]["input_revision"],
-        "status": row["status"],
-        "status_url": "/v1/runs/" + row["_id"],
-        "events_url": "/v1/runs/" + row["_id"] + "/events",
-        "continuation": row.get("continuation"),
-    }
+    return submission_response(row)
 
 
 @router.get("/v1/conversations/{conversation_id}/messages")

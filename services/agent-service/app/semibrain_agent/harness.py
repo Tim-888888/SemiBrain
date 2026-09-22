@@ -135,7 +135,7 @@ class Harness:
             self.last_renewed = time.monotonic()
         return row
 
-    def model_reserve(self, amount, *, phase, final=False):
+    def model_reserve(self, amount, *, phase, final=False, task_id=None):
         row = self.check()
         budget = row["budget"]
         limits = budget["limits"]
@@ -170,6 +170,7 @@ class Harness:
                     "run_id": self.run_id,
                     "fence": self.fence,
                     "phase": phase,
+                    "task_id": task_id,
                     "reserved_tokens": amount,
                     "status": "reserved",
                     "created_at": now(),

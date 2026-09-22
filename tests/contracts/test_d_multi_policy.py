@@ -74,3 +74,19 @@ def test_operator_can_freeze_identical_comparison_limits_without_message_overrid
     monkeypatch.setenv("SEMIBRAIN_INVESTIGATION_LIMITS", '{"tokens":999999}')
     with pytest.raises(ValueError):
         investigation_limits()
+
+
+def test_old_message_replay_is_compatible_but_cannot_change_strategy():
+    from semibrain_common.runtime import canonical, digest
+    from semibrain_conversation.conversations import submission_matches
+
+    form = MessageInput(request_id=uuid4(), expected_revision=0, text="hello", mode="investigation")
+    original = form.model_dump(mode="json")
+    original.pop("investigation_strategy")
+    legacy = {"payload_hash": digest(canonical(original)), "input": {"mode": "investigation"}}
+    assert submission_matches(legacy, form)
+    assert not submission_matches(legacy, form.model_copy(update={"investigation_strategy": "multi_agent"}))
+    current = {"payload_hash": digest(canonical(form.model_dump(mode="json"))),
+               "input": {"investigation_strategy": "single_agent"}}
+    assert submission_matches(current, form)
+    assert not submission_matches(current, form.model_copy(update={"text": "changed"}))
