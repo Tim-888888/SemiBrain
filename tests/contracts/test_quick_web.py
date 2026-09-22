@@ -267,6 +267,26 @@ def test_stop_keeps_outstanding_usage_unknown_without_double_counting():
     assert known["usage"]["total_tokens"] == 100
 
 
+@pytest.mark.parametrize(
+    "code,status,confirmed",
+    [
+        ("JOB_NOT_FOUND", 404, True),
+        ("RUN_REVOKED", 403, False),
+        ("UNAVAILABLE", 503, False),
+    ],
+)
+def test_cancel_before_submission_is_distinct_from_an_unconfirmed_tool_stop(
+    code, status, confirmed
+):
+    from fastapi import HTTPException
+    from semibrain_agent.control import tool_stop_confirmed
+
+    client = SimpleNamespace(
+        request=lambda *args: (_ for _ in ()).throw(HTTPException(status, detail={"code": code}))
+    )
+    assert tool_stop_confirmed(client, "call") is confirmed
+
+
 def test_gathering_budget_preserves_answer_reserve_and_existing_sources(monkeypatch):
     r = runner(monkeypatch, stop_at="knowledge.search")
     r.execute()

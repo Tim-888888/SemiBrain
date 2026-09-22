@@ -2,7 +2,7 @@
 
 from datetime import timedelta
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 from semibrain_common.runtime import (
     call,
@@ -90,6 +90,21 @@ def close_pending_usage(db, run_id, session):
     return models + tools
 
 
+def tool_stop_confirmed(client, call_id):
+    try:
+        result = client.request("POST", "/internal/v1/tool-jobs/" + call_id + "/cancel")
+    except HTTPException as exc:
+        # The run may be cancelled after recording its logical call but before
+        # submission. A stopped worker plus the owner's JOB_NOT_FOUND confirms
+        # that no accepted job remains; other errors cannot prove a stop.
+        return (
+            exc.status_code == 404
+            and isinstance(exc.detail, dict)
+            and exc.detail.get("code") == "JOB_NOT_FOUND"
+        )
+    return result["status"] in {"succeeded", "partial", "failed", "cancelled"}
+
+
 def reconcile_cancellations():
     db = database("agent")
     for expired in db.runs.find(
@@ -107,13 +122,8 @@ def reconcile_cancellations():
                 client = BusinessClient(
                     run["_id"], context["task_id"], context["input"]["input_revision"]
                 )
-                result = client.request("POST", "/internal/v1/tool-jobs/" + call_id + "/cancel")
-                stopped = stopped and result["status"] in {
-                    "succeeded",
-                    "partial",
-                    "failed",
-                    "cancelled",
-                }
+                confirmed = tool_stop_confirmed(client, call_id)
+                stopped = stopped and confirmed
             except Exception:
                 stopped = False
         timed_out = now() - run["cancel_requested_at"] > timedelta(seconds=125)
