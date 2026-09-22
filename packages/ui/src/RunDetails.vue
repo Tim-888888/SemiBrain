@@ -13,7 +13,7 @@ function searchLabel(run: Partial<Run>) {
 </script>
 <template>
   <details v-if="['single_agent', 'multi_agent', 'quick_web'].includes(run.strategy || '')" class="run-details">
-    <summary>{{ run.strategy === 'quick_web' ? '快速问答 · 联网资料' : run.strategy === 'multi_agent' ? '智能调查 · 多 Agent 协作' : '智能调查 · 单 Agent' }}<span v-if="run.round"> · {{ run.round }} 轮</span><span v-if="run.model_origin === 'api_simulated'"> · API 模型演示</span></summary>
+    <summary>{{ run.strategy === 'quick_web' ? '快速问答 · 联网资料' : run.strategy === 'multi_agent' ? '智能调查 · 多 Agent 协作' : '智能调查 · 单 Agent' }}<span v-if="run.round"> · {{ run.round }} 轮</span><span v-if="run.model_origin === 'remote_api'"> · API 模型</span><span v-else-if="run.model_origin === 'api_simulated'"> · API 角色演示</span></summary>
     <ol v-if="run.task_tree?.length" class="task-tree" aria-label="专业 Agent 任务树">
       <li v-for="task in run.task_tree" :key="task.task_id"><strong>{{ roles[task.role] || task.role }}</strong> · {{ taskLabels[task.status] || task.status }}<p>{{ task.goals.join('；') }}</p><small v-if="task.depends_on.length">前置任务：{{ task.depends_on.join('、') }} · </small><small>计划 {{ task.plan_version }} · 尝试 {{ task.attempt }} · {{ task.model_calls || 0 }} 次模型 / {{ task.tool_calls || 0 }} 次工具 · {{ task.settled_tokens || 0 }} Token</small><p v-if="task.error" class="small muted">分支未完成：{{ task.error }}</p></li>
     </ol>

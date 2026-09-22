@@ -6,7 +6,10 @@ RUN pip install --no-cache-dir --index-url https://pypi.tuna.tsinghua.edu.cn/sim
 COPY . .
 RUN uv sync --frozen --package semibrain-sandbox-runtime --no-dev --no-editable
 FROM ${PYTHON_IMAGE}
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-noto-cjk=1:20220127+repack1-1 \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=build /opt/runtime /opt/runtime
+COPY infra/images/sandbox-matplotlibrc /opt/runtime/lib/python3.12/site-packages/matplotlib/mpl-data/matplotlibrc
 RUN groupadd -g 10001 sandbox && useradd -u 10001 -g 10001 -M sandbox
 USER 10001:10001
 WORKDIR /workspace

@@ -13,7 +13,7 @@ from semibrain_common.runtime import canonical, digest
 
 from semibrain_agent.evidence_view import evidence_views
 
-PROMPT_VERSION = "investigator-prompts-v23"
+PROMPT_VERSION = "investigator-prompts-v24"
 CARD_VERSION = "semiconductor-intents-v1"
 INTENT_CARDS = [
     {
@@ -112,6 +112,16 @@ REVIEW_RULES += "\n核对证据适用范围：未执行的查询、返回结果�
 REVIEW_RULES += "\n证据视图标有 projection 时只核验已展示内容；不为未展示字段或样本外统计背书，草稿应删去不能核实的细节。简洁指出缺口、拒绝越权或建议申请授权不属于新增用户任务；只有凭空承诺授权必定成功、承诺未验证功能或扩大查询范围才是缺陷。不因拒绝段落的标题、表达形式或普通建议而反复拒绝可靠内容。"
 
 
+UNDERSTANDING_RULES += """\n业务槽位统一命名以供执行前约束参数：yield_metric 只抽取要求计算的指标原词（首测良率/终测良率/最终良率或first/final，多指标为数组）；yield_stage 为明确的CP/FT；yield_lots 为指定批次；yield_cohort_window 为器件首测队列纳入窗口。'首测队列时间窗'描述队列纳入，不是要求计算首测良率；FT阶段也不自动等于final指标。四者独立，不把窗口标签放进yield_metric。source_text保留能区分含义的完整短语，value仍须逐字可追溯。明确只取前N条批次时，lot_list_limit为原文数字，lot_list_order为原文'升序'（仅明确按批次编号升序时）；未指定不填写，不根据示例或目录补默认数。"""
+
+QUERY_SEMANTICS = """\n良率的stage(CP/FT)、metric(first/final)、首测队列纳入窗口、as_of是独立维度。以原问题明确指定的指标为准，不能因首测队列时间窗就改查first。watermark只表示选中记录的最大入库时间，不等于查询截止时间，不证明之后没有数据。首终测差用已授权结果的statistics，comparison_mode=first_vs_final，计算终测减首测；同口径跨组用same_metric。
+model_origin=remote_api表示实际调用远程模型；role_implementation=prompt_role表示角色由提示词分工，不能称为专门训练的模型，也不能称为伪造的模拟调用。data_origin=synthetic仅描述数据来源，与模型是否真实调用无关。旧api_simulated标签不应作为图片或调用伪造的证据。"""
+CONTROL_SAFETY_RULES += QUERY_SEMANTICS
+SYSTEM_RULES += QUERY_SEMANTICS
+
+REVIEW_RULES += """\n草稿以draft_blocks数组传入，每项id与text合起来就是完整草稿。补充返回presentation_issues（仅篇幅、句数、排版等表达要求的缺陷）和supported_blocks（逐块核验完全正确、有当地有效引用、可独立保留的块id，最多20个）。数值、因果、范围、引用缺陷仍写issues；不要把事实错误归为排版。仅格式未满足且事实全部可靠时approved=true，presentation_issues指出修订点，不放issues或needs_retrieval。事实错误不能通过排版修订自动放行。部分块可靠时可approved=false并给出其supported_blocks；被标为可靠的块中不能夹带待修正事实，不将缺独立引用的块列入。"""
+
+
 class Slot(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(max_length=100)
@@ -168,6 +178,8 @@ class Review(BaseModel):
     missing_goals: list[str] = Field(default_factory=list, max_length=12)
     evidence_required: bool = True
     needs_retrieval: bool = False
+    presentation_issues: list[str] = Field(default_factory=list, max_length=10)
+    supported_blocks: list[int] = Field(default_factory=list, max_length=20)
 
 
 class IntentSourceError(ValueError):

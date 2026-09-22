@@ -161,7 +161,7 @@ register(
     "business.statistics",
     StatisticsInput,
     None,
-    "对本运行已成功查询的 job_ids 做均值、样本标准差、百分点差或分组比较。只能读已有授权结果，不接受自填数列、表达式或脚本；百分点比较必须同产品/阶段/程序/时间/口径。",
+    "对本运行成功查询的job_ids做均值、样本标准差、百分点差或分组比较。只读已有授权结果；同口径跨组百分点比较用same_metric；同队列首终测用first_vs_final，固定终测减首测，要求产品/阶段/程序/窗口/as_of/器件队列一致。",
 )
 
 for _name, (_schema, _function, _description) in {**WEB_TOOLS, **ANALYSIS_TOOLS}.items():
@@ -173,7 +173,7 @@ def catalog(request: Request):
     claim = authorize_request(request, "business.catalog")
     business_authorized = "demo" in claim["resource_ids"]
     return {
-        "version": "p1-tools-v3",
+        "version": "p1-tools-v4",
         "data_origin": "synthetic",
         "business_access": {
             "resource_authorized": business_authorized,
@@ -509,9 +509,15 @@ def execute_one():
             warnings=warnings,
         )
     except Exception as exc:
+        business_errors = {
+            "UNMATCHED_COHORTS": "比较范围不一致，请核对产品、阶段、程序、时间和器件队列。",
+            "YIELD_COMPARISON_MODE_REQUIRED": "首测与终测比较请指定comparison_mode=first_vs_final。",
+            "FIRST_AND_FINAL_REQUIRED": "首终测比较需要同队列的一份first和一份final结果。",
+            "PARTIAL_INPUT_NOT_COMPARABLE": "截断结果不能用于完整统计比较。",
+        }
         code = (
             str(exc)
-            if isinstance(exc, WebError)
+            if isinstance(exc, WebError) or (isinstance(exc, ValueError) and str(exc) in business_errors)
             else "QUERY_TIMEOUT"
             if isinstance(exc, DBAPIError) and getattr(exc.orig, "sqlstate", None) == "57014"
             else "TOOL_EXECUTION_FAILED"
@@ -521,7 +527,7 @@ def execute_one():
             logical_call_id=job["logical_call_id"],
             status="cancelled" if isinstance(exc, QueryCancelled) else "failed",
             error=ErrorInfo(
-                code=code, message="工具未完成，请核对范围或稍后重试。", trace_id=job["_id"]
+                code=code, message=business_errors.get(code, "工具未完成，请核对范围或稍后重试。"), trace_id=job["_id"]
             ),
         )
     wire = result.model_dump(mode="json")

@@ -30,8 +30,9 @@ class ModelProfile:
     parallel_tool_calls: bool = True
     reasoning_effort: str | None = "none"
     encrypted_reasoning: bool = False
-    version: str = "api-profiles-v4"
-    model_origin: str = "api_simulated"
+    version: str = "api-profiles-v5"
+    model_origin: str = "remote_api"
+    role_implementation: str = "prompt_role"
 
     def snapshot(self):
         return {key: value for key, value in asdict(self).items() if key != "credential_prefix"}

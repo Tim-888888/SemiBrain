@@ -1,0 +1,5 @@
+# Noto CJK is installed by the image, including its Debian copyright/OFL notice.
+# System data defaults work with Python -I and an empty writable MPLCONFIGDIR.
+font.family: sans-serif
+font.sans-serif: Noto Sans CJK JP, DejaVu Sans
+axes.unicode_minus: False

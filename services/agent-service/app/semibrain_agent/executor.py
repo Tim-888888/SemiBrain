@@ -9,6 +9,7 @@ from semibrain_common.runtime import canonical, digest, now
 from semibrain_contracts.models import EvidenceRef, SourceRef, assert_no_credentials
 
 from semibrain_agent.harness import BudgetExhausted, RunStopped
+from semibrain_agent.query_contract import QueryScopeError, bind_query
 
 
 class Search(BaseModel):
@@ -203,12 +204,29 @@ class ToolExecutor:
         if saved and saved.get("observation"):
             self.evidence()
             return saved["observation"]
-        self.harness.reserve_tool(logical_id, name)
         try:
             args = json.loads(raw_arguments)
             if not isinstance(args, dict):
                 raise ValueError("TOOL_OBJECT_REQUIRED")
             assert_no_credentials(args)
+            args = bind_query(name, args, getattr(self, "intent", {}))
+            reusable = {"business.search_lots", "business.get_yield_summary",
+                        "business.get_lot_context", "business.get_process_history",
+                        "business.get_fdc_alerts"}
+            if name in reusable:
+                previous = self.db.observations.find_one({
+                    "run_id": self.run_id, "observation.tool": name,
+                    "observation.arguments": args, "observation.status": "succeeded",
+                    "observation.reused_from": {"$exists": False},
+                })
+                if previous:
+                    self.evidence()  # Reauthorize sources before reusing within this immutable run.
+                    observation = {**previous["observation"], "call_ref": logical_id,
+                                   "reused_from": previous["_id"],
+                                   "notice": "复用本运行相同范围的成功查询，未再次访问业务数据。"}
+                    self.harness.save_record("observations", logical_id, {"observation": observation})
+                    return observation
+            self.harness.reserve_tool(logical_id, name)
             if name in LOCAL_TOOLS:
                 args = LOCAL_TOOLS[name][0].model_validate(args).model_dump(mode="json")
             if name == "knowledge.search":
@@ -294,6 +312,9 @@ class ToolExecutor:
             if name in {"web.search", "vision.inspect"}:
                 self.harness.settle_external_tool(logical_id, None)
             code = (
+                "QUERY_SCOPE_MISMATCH"
+                if isinstance(exc, QueryScopeError)
+                else
                 exc.detail.get("code", "TOOL_REQUEST_FAILED")
                 if isinstance(exc, HTTPException) and isinstance(exc.detail, dict)
                 else "TOOL_DEADLINE"
@@ -302,7 +323,7 @@ class ToolExecutor:
             )
             observation = {
                 "status": "failed",
-                "error": {"code": code},
+                "error": {"code": code, **({"message": str(exc)} if isinstance(exc, QueryScopeError) else {})},
                 "tool": name,
                 "call_ref": logical_id,
                 "evidence": [],

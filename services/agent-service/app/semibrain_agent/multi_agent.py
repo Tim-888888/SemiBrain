@@ -24,6 +24,7 @@ from semibrain_agent.prompts import (
 )
 from semibrain_agent.provider import ModelError
 from semibrain_agent.quick_web import QuickClient
+from semibrain_agent.review_delivery import draft_blocks, retain_reviewed, reviewed_partial
 from semibrain_agent.task_outputs import (
     COMPLETE_TOOL,
     Completion,
@@ -34,7 +35,7 @@ from semibrain_agent.task_outputs import (
     reusable_task,
 )
 
-MULTI_VERSION = "multi-supervisor-v7"
+MULTI_VERSION = "multi-supervisor-v8"
 ROLE_RULES = {
     "sqlbot": "你是 SQLBot。使用授权业务工具核验目标、阶段、程序、时间与分母。先确认目录中的真实编号，不猜参数。交回引用证据与缺口，不给无证据根因。",
     "rag": "你是 RAG Agent。检索并读取与分配目标相关的授权原文，保留版本、否定和限制。缺少内容明确记录，不用常识填成引用。",
@@ -452,7 +453,7 @@ class MultiAgent(Investigator):
                     {
                         "question": self.context["input"]["question"],
                         "intent": state["intent"],
-                        "draft": state["draft"],
+                        "draft_blocks": draft_blocks(state["draft"]),
                         "evidence": multi_evidence_views(evidence),
                         "executed": self.execution_summary(),
                         "retrieval_available": not state.get("closing")
@@ -480,17 +481,20 @@ class MultiAgent(Investigator):
                 "missing_goals": state["intent"].get("goals") or [self.context["input"]["question"]]
             })
         state["review"], state["review_count"] = verdict.model_dump(), state["review_count"] + 1
+        retain_reviewed(state, verdict, evidence)
         if (
             verdict.needs_retrieval
             and not state.get("closing")
             and state.get("replan_count", 0) < 2
         ):
             state.update(phase="plan", replan_count=state.get("replan_count", 0) + 1)
+        elif verdict.approved and verdict.presentation_issues and state.get("revision_count", 0) < 1:
+            state.update(phase="revise", revision_count=1)
         elif verdict.approved:
             state.update(
                 phase="done",
                 outcome="partial"
-                if state.get("closing") or state.get("has_limitations") or verdict.missing_goals
+                if state.get("closing") or state.get("has_limitations") or verdict.missing_goals or verdict.presentation_issues
                 else "succeeded",
             )
         elif state.get("revision_count", 0) < 1:
@@ -499,7 +503,7 @@ class MultiAgent(Investigator):
             state.update(
                 phase="done",
                 outcome="partial",
-                draft=self.partial_body("部分结论尚未通过证据核对", evidence),
+                draft=reviewed_partial(state, "部分结论尚未通过证据核对") or self.partial_body("部分结论尚未通过证据核对", evidence),
             )
         return state
 
@@ -539,6 +543,7 @@ class Expert(Investigator):
             original_system = self.prompts.system
             self.prompts.system = lambda role: original_system("vision")
         self.intent = intent
+        self.executor.intent = intent
         self.notify = lambda *args, **kwargs: None
         builder = StateGraph(GraphState)
         for phase in ("model", "tools", "done"):

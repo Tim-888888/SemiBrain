@@ -46,6 +46,7 @@ from semibrain_agent.provider import (
     ProviderAdapter,
     profile_for,
 )
+from semibrain_agent.review_delivery import draft_blocks, retain_reviewed, reviewed_partial
 
 
 class GraphState(TypedDict):
@@ -127,7 +128,7 @@ class Investigator:
             {
                 "version_bundle": self.bundle,
                 "strategy": self.strategy,
-                "model_origin": "api_simulated",
+                "model_origin": "remote_api",
                 "progress": "正在准备智能调查",
             }
         )
@@ -164,6 +165,7 @@ class Investigator:
             # Current authorization is revalidated after queue wait and before every graph step.
             self.client.request("POST", "/internal/v1/lineage/check", json={"refs": []})
             state = dict(value["payload"])
+            self.executor.intent = state.get("intent", {})
             self.restrict_source_tools(state)
             updated = getattr(self, phase)(state)
             updated["step"] = state["step"] + 1
@@ -314,6 +316,7 @@ class Investigator:
             raise ModelError("INTENT_CONTROL_INVALID")
         RoutePolicy().choose(self.context["input"], intent, self.catalog["tools"])
         state["intent"] = intent.model_dump()
+        self.executor.intent = state["intent"]
         self.restrict_source_tools(state)
         self.notify(
             {
@@ -336,17 +339,14 @@ class Investigator:
         else:
             self.executor.documents(self.attachments)
             if intent.action in {"explain", "rewrite"}:
-                prior = next(
-                    (
+                priors = list(
                         item
                         for item in reversed(self.context["history"])
                         if item["role"] == "assistant" and item.get("lineage_refs")
-                    ),
-                    None,
-                )
-                if not prior:
+                )[:6]
+                if not priors:
                     state["intent"]["action"] = "investigate"
-                else:
+                for prior in priors:
                     self.client.request(
                         "POST", "/internal/v1/lineage/check", json={"refs": prior["lineage_refs"]}
                     )
@@ -671,7 +671,7 @@ class Investigator:
                         "question": self.context["input"]["question"],
                         "intent": state["intent"],
                         "capability_names": [item["name"] for item in self.catalog["tools"]],
-                        "draft": state["draft"],
+                        "draft_blocks": draft_blocks(state["draft"]),
                         "evidence": evidence_views(inspected),
                         "executed": self.execution_summary(),
                         "retrieval_available": not state.get("closing")
@@ -705,6 +705,7 @@ class Investigator:
                 or [self.context["input"]["question"]]
             })
         state["review"] = review.model_dump()
+        retain_reviewed(state, review, evidence)
         state["review_count"] += 1
         if (review.needs_retrieval and not state.get("closing")
                 and not state.get("retrieval_repair_count")
@@ -715,11 +716,13 @@ class Investigator:
                          retrieval_feedback=state["review"])
             state["intent"] = {**state["intent"], "action": "investigate"}
             self.notify({"progress": "现有来源不足以回答问题，正在补充相关资料"})
+        elif review.approved and review.presentation_issues and state["review_count"] < 2:
+            state["phase"] = "revise"
         elif review.approved:
             state.update(
                 phase="done",
                 outcome="partial"
-                if review.missing_goals or state.get("has_limitations")
+                if review.missing_goals or review.presentation_issues or state.get("has_limitations") or state.get("closing")
                 else "succeeded",
             )
         elif state["review_count"] < 2:
@@ -728,7 +731,7 @@ class Investigator:
             state.update(
                 phase="done",
                 outcome="partial",
-                draft=self.partial_body("结论未通过证据核对", evidence),
+                draft=reviewed_partial(state, "部分结论尚未通过证据核对") or self.partial_body("结论未通过证据核对", evidence),
             )
         return state
 
@@ -747,7 +750,7 @@ class Investigator:
             },
             {
                 "role": "user",
-                "content": "请按审查意见修订，只输出最终 Markdown。证据不足则清楚说明未完成项，不添加事实：\n"
+                "content": "请按审查意见修订，只输出最终 Markdown。只改有缺陷部分，保留正确事实；仅presentation_issues时只压缩或调整表达，不新增事实或调查目标。证据不足则清楚说明未完成项：\n"
                 + canonical(state["review"])
                 + "\n原草稿：\n"
                 + state["draft"],
@@ -771,6 +774,11 @@ class Investigator:
                 self.checkpoints.save(state)
             except (BudgetExhausted, ModelError) as exc:
                 evidence = self.executor.evidence()
+                preserved = reviewed_partial(state, "执行额度或模型响应未支持继续修订")
+                if preserved:
+                    state = {**state, "phase": "done", "outcome": "partial",
+                             "stop_code": str(exc), "draft": preserved}
+                    break
                 if (
                     isinstance(exc, BudgetExhausted)
                     and str(exc) != "RUN_TIME_BUDGET"
