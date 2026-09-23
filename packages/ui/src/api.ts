@@ -14,7 +14,7 @@ const labels: Record<string, string> = {
   UPSTREAM_DENIED: '资源已失效或暂时无法访问。', UPSTREAM_FAILED: '服务暂时不可用，请稍后重试。',
   REVISION_CONFLICT: '资源已更新，请刷新后重试。', CSRF_DENIED: '会话校验失效，请重新登录。',
   PASSWORD_LENGTH: '密码需要 8–128 位。', PASSWORD_MISMATCH: '原密码不正确。',
-  MULTI_AGENT_UNAVAILABLE: '多 Agent 功能当前未开放，请关闭协作开关后提交。', CONVERSATION_RUN_ACTIVE: '当前会话仍在执行，请先停止本轮再切换。', IMAGE_SIZE_INVALID: '图片不能为空，且不能超过 3 MB。', IMAGE_FORMAT_INVALID: '请选择 PNG、JPEG 或 WebP 图片（不超过 1600 万像素）。',
+  MULTI_AGENT_UNAVAILABLE: '多 Agent 功能当前未开放，请关闭协作开关后提交。', CONVERSATION_RUN_ACTIVE: '当前会话仍在执行，请先停止本轮再切换。', IMAGE_SIZE_INVALID: '图片大小不符合要求，请重新选择（上限 3 MB）。', IMAGE_FORMAT_INVALID: '请选择 PNG、JPEG 或 WebP 图片（不超过 1600 万像素）。',
   WEB_SNAPSHOT_EXPIRED: '原网页快照已过期；可查看来源链接，当前网页内容可能已变化。',
   INVALID_ARGUMENT: '填写内容不符合要求，请检查后重试。',
 }

@@ -13,7 +13,13 @@ test('image paste extracts all image files once and leaves text-only paste alone
 
 test('picker and pasted images share format and byte limits', () => {
   for (const type of ['image/png', 'image/jpeg', 'image/webp']) assert.equal(imageError({ type, size: MAX_IMAGE_BYTES }), '')
-  for (const file of [{ type: 'image/png', size: 0 }, { type: 'image/png', size: MAX_IMAGE_BYTES + 1 }, { type: 'image/svg+xml', size: 20 }, { type: '', size: 20 }]) assert.ok(imageError(file))
+  const empty = imageError({ type: 'image/png', size: 0 })
+  const oversized = imageError({ type: 'image/png', size: MAX_IMAGE_BYTES + 1 })
+  assert.match(empty, /为空/)
+  assert.doesNotMatch(empty, /超过/)
+  assert.match(oversized, /超过 3 MB/)
+  assert.doesNotMatch(oversized, /为空/)
+  for (const file of [{ type: 'image/svg+xml', size: 20 }, { type: '', size: 20 }]) assert.ok(imageError(file))
 })
 
 function scrollFixture() {

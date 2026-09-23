@@ -11,7 +11,8 @@ export function clipboardImages(data) {
 
 export function imageError(file) {
   if (!IMAGE_TYPES.includes(file.type)) return '请选择 PNG、JPEG 或 WebP 图片。'
-  if (!file.size || file.size > MAX_IMAGE_BYTES) return '图片不能为空，且不能超过 3 MB。'
+  if (!file.size) return '图片文件为空，请重新选择。'
+  if (file.size > MAX_IMAGE_BYTES) return '图片超过 3 MB，请压缩后重新上传。'
   return ''
 }
 

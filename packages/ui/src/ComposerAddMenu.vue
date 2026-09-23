@@ -17,7 +17,9 @@ onUnmounted(() => document.removeEventListener('pointerdown', outside))
 </script>
 <template>
   <div ref="root" class="composer-add" @keydown.esc.stop.prevent="close(true)" @focusout="focusLeft">
-    <button ref="trigger" type="button" class="composer-add-trigger" :disabled="disabled" aria-label="添加内容" :aria-expanded="open" aria-controls="composer-add-panel" @click="toggle">＋</button>
+    <button ref="trigger" type="button" class="composer-add-trigger" :disabled="disabled" aria-label="添加内容" :aria-expanded="open" aria-controls="composer-add-panel" @click="toggle">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
     <div v-if="open" id="composer-add-panel" class="composer-add-panel" role="group" aria-label="添加内容选项">
       <p class="composer-add-heading">添加</p>
       <button v-for="action in actions" :key="action.id" type="button" class="composer-add-action" :disabled="action.disabled" @click="choose(action.id)">
