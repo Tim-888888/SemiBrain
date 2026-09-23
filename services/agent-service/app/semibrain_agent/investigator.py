@@ -220,7 +220,7 @@ class Investigator:
         snapshot = getattr(self, "compaction_snapshot", None)
         compaction_refs = {}
         if snapshot and not compaction_call and not final:
-            from semibrain_agent.compaction import HistoryCompactor
+            from semibrain_agent.compaction import SUMMARY_MODE, HistoryCompactor
 
             history_ranges = list(history_ranges if history_ranges is not None else
                                   state.get("history_ranges", []) if default_history else [])
@@ -234,7 +234,7 @@ class Investigator:
                 # recursively compact the summarizer's own input.
                 return Investigator.model_call_once(
                     self, {"step": key, "phase": "context.compact"}, role=role,
-                    inputs=messages, tools=tools, system_override=system,
+                    inputs=messages, tools=tools, system_override=system + "\n\n" + SUMMARY_MODE,
                     max_tokens=output, compaction_call=True,
                 )
 
@@ -302,7 +302,8 @@ class Investigator:
             profile_version=profile.version,
         )
         try:
-            turn = adapter.turn(system, inputs, tools=tools, max_tokens=max_tokens)
+            turn = adapter.turn(system, inputs, tools=tools, max_tokens=max_tokens,
+                                **({"tool_choice": "none"} if compaction_call else {}))
             self.harness.save_record(
                 "model_turns",
                 identity,

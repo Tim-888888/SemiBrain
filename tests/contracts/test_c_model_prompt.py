@@ -37,7 +37,8 @@ def test_text_profiles_share_deepseek_default_without_changing_vision(monkeypatc
     assert profile_for("investigator").model == "deepseek-flash"
 
 
-def test_responses_without_encrypted_reasoning_streams_only_visible_text(monkeypatch):
+@pytest.mark.parametrize("summary_mode", [False, True])
+def test_responses_without_encrypted_reasoning_streams_only_visible_text(monkeypatch, summary_mode):
     monkeypatch.setenv("SEMIBRAIN_LLM_BASE_URL", "https://provider.invalid")
     monkeypatch.setenv("SEMIBRAIN_LLM_API_KEY", "fixture-credential")
     captured, chunks = [], []
@@ -79,13 +80,17 @@ def test_responses_without_encrypted_reasoning_streams_only_visible_text(monkeyp
         credential_prefix="SEMIBRAIN_LLM",
     )
     turn = ProviderAdapter(profile).turn(
-        "Rules", [{"role": "user", "content": "Question"}], on_text=chunks.append
+        "Rules", [{"role": "user", "content": "Question"}], on_text=chunks.append,
+        **({"tools": [{"type": "function", "name": "read", "parameters": {}}],
+            "tool_choice": "none"} if summary_mode else {}),
     )
     assert captured[0]["reasoning"] == {"effort": "none"}
     assert "include" not in captured[0]
     assert chunks == ["Visible answer"]
     assert "PRIVATE_REASONING" not in json.dumps(turn.replay)
     assert turn.usage["total_tokens"] == 15
+    if summary_mode:
+        assert captured[0]["tool_choice"] == "none" and captured[0]["tools"]
 
 
 def test_tool_thinking_without_supported_replay_fails_before_transport(monkeypatch):

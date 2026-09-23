@@ -167,8 +167,10 @@ class ProviderAdapter:
         if time.monotonic() >= self.deadline:
             raise ModelError("MODEL_DEADLINE")
 
-    def turn(self, system, inputs, *, tools=None, max_tokens=2048, on_text=None):
+    def turn(self, system, inputs, *, tools=None, max_tokens=2048, on_text=None, tool_choice=None):
         self.check()
+        if tool_choice not in {None, "auto", "none"}:
+            raise ModelError("MODEL_TOOL_CHOICE_INVALID")
         if self.profile.protocol != "responses":
             raise ModelError("MODEL_PROTOCOL_UNAVAILABLE")
         if tools and not self.profile.tool_calling:
@@ -196,7 +198,7 @@ class ProviderAdapter:
             payload.update(
                 tools=tools,
                 parallel_tool_calls=self.profile.parallel_tool_calls,
-                tool_choice="auto",
+                tool_choice=tool_choice or "auto",
             )
         else:
             payload["tool_choice"] = "none"

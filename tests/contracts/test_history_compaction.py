@@ -13,6 +13,7 @@ from semibrain_agent.compaction import (
     policy_snapshot,
     resolve_policy,
     select_end,
+    validate_summary,
 )
 from semibrain_agent.context_policy import history_observation
 from semibrain_agent.harness import BudgetExhausted, RunStopped
@@ -117,6 +118,14 @@ def test_native_parallel_tools_and_reasoning_never_split():
     assert select_end(messages, 100000, force=True) == 5
     assert balanced_ends([{"type": "function_call_output", "call_id": "orphan"}]) == []
     assert select_end(messages[:3], 1, force=True) == 0
+    messages.insert(0, message("I will now use tools", "assistant"))
+    assert balanced_ends(messages) == [6, 7]
+
+
+def test_summary_may_preserve_identifiers_from_the_pinned_current_goal():
+    turn = ModelTurn("Continue the requested file " + SOURCE, [], [], None, None, None)
+    validate_summary(turn, [message("past work " * 1000)], 100,
+                     prefix=[message("Keep file identity " + SOURCE)])
 
 
 def test_under_threshold_no_model_request_no_history_mutation():
