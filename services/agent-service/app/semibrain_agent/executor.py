@@ -6,6 +6,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from semibrain_common.runtime import canonical, digest, now
+from semibrain_common.tool_errors import SANDBOX_ARGUMENT_ERRORS
 from semibrain_contracts.models import EvidenceRef, SourceRef, assert_no_credentials
 
 from semibrain_agent.harness import BudgetExhausted, RunStopped
@@ -323,7 +324,9 @@ class ToolExecutor:
             )
             observation = {
                 "status": "failed",
-                "error": {"code": code, **({"message": str(exc)} if isinstance(exc, QueryScopeError) else {})},
+                "error": {"code": code, **({"message": str(exc)} if isinstance(exc, QueryScopeError)
+                          else {"message": SANDBOX_ARGUMENT_ERRORS[code]}
+                          if code in SANDBOX_ARGUMENT_ERRORS else {})},
                 "tool": name,
                 "call_ref": logical_id,
                 "evidence": [],

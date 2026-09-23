@@ -33,6 +33,40 @@ def test_exports_are_passive_registered_formats(name):
         PythonInput(code="print(1)", exports=[name])
 
 
+@pytest.mark.parametrize("name", ["YMS系统回答整理.md", "良率分析报告.txt", "CP良率_摘要 2026.md",
+    "批次说明（修订2）.md", "【测试】数据.csv", "result-v2.json", "Café.md", "Cafe\u0301.md",
+    "a" * 117 + ".md", "中" * 79 + ".md"])
+def test_unicode_export_names_are_preserved_without_silent_renaming(name):
+    assert safe_name(name) == name
+    assert PythonInput(code="print(1)", exports=[name]).exports == [name]
+
+
+@pytest.mark.parametrize("name", ["../报告.md", "目录/报告.md", "目录\\报告.md", "C:报告.md",
+    "／报告.md", "报告：数据.md", "报告\n.md", "报告\x00.md", "报告\u202e.md", "报告\u200b.md",
+    " 报告.md", "报告.md ", "报告.md.", ".报告.md", "报告..md", "报告.．md",
+    "CON.md", "nul.txt", "LPT9.csv", "ＣＯＭ１.md", "COM¹.txt", "报告|x.md",
+    "报告\ud800.md", "a" * 118 + ".md", "中" * 80 + ".md"])
+def test_unicode_support_retains_portable_path_and_control_character_guards(name):
+    with pytest.raises(ValueError, match="SANDBOX_PATH_DENIED"):
+        safe_name(name)
+
+
+def test_unicode_name_is_a_literal_docker_argument_and_bytes_survive_transport():
+    name, raw = "CP良率_摘要 (修订).md", "# 中文结论\n已核对。".encode()
+    def respond(request):
+        if request.url.path.endswith('/exec'):
+            args = json.loads(request.content)['Cmd']
+            assert args[-1] == '/workspace/' + name and args[0].endswith('/python')
+            return httpx.Response(201, json={'Id': 'execution'})
+        if request.url.path.endswith('/json'):
+            return httpx.Response(200, json={'Running': False, 'ExitCode': 0})
+        return httpx.Response(200, content=b'\x01\x00\x00\x00' + len(raw).to_bytes(4, 'big') + raw)
+    engine = object.__new__(Engine)
+    with httpx.Client(base_url="http://docker", transport=httpx.MockTransport(respond)) as client:
+        engine.client = client
+        assert engine.get('container', name) == raw
+
+
 def test_session_isolation_includes_user_conversation_and_runtime(monkeypatch):
     monkeypatch.setenv("SEMIBRAIN_SANDBOX_IMAGE", "sha256:one")
     first = session_id({"subject_id": "u", "conversation_id": "c"})

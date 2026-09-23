@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pymongo import ReturnDocument
 from semibrain_common.runtime import (
     call,
@@ -22,6 +22,7 @@ from semibrain_common.runtime import (
     uid,
 )
 from semibrain_common.telemetry import Observation
+from semibrain_common.tool_errors import SANDBOX_ARGUMENT_ERRORS
 from semibrain_contracts.models import ErrorInfo, SourceRef, ToolResult, assert_no_credentials
 from sqlalchemy import func, select
 from sqlalchemy.exc import DBAPIError
@@ -173,7 +174,7 @@ def catalog(request: Request):
     claim = authorize_request(request, "business.catalog")
     business_authorized = "demo" in claim["resource_ids"]
     return {
-        "version": "p1-tools-v5",
+        "version": "p1-tools-v6",
         "data_origin": "synthetic",
         "business_access": {
             "resource_authorized": business_authorized,
@@ -226,7 +227,12 @@ def submit(form: ToolInput, request: Request):
             from semibrain_business.sql_policy import compile_query
 
             compile_query(SQLInput.model_validate(args))
-    except ValueError:
+    except ValueError as exc:
+        if form.tool == "sandbox.python" and isinstance(exc, ValidationError):
+            for error in exc.errors(include_input=False, include_url=False):
+                code = str(error.get("ctx", {}).get("error", ""))
+                if error["loc"] == ("exports",) and code in SANDBOX_ARGUMENT_ERRORS:
+                    failure(code)
         failure("TOOL_ARGUMENT_OR_POLICY_DENIED")
     key = str(form.logical_call_id)
     payload_hash = digest(

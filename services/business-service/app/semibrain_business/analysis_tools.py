@@ -100,7 +100,7 @@ class PythonInput(BaseModel):
     exports: list[str] = Field(
         default_factory=list,
         max_length=8,
-        description="保存到/workspace的输出文件名，仅png/csv/json/md/txt；显式列出才导出。",
+        description="保存到/workspace的输出文件名，支持中文/英文/数字/空格/括号；仅png/csv/json/md/txt，显式列出才导出。只传文件名，不含路径或连续点；最多120字符且UTF-8不超过240字节。",
     )
     seconds: int = Field(default=20, ge=1, le=30)
 

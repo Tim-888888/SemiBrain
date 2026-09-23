@@ -264,6 +264,17 @@ def call(service: str, method: str, path: str, *, delegation=None, timeout=30, *
     url = os.environ[f"SEMIBRAIN_{service.upper()}_URL"] + path
     response = httpx.request(method, url, headers=headers, timeout=timeout, **kwargs)
     if response.status_code >= 400:
+        if (service == "business" and method == "POST"
+                and path == "/internal/v1/tool-jobs" and response.status_code == 400):
+            from semibrain_common.tool_errors import SANDBOX_ARGUMENT_ERRORS
+            try:
+                body = response.json()
+                detail = body.get("detail", {}) if isinstance(body, dict) else {}
+                code = detail.get("code") if isinstance(detail, dict) else None
+            except ValueError:
+                code = None
+            if isinstance(code, str) and code in SANDBOX_ARGUMENT_ERRORS:
+                failure(code, 400)
         if response.status_code in (400, 409, 413, 422, 429):
             # Preserve public command semantics without forwarding arbitrary upstream messages.
             code = {

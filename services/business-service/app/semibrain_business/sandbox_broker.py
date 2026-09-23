@@ -11,6 +11,7 @@ import os
 import re
 import threading
 import time
+import unicodedata
 from http.server import BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 
@@ -25,7 +26,21 @@ TOUCHED = {}
 
 
 def safe_name(name):
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,119}", name or "") or ".." in name:
+    # Preserve the exact Unicode spelling used by the sandbox code. Validate a
+    # single portable basename; never normalize/rename only one side of the I/O.
+    if not isinstance(name, str) or not name or len(name) > 120:
+        raise ValueError("SANDBOX_PATH_DENIED")
+    normalized = unicodedata.normalize("NFKC", name)
+    punctuation = " _.-()（）【】"
+    if (len(name.encode("utf-8", errors="surrogatepass")) > 240
+            or name[0] in " ." or name[-1] in " ."
+            or normalized[0] in " ." or normalized[-1] in " ."
+            or ".." in normalized
+            or any(not (c.isalnum() or unicodedata.category(c).startswith("M")
+                        or c in punctuation) for c in name)
+            or any(c in normalized for c in '/\\:*?"<>|')
+            or re.fullmatch(r"(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])",
+                            normalized.split(".", 1)[0].rstrip(" ."), re.IGNORECASE)):
         raise ValueError("SANDBOX_PATH_DENIED")
     return name
 
