@@ -11,6 +11,7 @@ from semibrain_agent.closeout import (
     ANSWER_SYSTEM,
     CloseoutReview,
     answer_inputs,
+    closeout_blocks,
     reviewed_body,
     select_packet,
 )
@@ -205,3 +206,24 @@ def test_notice_survives_file_delivery_fallback():
     state = {"budget_notice": "执行额度已到边界。"}
     body = agent.publication_body(state, "尚未生成可下载文件。\n\n已核对事实 [1]。")
     assert "执行额度" in body and "尚未生成" in body and "已核对事实 [1]" in body
+
+
+@pytest.mark.parametrize("container", ["| Item | Value |\n|---|---|\n| A | 3 |",
+                                      "- First measured item\n- Second measured item"])
+@pytest.mark.parametrize("position", ["before", "after"])
+def test_adjacent_citation_table_and_list_are_reviewed_as_one_unit(container, position):
+    paragraph = "The measured items are shown below [1]."
+    draft = "\n\n".join([paragraph, container] if position == "before" else [container, paragraph])
+    blocks = closeout_blocks(draft)
+    assert blocks == [{"id": 0, "text": draft}]
+    verdict = CloseoutReview(blocks=[{"id": 0, "verdict": "supported"}])
+    assert reviewed_body(draft, verdict, {"1"}) == draft
+    verdict.blocks[0].verdict = "unsupported"
+    assert reviewed_body(draft, verdict, {"1"}) == ""
+
+
+def test_distant_citation_cannot_authorize_an_unrelated_table():
+    draft = "Verified fact [1].\n\nUnrelated uncited claim.\n\n| A |\n|---|\n| 9 |"
+    assert len(closeout_blocks(draft)) == 3
+    verdict = CloseoutReview(blocks=[{"id": i, "verdict": "supported"} for i in range(3)])
+    assert reviewed_body(draft, verdict, {"1"}) == "Verified fact [1]."
