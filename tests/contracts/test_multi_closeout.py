@@ -12,6 +12,7 @@ from semibrain_agent.closeout import (
     CloseoutReview,
     answer_inputs,
     closeout_blocks,
+    fits,
     reviewed_body,
     select_packet,
 )
@@ -165,6 +166,19 @@ def test_large_sources_fit_reserve_without_losing_original_scope():
 def test_oversize_task_fails_closed_instead_of_silently_changing_scope():
     with pytest.raises(BudgetExhausted, match="CONTEXT"):
         select_packet("原问题" * 12000, {}, evidence(), multi_evidence_views, [], [])
+
+
+def test_closeout_with_realistic_unicode_source_metadata_keeps_a_readable_excerpt():
+    source = {**evidence()[0], "evidence_id": "source-id", "job_id": "job-id", "asset_id": "asset-id",
+        "title": "公开工艺测量及其适用范围说明" * 8,
+        "source": {"kind": "web", "data_origin": "public", "source_version": "a" * 64,
+                   "url": "https://example.org/technical-source-and-process-reference"},
+        "content": {"snapshot_id": "snapshot", "content_hash": "a" * 64,
+                    "title": "公开工艺测量及其适用范围说明" * 8, "url": "https://example.org/reference",
+                    "text": "前置导航。" * 600 + "测量原理：光谱用于匹配结构参数。" * 300, "offset": 0}}
+    packet = select_packet("说明测量原理", {"goals": ["测量原理"]}, [source], multi_evidence_views, [], [])
+    assert packet["evidence"] and "测量原理" in packet["evidence"][0]["content"]["text"]
+    assert fits(packet, ANSWER_SYSTEM, ANSWER_OUTPUT, ANSWER_CEILING)
 
 
 def test_normal_synthesis_protects_reserve_and_leaves_two_coordinator_calls(monkeypatch):

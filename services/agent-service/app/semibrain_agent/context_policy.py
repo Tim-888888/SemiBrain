@@ -142,6 +142,23 @@ def project_record(record, *, budget=INLINE_TOKENS, question=""):
     return view
 
 
+def fit_record(record, budget, question="", cost=None):
+    """Fit the entire view, including Unicode source metadata and read handles."""
+    cost = cost or (lambda view: estimate_text(canonical(view)))
+    view = project_record(record, question=question)
+    if cost(view) <= budget:
+        return view
+    low, high, best = 128, min(INLINE_TOKENS, budget), None
+    while low <= high:
+        middle = (low + high) // 2
+        candidate = project_record(record, budget=middle, question=question)
+        if cost(candidate) <= budget:
+            best, low = candidate, middle + 1
+        else:
+            high = middle - 1
+    return best
+
+
 def project_evidence(records, *, token_budget=None, question=""):
     """Keep each ordinary source intact; choose relevant sources under pressure.
 
@@ -164,7 +181,9 @@ def project_evidence(records, *, token_budget=None, question=""):
         remaining = token_budget - used
         if remaining < 400:
             break
-        view = project_record(record, budget=min(INLINE_TOKENS, max(128, remaining - 300)), question=question)
+        view = fit_record(record, remaining - 4, question)
+        if view is None:
+            continue
         size = estimate_text(canonical(view))
         if size > remaining:
             continue
@@ -207,6 +226,10 @@ def fit_messages(inputs, system, tools, profile, *, output, question="", availab
             if isinstance(value.get(evidence_key), list):
                 groups.append((value, evidence_key, value[evidence_key]))
                 value[evidence_key] = []
+    for parent, key, old in groups:
+        parent["context_projection"] = {"version": VERSION, "partial": True,
+            "omitted_evidence_ids": [r.get("evidence_id") for r in old],
+            "notice": "上下文仅展示所选原文；其余已存证据可按引用读取。"}
     # Fixed user goals and non-evidence protocol text are never silently truncated.
     for item, key, value in payloads:
         item[key] = canonical(value)
@@ -220,15 +243,19 @@ def fit_messages(inputs, system, tools, profile, *, output, question="", availab
     for parent, key, record, _ in entries:
         if remaining < 400:
             break
-        view = project_record(record, budget=min(INLINE_TOKENS, remaining - 300), question=question)
-        # Preserve an earlier projection's omissions; never claim an excerpt is full.
-        if record.get("projection", {}).get("partial"):
-            view["projection"]["prior_projection"] = record["projection"]
-            view["projection"]["partial"] = True
-        size = estimate_text(canonical(view)) + 4
-        if size <= remaining:
-            parent[key].append(view)
-            remaining -= size
+        def wire_cost(candidate):
+            parent[key].append(candidate)
+            for item, payload_key, value in payloads:
+                item[payload_key] = canonical(value)
+            size = estimate_text(canonical(result)) + overhead
+            parent[key].pop()
+            return size
+
+        view = fit_record(record, cap, question, cost=wire_cost)
+        if view is None:
+            continue
+        remaining = cap - wire_cost(view)
+        parent[key].append(view)
     for parent, key, old in groups:
         parent["context_projection"] = {"version": VERSION, "partial": True,
             "omitted_evidence_ids": [r.get("evidence_id") for r in old
