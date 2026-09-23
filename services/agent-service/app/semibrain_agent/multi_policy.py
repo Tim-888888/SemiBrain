@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 MULTI_LIMITS = {
     "rounds": 40,
     "tools": 40,
-    "tokens": 100000,
+    "tokens": 200000,
     "seconds": 300,
     "searches": 3,
     "pages": 5,
