@@ -116,6 +116,7 @@ def expert(records=()):
     instance.executor = SimpleNamespace(evidence=lambda: list(records))
     instance.dependencies = lambda: []
     instance.harness = Mock()
+    instance.intent = {}
     return instance
 
 

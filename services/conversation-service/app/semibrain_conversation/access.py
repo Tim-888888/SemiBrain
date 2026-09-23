@@ -289,6 +289,7 @@ def run_context(run_id: str, request: Request):
                         {
                             "role": "assistant",
                             "content": prior["body_markdown"],
+                            "run_id": message["run_id"],
                             "lineage_refs": prior.get("lineage_refs", []),
                             "citations": prior.get("citations", []),
                         }
@@ -310,3 +311,36 @@ def run_context(run_id: str, request: Request):
         "continuation": run.get("continuation"),
         "resource_ids": user.get("resource_ids", ["demo"]),
     }
+
+
+class AnswerInput(ExecutionAuthorization):
+    answer_run_id: str = Field(min_length=1, max_length=64)
+
+
+@router.post("/internal/v1/sandbox/answer-input")
+def sandbox_answer_input(form: AnswerInput, request: Request):
+    # The business service owns sandbox files; the gateway owns conversation access.
+    # A model-supplied ID alone is never authority to copy another answer.
+    if not form.run_id or not form.task_id or form.operation != "sandbox.python":
+        failure("ANSWER_INPUT_BINDING_REQUIRED", 403)
+    execution_authorization(ExecutionAuthorization.model_validate(
+        form.model_dump(exclude={"answer_run_id"})), request)
+    run, user = trusted_run(form.run_id)
+    source = db().gateway_runs.find_one({"_id": form.answer_run_id, "owner_id": user["_id"]})
+    if (not source or source["input"]["conversation_id"] != run["input"]["conversation_id"]
+            or source["input"]["input_revision"] >= run["input"]["input_revision"]):
+        failure("ANSWER_INPUT_UNAVAILABLE", 403)
+    prior = run_snapshot(user, form.answer_run_id)
+    if not prior.get("report_id") or not prior.get("body_markdown"):
+        failure("ANSWER_INPUT_UNAVAILABLE", 409)
+    refs = prior.get("lineage_refs", [])
+    business(user, "POST", "/internal/v1/lineage/check", operation="lineage.check",
+             run=run, json={"refs": refs})
+    body = prior["body_markdown"]
+    # Keep original marker bindings; do not substitute this run's reordered markers.
+    sources = ["[" + str(c["marker"]) + "] " + str(c.get("title") or "来源")
+               for c in prior.get("citations", [])]
+    if sources:
+        body += "\n\n---\n\n来源（保留原回答编号）：\n\n" + "\n\n".join(sources)
+    return {"answer_run_id": form.answer_run_id, "body_markdown": body,
+            "content_hash": digest(body), "lineage_refs": refs}

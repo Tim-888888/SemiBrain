@@ -10,6 +10,12 @@ from langgraph.graph import END, START, StateGraph
 from semibrain_common.runtime import canonical, now, transaction
 
 from semibrain_agent.citations import cited_markers
+from semibrain_agent.delivery import (
+    answer_input,
+    missing_files,
+    requested_files,
+    validate_delivery_plan,
+)
 from semibrain_agent.evidence_view import evidence_views
 from semibrain_agent.executor import ToolExecutor, wire_tools
 from semibrain_agent.harness import BudgetExhausted, RunStopped
@@ -35,7 +41,7 @@ from semibrain_agent.task_outputs import (
     reusable_task,
 )
 
-MULTI_VERSION = "multi-supervisor-v10"
+MULTI_VERSION = "multi-supervisor-v11"
 ROLE_RULES = {
     "sqlbot": "你是 SQLBot。使用授权业务工具核验目标、阶段、程序、时间与分母。原问题已给出必要参数时直接查询，不为重复确认编号先列目录或读上下文；缺失且可自行补足时才查询目录。仅完成分配给自己的目标，不重复其他分支负责的计算。交回引用证据与缺口，不给无证据根因。",
     "rag": "你是 RAG Agent。检索并读取与分配目标相关的授权原文，保留版本、否定和限制。缺少内容明确记录，不用常识填成引用。",
@@ -67,6 +73,7 @@ def multi_evidence_views(records):
         stdout = data.get("stdout", "")
         view["content"] = {"exit_code": data.get("exit_code"), "stdout": stdout[:4000],
                            "input_job_ids": data.get("input_job_ids", []),
+                           "input_answer_run_id": data.get("input_answer_run_id"),
                            "artifacts": [{k: a.get(k) for k in ("name", "asset_id")}
                                          for a in data.get("artifacts", [])],
                            "data_origin": data.get("data_origin"), "truncated": data.get("truncated")}
@@ -92,6 +99,9 @@ class MultiPrompts(PromptAssembler):
                     "input_manifest列出的查询会在sandbox.python执行前由服务端装入，直接按path读取JSON的rows，"
                     "无需检查空目录；依赖摘要不能推翻服务器query_scope排序与条数。"
                     "仅评价自己的goals，原问题的其他目标由协调器负责。"
+                    "answer_input给出历史回答的真实文件路径；sandbox.python会自动装入，直接用pathlib读取UTF-8内容。"
+                    "纯文件封装可复制原文，无需重新取证；有整理要求则基于文件内容处理，不能只写摘要或占位文字。"
+                    "执行成功后用已返回artifacts确认导出，再task__complete。"
                     "仅可经授权sandbox.python执行代码，不可在宿主执行。\ntrusted_runtime:\n" + runtime)
         if role == "supervisor":
             return (
@@ -103,13 +113,15 @@ class MultiPrompts(PromptAssembler):
                 "每项必须声明deliverables：读取表格数据用dataset；Python统计/文件导出用python并完整列artifact_formats；"
                 "其他取证用evidence。用户要求按编号升序前N个批次时，dataset填写lot_limit=N，"
                 "business.search_lots已保证lot_id升序，无需另查SQL。计算依赖dataset任务。"
-                "仅输出格式、范围声明、禁止事项不是独立取证任务；放synthesis_goal_indices并作为各任务约束，"
+                "仅正文排版、范围声明、禁止事项不是独立取证任务；放synthesis_goal_indices并作为各任务约束，"
                 "不要派RAG查询这类说明。补查若依赖已完成任务，用reuse_key保留其相同goal_indices和deliverables，"
                 "服务器复用产物不再执行。\n"
                 "优先让一个已具备所需工具的角色完成连贯目标，不能为了展示多Agent而重复派工。"
                 "SQLBot已有statistics，可直接完成良率查询与百分点差，不另派Tool或Python再算一遍。"
                 "聚合数值和指标比较交付evidence；dataset用于需要向下游交付行数据的任务，回答里显示表格不等于dataset。"
                 "只有确需Python、文件或外部资料工具时才安排Tool；artifact_formats仅填写用户明确要求导出的格式，未要求文件时为空。\n"
+                "delivery.kind=file必须派Tool以python导出delivery.formats中的所有格式；改写已有内容同样需要文件工具，不能只放汇总目标。"
+                "answer_input是已授权历史回答文件，Tool可直接读取并整理，不为纯导出追加RAG/SQL/联网调查。\n"
                 + canonical(Plan.model_json_schema())
             )
         result = super().system(role)
@@ -123,6 +135,7 @@ class MultiPrompts(PromptAssembler):
                 "不否定其他来源中实际展示的内容。沙箱stdout中展示的计算结果和明细可用其自身marker引用，"
                 "不要求原查询的摘要再次完整展示同样的行；统计仍必须追溯真实输入和已登记计算，不能从抽样行外推。"
                 "已登记artifacts是服务器返回的产物事实，前端提供下载；正文无需列内部资产ID或编造链接。"
+                "仅整理历史回答为文件时，聊天正文简短说明已交付的实际文件及必要限制，不重新展开整份历史分析。"
                 "一次辅助工具失败不等于事实冲突，也不自动否定已成功的取证或计算；只有不同证据的事实不一致才叫冲突。"
                 "只有用户要求独立复核或证据本身存在实质缺陷时才要求二次核验，不额外添加验收目标。"
             )
@@ -211,6 +224,7 @@ class MultiAgent(Investigator):
             state["phase"] = (
                 "synthesize"
                 if state["intent"]["action"] in {"greeting", "rewrite", "explain"}
+                and not requested_files(state["intent"])
                 else "plan"
             )
         return state
@@ -232,6 +246,7 @@ class MultiAgent(Investigator):
         data = {
             "question": self.context["input"]["question"],
             "intent": state["intent"],
+            "answer_input": answer_input(state["intent"], self.context),
             "goals": list(enumerate(goals)),
             "available_roles": available,
             "sources": self.prompts.sources,
@@ -252,6 +267,7 @@ class MultiAgent(Investigator):
             )
             try:
                 plan = validate_plan(parse_control(turn.text, Plan), goals, available)
+                validate_delivery_plan(plan, state["intent"])
                 for spec in plan.tasks:
                     reusable_task(spec, previous, evidence)
                 break
@@ -450,6 +466,9 @@ class MultiAgent(Investigator):
     def review(self, state):
         evidence = self.executor.evidence()
         cited = cited_markers(state["draft"])
+        current_jobs = {r["observation"].get("job_id") for r in self.db.observations.find({
+            "run_id": self.run["_id"], "observation.tool": "sandbox.python"})} - {None} if requested_files(state["intent"]) else set()
+        missing = missing_files(state["intent"], evidence, current_jobs)
         inputs = [
             {
                 "role": "user",
@@ -460,6 +479,8 @@ class MultiAgent(Investigator):
                         "draft_blocks": draft_blocks(state["draft"]),
                         "evidence": multi_evidence_views(evidence),
                         "executed": self.execution_summary(),
+                        "missing_file_formats": missing,
+                        "delivery_rule": "missing_file_formats是服务器实测缺少的文件；不能声称这些文件已生成。保留有据正文，将未交付记入missing_goals。",
                         "retrieval_available": not state.get("closing")
                         and state.get("replan_count", 0) < 2,
                     }
@@ -480,6 +501,9 @@ class MultiAgent(Investigator):
             issues.append("缺少支撑事实的可引用证据")
         if issues:
             verdict = verdict.model_copy(update={"approved": False, "issues": issues})
+        if missing:
+            verdict = verdict.model_copy(update={"missing_goals": list(dict.fromkeys([
+                *verdict.missing_goals, "生成可下载的文件：" + "、".join(missing)]))})
         if verdict.needs_retrieval and not verdict.missing_goals:
             verdict = verdict.model_copy(update={
                 "missing_goals": state["intent"].get("goals") or [self.context["input"]["question"]]
@@ -619,6 +643,8 @@ class Expert(Investigator):
                         "goals": self.task["goals"],
                         "deliverables": self.task.get("deliverables", {}),
                         "input_manifest": manifest,
+                        "answer_input": answer_input(self.intent, self.context)
+                        if self.role == "tool" else None,
                         "completion_feedback": state.get("completion_issues", []),
                         "intent": self.intent,
                         "attachments": [
@@ -712,6 +738,12 @@ class Expert(Investigator):
             if not isinstance(args, dict):
                 raise ValueError("TOOL_OBJECT_REQUIRED")
             args = bind_arguments(name, args, requirement, inputs)
+            if name == "sandbox.python":
+                source = answer_input(self.intent, self.context)
+                if source:
+                    if args.get("answer_run_id") not in {None, source["answer_run_id"]}:
+                        raise ValueError("ANSWER_INPUT_OUTSIDE_REQUEST")
+                    args["answer_run_id"] = source["answer_run_id"]
         except ValueError as exc:
             result = {"status": "failed", "tool": name, "evidence": [],
                       "error": str(exc)[:300]}
@@ -730,7 +762,8 @@ class Expert(Investigator):
                 claimable.update(dependency.get("evidence_ids", []))
         claimable &= {r["evidence_id"] for r in records}
         requirement = Deliverables.model_validate(self.task.get("deliverables", {}))
-        outputs, issues = check_outputs(requirement, own, input_jobs=state.get("input_job_ids", []))
+        outputs, issues = check_outputs(requirement, own, input_jobs=state.get("input_job_ids", []),
+                                       answer_run_id=self.intent.get("delivery", {}).get("answer_run_id"))
         try:
             completion = Completion.model_validate_json(item["arguments"])
             if set(completion.evidence_ids) - claimable:

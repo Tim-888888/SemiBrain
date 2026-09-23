@@ -173,7 +173,7 @@ def catalog(request: Request):
     claim = authorize_request(request, "business.catalog")
     business_authorized = "demo" in claim["resource_ids"]
     return {
-        "version": "p1-tools-v4",
+        "version": "p1-tools-v5",
         "data_origin": "synthetic",
         "business_access": {
             "resource_authorized": business_authorized,

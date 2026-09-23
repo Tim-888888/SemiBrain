@@ -85,6 +85,8 @@ def asset_access(asset, claim, *, image=False):
 class PythonInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     code: str = Field(min_length=1, max_length=24000)
+    answer_run_id: UUID | None = Field(default=None,
+        description="本会话已发布历史回答run_id；重新鉴权后装入answer-<run_id>.md，含原文及原引用来源。")
     job_ids: list[UUID] = Field(
         default_factory=list,
         max_length=6,
@@ -264,6 +266,18 @@ def run_python(form, job):
             suffix = asset["filename"].rsplit(".", 1)[-1].lower()
             name = safe_name("asset-" + str(value) + "." + suffix)
             files[name] = read_asset(asset)
+        if form.answer_run_id:
+            answer = call("conversation", "POST", "/internal/v1/sandbox/answer-input", json={
+                "subject_id": job["subject_id"], "auth_version": job["auth_version"],
+                "run_id": job["run_id"], "task_id": job["task_id"],
+                "operation": "sandbox.python", "answer_run_id": str(form.answer_run_id),
+            }).json()
+            content = answer["body_markdown"]
+            if digest(content) != answer["content_hash"]:
+                raise WebError("ANSWER_INPUT_HASH_MISMATCH")
+            files["answer-" + str(form.answer_run_id) + ".md"] = content.encode("utf-8")
+            refs.update(answer["lineage_refs"])
+            origins.add("authorized_business")
         lineage_check(list(refs), claim)
         if sum(map(len, files.values())) > MAX_BYTES:
             raise WebError("SANDBOX_INPUT_SIZE")
@@ -292,6 +306,8 @@ def run_python(form, job):
         artifacts = []
         for entry in output["files"]:
             content = base64.b64decode(entry["base64"], validate=True)
+            if not content:
+                raise WebError("EMPTY_ARTIFACT")
             media_type = mimetypes.guess_type(entry["name"])[0] or "text/plain"
             if entry["name"].endswith(".png"):
                 with Image.open(io.BytesIO(content)) as image:
@@ -333,6 +349,7 @@ def run_python(form, job):
             "stdout": output["stdout"],
             "input_job_ids": [str(value) for value in form.job_ids],
             "input_asset_ids": [str(value) for value in form.asset_ids],
+            "input_answer_run_id": str(form.answer_run_id) if form.answer_run_id else None,
             "exit_code": output["exit_code"],
             "truncated": output["stdout_truncated"] or output["exit_code"] != 0,
             "artifacts": artifacts,

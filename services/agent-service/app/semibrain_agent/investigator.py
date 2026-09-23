@@ -330,6 +330,16 @@ class Investigator:
                 "progress": "已确认调查范围",
             }
         )
+        from semibrain_agent.delivery import FORMATS, requested_files
+        formats = requested_files(state["intent"])
+        if formats and (set(formats) - FORMATS or "sandbox.python" not in
+                        {t["name"] for t in self.catalog["tools"]}):
+            reason = ("当前文件工具尚不支持所需格式：" + "、".join(sorted(set(formats) - FORMATS))
+                      if set(formats) - FORMATS else
+                      "当前模式未开放文件生成工具。请在智能调查中启用多 Agent 后重试。")
+            state.update(phase="done", outcome="partial", draft=reason + "本轮未生成文件。",
+                         delivery_unavailable=True)
+            return state
         if intent.action == "clarify":
             state.update(
                 phase="done",
@@ -343,8 +353,10 @@ class Investigator:
                         item
                         for item in reversed(self.context["history"])
                         if item["role"] == "assistant" and item.get("lineage_refs")
+                        and (not intent.delivery.answer_run_id
+                             or item.get("run_id") == intent.delivery.answer_run_id)
                 )[:6]
-                if not priors:
+                if not priors and not intent.delivery.answer_run_id:
                     state["intent"]["action"] = "investigate"
                 for prior in priors:
                     self.client.request(
@@ -828,6 +840,16 @@ class Investigator:
             for record in evidence
         ]
         body = state["draft"]
+        from semibrain_agent.delivery import missing_files, requested_files
+        current_jobs = {r["observation"].get("job_id") for r in self.db.observations.find({
+            "run_id": self.run["_id"], "observation.tool": "sandbox.python"})} - {None} if requested_files(state.get("intent", {})) else set()
+        missing = missing_files(state.get("intent", {}), evidence, current_jobs)
+        if missing:
+            state["outcome"] = "partial"
+            if not state.get("delivery_unavailable"):
+                notice = ("尚未生成可下载的 " + "、".join(missing) + " 文件。"
+                          "文件交付未通过核验，本轮仅部分完成。")
+                body = notice + ("\n\n" + body if state.get("review", {}).get("approved") else "")
         if not body.strip():
             body = self.partial_body("没有生成可发布的回答", evidence)
             state["outcome"] = "partial"

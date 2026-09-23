@@ -93,7 +93,7 @@ def bind_arguments(name, arguments, requirement, inputs):
     return args
 
 
-def check_outputs(requirement, records, *, input_jobs=()):
+def check_outputs(requirement, records, *, input_jobs=(), answer_run_id=None):
     datasets = [value for r in records if (value := dataset_output(r, requirement))]
     calculations, artifacts = [], []
     for record in records:
@@ -103,6 +103,8 @@ def check_outputs(requirement, records, *, input_jobs=()):
             continue
         # Check explicit mounted query provenance, not file names or claimed summary text.
         if set(input_jobs) - set(data.get("input_job_ids", [])):
+            continue
+        if answer_run_id and data.get("input_answer_run_id") != answer_run_id:
             continue
         calculations.append(record["evidence_id"])
         artifacts.extend({"evidence_id": record["evidence_id"], "name": a["name"],
