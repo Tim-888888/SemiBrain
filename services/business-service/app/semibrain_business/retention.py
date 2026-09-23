@@ -62,7 +62,23 @@ def status_for(row, *, purge=False):
     snapshot = db().web_snapshots.find_one({"_id": row["_id"]})
     if snapshot:
         payload.update(snapshot_id=snapshot["_id"], content_hash=snapshot["content_hash"])
-    return call("agent", "POST", "/internal/v1/retention/snapshot", json=payload).json()
+    status = call("agent", "POST", "/internal/v1/retention/snapshot", json=payload).json()
+    if snapshot and not purge:
+        ref = f"web:{snapshot['_id']}:{snapshot['content_hash']}"
+        latest = status.get("last_cited_at")
+        latest = datetime.fromisoformat(latest) if isinstance(latest, str) else latest
+        for asset in db().assets.find({"owner_id": row["owner_id"], "source_refs": ref,
+                                       "retention_version": {"$exists": False}, "revoked": {"$ne": True}}):
+            # A registered export is a formal derivative; ordinary downloads and
+            # orphan upload intents cannot extend the original's retention.
+            job = db().tool_jobs.find_one({"_id": asset.get("job_id"), "subject_id": row["owner_id"],
+                                          "status": {"$in": ["succeeded", "partial"]}})
+            exported = job and any(a.get("asset_id") == asset["_id"]
+                for a in (job.get("result", {}).get("data") or {}).get("artifacts", []))
+            if exported and (latest is None or asset["created_at"] > latest):
+                latest = asset["created_at"]
+        status["last_cited_at"] = latest.isoformat() if latest else None
+    return status
 
 
 def clean_one(row, *, dry_run=True):
@@ -147,6 +163,15 @@ def sweep(*, force=False, dry_run=None):
             db().retention_objects.update_one({"_id": row["_id"]}, {"$set": {"checked_at": stamp}})
         report = {"at": stamp, "dry_run": dry_run, "quota_ratio": ratio,
                   "quota_warning": ratio >= .8, "replicas": replica, "items": results,
+                  "audit_expires_at": stamp + timedelta(days=365)}
+        db().retention_audits.insert_one(report)
+        report.pop("_id", None)
+        return report
+    except Exception:
+        # A dependency starting later must not postpone the startup scan a day.
+        db().retention_control.update_one({"_id": "schedule", "lease_until": claimed["lease_until"]},
+            {"$set": {"next_at": stamp + timedelta(minutes=5)}})
+        report = {"at": stamp, "dry_run": dry_run, "state": "dependency_unavailable",
                   "audit_expires_at": stamp + timedelta(days=365)}
         db().retention_audits.insert_one(report)
         report.pop("_id", None)

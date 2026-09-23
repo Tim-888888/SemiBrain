@@ -97,3 +97,31 @@ def test_replica_cleanup_keeps_reports_originals_and_user_artifacts():
     db.assets.delete_many.assert_not_called()
     db.model_turns.update_many.assert_called_once()
     db.checkpoints.delete_many.assert_called_once_with({"thread_id": "terminal"})
+
+
+def test_snapshot_rejects_body_corruption_even_with_the_expected_handle(monkeypatch):
+    from semibrain_business import web_tools
+    from semibrain_common.runtime import digest
+    sid = str(uuid4())
+    db = Mock()
+    db.web_snapshots.find_one.return_value = {"_id": sid, "text": "tampered", "content_hash": digest("original")}
+    monkeypatch.setattr(web_tools, "db", lambda: db)
+    monkeypatch.setattr(web_tools, "authorization", lambda job: {})
+    monkeypatch.setattr(retention, "lease", lambda identity: None)
+    with pytest.raises(ValueError, match="WEB_SNAPSHOT_INTEGRITY_FAILED"):
+        web_tools.read_snapshot(web_tools.WebRead(snapshot_id=sid, content_hash=digest("original")),
+                                {"subject_id": "owner", "run_id": "run"})
+
+
+def test_only_registered_exports_extend_retention_not_orphan_assets(monkeypatch):
+    candidate, db = row(), Mock()
+    stamp = now()
+    db.web_snapshots.find_one.return_value = {"_id": candidate["_id"], "content_hash": "a" * 64}
+    db.assets.find.return_value = [{"_id": "export", "job_id": "job", "created_at": stamp}]
+    db.tool_jobs.find_one.return_value = {"result": {"data": {"artifacts": [{"asset_id": "export"}]}}}
+    monkeypatch.setattr(retention, "db", lambda: db)
+    monkeypatch.setattr(retention, "call", lambda *a, **kw: SimpleNamespace(json=lambda: expired()))
+    status = retention.status_for(candidate)
+    assert retention.deadline(status) == stamp + timedelta(days=90)
+    db.tool_jobs.find_one.return_value = None
+    assert retention.status_for(candidate)["last_cited_at"] is None

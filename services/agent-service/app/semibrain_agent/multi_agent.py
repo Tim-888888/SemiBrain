@@ -39,6 +39,7 @@ from semibrain_agent.investigation_policy import (
     guard_target,
     repeat_notice,
     validate_coverage,
+    web_handoff,
 )
 from semibrain_agent.investigation_progress import (
     InvestigationProgress,
@@ -68,7 +69,7 @@ from semibrain_agent.task_outputs import (
     reusable_task,
 )
 
-MULTI_VERSION = "multi-supervisor-v16"
+MULTI_VERSION = "multi-supervisor-v17"
 ROLE_RULES = {
     "sqlbot": "你是 SQLBot。使用授权业务工具核验目标、阶段、程序、时间与分母。原问题已给出必要参数时直接查询，不为重复确认编号先列目录或读上下文；缺失且可自行补足时才查询目录。仅完成分配给自己的目标，不重复其他分支负责的计算。交回引用证据与缺口，不给无证据根因。",
     "rag": "你是 RAG Agent。检索并读取与分配目标相关的授权原文，保留版本、否定和限制。缺少内容明确记录，不用常识填成引用。",
@@ -91,6 +92,7 @@ class MultiPrompts(PromptAssembler):
             return (CONTROL_SAFETY_RULES + "\n" + ROLE_RULES[role]
                     + "\n你只负责原目标中属于本角色的工作，其他分支负责的工作不属于你的能力缺失。"
                     "交回简短证据摘要供协调器汇总，不代替协调器写完整报告。"
+                    "summary最多四句话，说明已支持结论和限制，不重复抄录原文；有缺口用missing列出并立即交回。"
                     "只用服务端已登记的数字marker引用，不将UUID截断当引用。"
                     "读到足够原文立即结束，不重复同义检索或重复读同一区段。"
                     "shared_progress是本次调查已尝试路径，inherited_evidence是此前分支取得的授权证据，接着补缺口即可。"
@@ -395,6 +397,7 @@ class MultiAgent(Investigator):
             "previous_tasks": [{k: t.get(k) for k in ("key", "role", "goal_indices", "status",
                                "deliverables", "outputs", "completion_issues", "summary", "error")} for t in previous],
             "review": state.get("review"),
+            "early_source_handoff": state.get("early_source_handoff"),
         }
         plan = None
         last_progress_plan = None
@@ -586,6 +589,16 @@ class MultiAgent(Investigator):
         )
         ready = ready_tasks(tasks)
         if not ready:
+            if (self.efficiency_policy_enabled and not state.get("early_source_handoff")
+                    and self.context["input"]["allow_web"] and state.get("replan_count", 0) < 2):
+                navigation, _ = self.navigation_targets(self.executor.evidence())
+                gaps = web_handoff(tasks, navigation)
+                if gaps:
+                    state.update(phase="plan", replan_count=state.get("replan_count", 0) + 1,
+                        early_source_handoff={"goal_indices": sorted({g for t in gaps for g in t["goal_indices"]}),
+                            "gaps": [gap for t in gaps for gap in t["reported_missing"]],
+                            "instruction": "知识分支已明确交回原目标缺口；请Tool读候选正文，保留已完成分支，不先重复写稿和审核。"})
+                    return state
             state["phase"] = "synthesize"
             return state
         with ThreadPoolExecutor(max_workers=3, thread_name_prefix="semibrain-expert") as pool:
@@ -819,6 +832,7 @@ class Expert(Investigator):
                 "evidence_ids": sorted(set(state.get("evidence_ids", [])) | set(state.get("inherited_evidence_ids", []))),
                 "outputs": state.get("outputs", {}),
                 "completion_issues": state.get("completion_issues", []),
+                "reported_missing": state.get("reported_missing", []),
                 "input_job_ids": state.get("input_job_ids", []),
             },
             attempt=self.attempt,
@@ -1012,7 +1026,9 @@ class Expert(Investigator):
                     raise ValueError("SEARCH_PATH_EXHAUSTED:已有两次搜索，请读取候选原文或交回现有结果")
                 if name == "web.search":
                     navigation, _ = self.parent.navigation_targets(evidence)
-                    if any(not target["read"] for target in navigation):
+                    attempted_page = self.db.observations.find_one({"run_id": self.run["_id"],
+                        "task_id": self.task["_id"], "observation.tool": "web.fetch"})
+                    if any(not target["read"] for target in navigation) and not attempted_page:
                         raise ValueError("READ_AVAILABLE_PAGE_FIRST:已有未读网页候选，请先web.fetch")
             args = bind_arguments(name, args, requirement, inputs)
             if name == "sandbox.python":
@@ -1049,12 +1065,14 @@ class Expert(Investigator):
                 issues.append("COMPLETION_EVIDENCE_OUTSIDE_TASK")
             issues.extend(completion.missing)
             summary, requested = completion.summary, completion.completed
+            state["reported_missing"] = completion.missing
         except ValueError:
             issues.append("COMPLETION_ARGUMENT_INVALID")
             summary, requested = "专业分支完成声明无效", True
         state.update(outputs=outputs, summary=summary, completion_issues=issues)
         # One local repair opportunity; a self-reported partial result never spins.
-        if requested and issues and state.get("completion_retry", 0) < 1:
+        if (requested and issues and not (requirement.kind == "evidence" and state.get("reported_missing"))
+                and state.get("completion_retry", 0) < 1):
             state.update(phase="model", completion_retry=1, last_outputs=[])
         else:
             state.update(phase="done", outcome="succeeded" if requested and not issues else "partial")

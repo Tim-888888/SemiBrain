@@ -16,6 +16,8 @@ class Coverage(BaseModel):
 
 def add_progress_schema(wire):
     for tool in wire:
+        if not tool["name"].startswith(("knowledge__", "web__", "evidence__")):
+            continue
         tool["parameters"] = copy.deepcopy(tool["parameters"])
         tool["parameters"]["properties"]["progress"] = {
             "type": "array", "items": Coverage.model_json_schema(), "maxItems": 8,
@@ -80,3 +82,12 @@ def repeat_notice(history):
         count += 1
     return (f"同一工具和参数已连续请求{count}次；请利用已有结果、读取不同区段或结束本分支。"
             if count in {3, 5, 8} else "")
+
+
+def web_handoff(tasks, navigation):
+    """An explicit original-goal gap can reach the planner before draft/review."""
+    if not any(not item["read"] for item in navigation):
+        return []
+    attempted = {g for t in tasks if t["role"] == "tool" for g in t.get("goal_indices", [])}
+    return [t for t in tasks if t["role"] == "rag" and t["status"] == "partial"
+            and t.get("reported_missing") and not set(t.get("goal_indices", [])).intersection(attempted)]

@@ -302,7 +302,7 @@ def run_python(form, job):
                         sandbox_request("/stop", {"identity": identity}, timeout=15)
                         raise WebError("SANDBOX_EXECUTION_REVOKED") from None
         current(job)
-        lineage_check(list(refs), claim)
+        lineage_check(list(refs), claim, protect_for_publication=True)
         artifacts = []
         for entry in output["files"]:
             content = base64.b64decode(entry["base64"], validate=True)

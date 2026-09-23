@@ -137,7 +137,7 @@ def project_record(record, *, budget=INLINE_TOKENS, question=""):
     if isinstance(original, dict) and original.get("snapshot_id") and original.get("partial_page"):
         projection["source_partial"] = True
         projection["recovery"] = {"tool": "web.read", "snapshot_id": original["snapshot_id"],
-                                  "content_hash": original["content_hash"], "offset": original.get("next_offset") or 0}
+                                  "content_hash": original["content_hash"], "offset": content.get("next_offset") or 0}
     view.update(content=content, projection=projection)
     return view
 

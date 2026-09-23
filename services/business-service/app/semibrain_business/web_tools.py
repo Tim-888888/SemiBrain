@@ -306,6 +306,8 @@ def read_snapshot(form, job):
     if not row or form.offset >= len(row["text"]):
         raise WebError("WEB_SNAPSHOT_UNAVAILABLE")
     lease(row["_id"])
+    if digest(row["text"]) != row["content_hash"]:
+        raise WebError("WEB_SNAPSHOT_INTEGRITY_FAILED")
     window = read_window(row["text"], form.offset, form.length, form.query)
     return {
         "snapshot_id": row["_id"],

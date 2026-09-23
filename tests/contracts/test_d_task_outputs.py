@@ -138,6 +138,15 @@ def test_explicit_incomplete_result_is_not_green_even_when_some_evidence_exists(
     assert result["phase"] == "done" and result["outcome"] == "partial"
 
 
+def test_declared_knowledge_gap_hands_back_without_another_completion_repair():
+    instance = expert([query_record()])
+    instance.task["deliverables"] = {"kind": "evidence"}
+    result = instance.complete_task({"evidence_ids": ["query-evidence"]}, {"arguments": json.dumps({
+        "completed": True, "summary": "Only a definition is supported.", "missing": ["physical mechanism"]})}, "call")
+    assert result["phase"] == "done" and result["outcome"] == "partial"
+    assert result["reported_missing"] == ["physical mechanism"]
+
+
 def test_completion_can_cite_declared_input_but_not_claim_its_execution_as_own():
     instance = expert([query_record(), python_record()])
     instance.task["depends_on"] = ["rows"]

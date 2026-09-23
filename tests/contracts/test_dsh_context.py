@@ -139,3 +139,21 @@ def test_native_prefix_replay_is_append_only():
     state["tool_history"] = [{"call": call, "logical_id": "result"}]
     expert.task_model(state)
     assert captures[1][:len(captures[0])] == captures[0]
+
+
+def test_gap_handoff_is_goal_scoped_and_does_not_repeat_an_attempted_source():
+    from semibrain_agent.investigation_policy import web_handoff
+    task = {"role": "rag", "status": "partial", "goal_indices": [1], "reported_missing": ["mechanism"]}
+    navigation = [{"url": "https://example.org/reference", "read": False}]
+    assert web_handoff([task], navigation) == [task]
+    assert not web_handoff([task], [])
+    assert not web_handoff([task, {"role": "tool", "goal_indices": [1]}], navigation)
+    assert web_handoff([task, {"role": "tool", "goal_indices": [0]}], navigation) == [task]
+
+
+def test_partial_page_recovery_does_not_skip_the_trimmed_middle():
+    source = record("header body " * 12000)
+    source["content"].update(partial_page=True, next_offset=150000)
+    view = project_record(source, budget=1000)
+    assert view["projection"]["recovery"]["offset"] == view["projection"]["interval"]["end"]
+    assert view["projection"]["recovery"]["offset"] < 150000

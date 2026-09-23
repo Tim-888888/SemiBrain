@@ -260,6 +260,10 @@ class ToolExecutor:
                     window = read_window(value[field] if field else value, args["offset"], args.get("length") or 7000, args.get("query"))
                     record["content"] = {**value, field: window["text"]} if field else window["text"]
                     record["projection"] = {k: v for k, v in window.items() if k != "text"}
+                    if field == "text":
+                        start = value.get("offset", 0)
+                        record["content"].update(offset=start + window["offset"],
+                            next_offset=start + window["next_offset"] if window["next_offset"] is not None else value.get("next_offset"))
                 observation = {
                     "status": "succeeded",
                     "evidence": [record],
