@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import ComposerAddMenu from './ComposerAddMenu.vue'
+import ResizableSidebar from './ResizableSidebar.vue'
 import { clipboardImages, imageError, ScrollFollow } from './composer.mjs'
 import AuthPanel from './AuthPanel.vue'
 import KnowledgePanel from './KnowledgePanel.vue'
@@ -238,12 +239,12 @@ onUnmounted(() => { closeStream(); clearImages() })
   <AuthPanel v-else-if="!user" @signed-in="signedIn" />
   <div v-else-if="denied" class="loading-page"><h1>此账号没有管理权限</h1><p><a href="/">返回工作台</a></p></div>
   <div v-else class="workspace">
-    <aside class="sidebar"><a class="wordmark" href="/"><span class="brand-icon">S</span> SemiBrain</a><span v-if="adminPage" class="admin-caption">管理控制台</span>
+    <ResizableSidebar><a class="wordmark" href="/"><span class="brand-icon">S</span> SemiBrain</a><span v-if="adminPage" class="admin-caption">管理控制台</span>
       <button v-if="!adminPage" class="new-chat" @click="newChat">＋ 新会话</button>
       <nav><button v-if="!adminPage" :class="{ active: view === 'chat' }" @click="view = 'chat'">◈ 对话工作台</button><button :class="{ active: view === 'knowledge' }" @click="view = 'knowledge'">▤ 知识库</button><button v-if="adminPage" :class="{ active: view === 'users' }" @click="view = 'users'">♙ 用户管理</button><button v-if="adminPage" :class="{ active: view === 'comparison' }" @click="view = 'comparison'">运行对照</button></nav>
-      <div v-if="!adminPage" class="history"><p class="eyebrow">最近会话</p><button v-for="item in conversations" :key="item.id" :class="{ selected: conversation?.id === item.id }" @click="openChat(item)">{{ item.title }}</button><button v-if="conversationsCursor" @click="olderChats">加载更早会话</button><p v-if="!conversations.length" class="small muted">你的会话会保存在这里</p></div>
+      <div v-if="!adminPage" class="history"><p class="eyebrow">最近会话</p><button v-for="item in conversations" :key="item.id" :title="item.title" :class="{ selected: conversation?.id === item.id }" @click="openChat(item)">{{ item.title }}</button><button v-if="conversationsCursor" @click="olderChats">加载更早会话</button><p v-if="!conversations.length" class="small muted">你的会话会保存在这里</p></div>
       <div class="sidebar-bottom"><a v-if="user.role === 'admin' && !adminPage" class="admin-link" href="/admin/">管理控制台 ↗</a><a v-if="adminPage" class="admin-link" href="/">返回工作台 ↗</a><div class="profile"><span class="avatar">{{ user.username.slice(0, 1).toUpperCase() }}</span><div><strong>{{ user.username }}</strong><small>{{ user.role === 'admin' ? '管理员' : '普通用户' }}</small></div><button class="text-button" @click="settings = true" aria-label="账号设置">⚙</button></div><button class="text-button logout" @click="logout">退出登录</button></div>
-    </aside>
+    </ResizableSidebar>
     <main class="main-panel"><header class="topbar"><span>{{ view === 'chat' ? conversation?.title || '对话工作台' : view === 'knowledge' ? '知识库' : view === 'comparison' ? '运行对照' : '用户管理' }}</span><span class="workspace-tag">半导体知识空间</span></header>
       <KnowledgePanel v-if="view === 'knowledge'" :manage="adminPage && user.role === 'admin'" />
       <UsersPanel v-else-if="view === 'users'" /><RunComparison v-else-if="view === 'comparison'" />
