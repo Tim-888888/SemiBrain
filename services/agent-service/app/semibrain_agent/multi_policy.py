@@ -74,7 +74,9 @@ class PlannedTask(BaseModel):
 
 class Plan(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    tasks: list[PlannedTask] = Field(min_length=1, max_length=4)
+    tasks: list[PlannedTask] = Field(max_length=4)
+    finish_with_existing: bool = Field(default=False,
+        description="仅补查阶段使用：无可用新路径时填true，tasks为空，原目标全部列入synthesis_goal_indices，据已有证据部分收尾。")
     synthesis_goal_indices: list[int] = Field(
         default_factory=list, max_length=12,
         description="仅格式、范围声明等不需独立取证的目标，由最终汇总完成。",
@@ -82,6 +84,8 @@ class Plan(BaseModel):
 
 
 def validate_plan(plan, goals, available_roles):
+    if bool(plan.tasks) == plan.finish_with_existing:
+        raise ValueError("EMPTY_PLAN_REQUIRES_EXPLICIT_FINISH")
     keys = [task.key for task in plan.tasks]
     if len(set(keys)) != len(keys) or len({t.role for t in plan.tasks}) != len(keys):
         raise ValueError("DUPLICATE_TASK_OR_ROLE")

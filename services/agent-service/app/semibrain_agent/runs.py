@@ -143,7 +143,8 @@ def snapshot(run_id: str, request: Request):
         )
     if row.get("strategy") == "multi_agent":
         task_fields = ("role", "key", "goals", "depends_on", "plan_version", "status", "attempt",
-                       "role_round", "error", "model_calls", "tool_calls", "settled_tokens")
+                       "role_round", "error", "model_calls", "tool_calls", "settled_tokens",
+                       "tool_attempts", "tool_reuses")
         result["task_tree"] = [{"task_id": task["_id"], **{k: task.get(k) for k in task_fields}}
                                for task in db().tasks.find({"run_id": run_id}).sort("created_at", 1)]
         # Artifacts are server-registered references, never URLs parsed from model prose.

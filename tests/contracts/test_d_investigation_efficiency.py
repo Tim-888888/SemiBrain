@@ -13,7 +13,7 @@ from semibrain_agent.investigation_progress import (
     reduce_progress,
 )
 from semibrain_agent.multi_agent import MultiAgent
-from semibrain_agent.multi_policy import PlannedTask
+from semibrain_agent.multi_policy import Plan, PlannedTask, validate_plan
 from semibrain_agent.readonly_reuse import READONLY, normalized, retryable
 
 
@@ -100,6 +100,15 @@ def test_alternative_source_and_file_export_are_not_blocked_by_rag_stall():
     assert not value.followup_blocked(export, prior, {})
 
 
+def test_exhausted_plan_can_explicitly_finish_but_cannot_lose_an_original_goal():
+    plan = Plan(tasks=[], finish_with_existing=True, synthesis_goal_indices=[0, 1])
+    assert validate_plan(plan, ["a", "b"], {}) is plan
+    with pytest.raises(ValueError, match="UNASSIGNED_ORIGINAL_GOAL"):
+        validate_plan(plan.model_copy(update={"synthesis_goal_indices": [0]}), ["a", "b"], {})
+    with pytest.raises(ValueError, match="EMPTY_PLAN_REQUIRES_EXPLICIT_FINISH"):
+        validate_plan(Plan(tasks=[], synthesis_goal_indices=[0]), ["a"], {})
+
+
 def test_readonly_normalizes_defaults_without_merging_distinct_queries_or_page_ranges():
     assert normalized("knowledge.search", '{"query":"etch"}') == {"query": "etch", "top_k": 4}
     assert normalized("knowledge.search", '{"query":"Etch"}')["query"] == "Etch"
@@ -113,6 +122,11 @@ def test_retryable_failures_and_no_progress_notice_are_not_budget_success():
     assert not retryable({"status": "failed", "error": {"code": "SOURCE_SCOPE_DENIED"}})
     assert "额度" not in stop_notice("NO_NEW_INFORMATION")
     assert "Token" in stop_notice("MODEL_BUDGET_EXHAUSTED")
+
+
+@pytest.mark.parametrize("code", ["WEB_CONNECTION_FAILED", "WEB_TIMEOUT", "WEB_PROVIDER_FAILED", "WEB_RATE_LIMITED"])
+def test_business_transport_failures_remain_retryable_even_with_generic_false_hint(code):
+    assert retryable({"status": "failed", "error": {"code": code, "retryable": False}})
 
 
 def test_progress_replay_identity_is_batch_stable_and_navigation_only_gets_one_allowance():

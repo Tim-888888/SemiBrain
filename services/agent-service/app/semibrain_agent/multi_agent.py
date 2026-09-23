@@ -62,7 +62,7 @@ from semibrain_agent.task_outputs import (
     reusable_task,
 )
 
-MULTI_VERSION = "multi-supervisor-v14"
+MULTI_VERSION = "multi-supervisor-v15"
 ROLE_RULES = {
     "sqlbot": "你是 SQLBot。使用授权业务工具核验目标、阶段、程序、时间与分母。原问题已给出必要参数时直接查询，不为重复确认编号先列目录或读上下文；缺失且可自行补足时才查询目录。仅完成分配给自己的目标，不重复其他分支负责的计算。交回引用证据与缺口，不给无证据根因。",
     "rag": "你是 RAG Agent。检索并读取与分配目标相关的授权原文，保留版本、否定和限制。缺少内容明确记录，不用常识填成引用。",
@@ -141,6 +141,7 @@ class MultiPrompts(PromptAssembler):
                 "不能将partial理解为没有查过。对相同原目标、相同角色补查，必须填gap并从unread_targets选target_refs，"
                 "换一种查询说法不算新路径。RAG只能查知识库；缺少公开知识而有联网权限时，派Tool读取已有候选网页。"
                 "没有可用新来源时将目标放入synthesis_goal_indices，以已有证据收尾并说明缺口。\n"
+                "此时显式设置finish_with_existing=true、tasks=[]，只允许在补查阶段这样收尾。\n"
                 "每项必须声明deliverables：读取表格数据用dataset；Python统计/文件导出用python并完整列artifact_formats；"
                 "其他取证用evidence。用户要求按编号升序前N个批次时，dataset填写lot_limit=N，"
                 "business.search_lots已保证lot_id升序，无需另查SQL。计算依赖dataset任务。"
@@ -148,6 +149,10 @@ class MultiPrompts(PromptAssembler):
                 "不要派RAG查询这类说明。补查若依赖已完成任务，用reuse_key保留其相同goal_indices和deliverables，"
                 "服务器复用产物不再执行。\n"
                 "优先让一个已具备所需工具的角色完成连贯目标，不能为了展示多Agent而重复派工。"
+                "同一个普通知识目标默认先派RAG核对现有资料；不要同时派RAG和Tool查同一问题。"
+                "已有资料足够就汇总，只有出现明确缺口才派Tool补充网页正文。"
+                "用户明确要求以网络资料为依据、资料目录明显不相关或要求独立来源交叉核对时，才优先网页或并行取证。"
+                "联网搜索已由运行层保证，不需要为了展示联网再次派Tool搜索。"
                 "SQLBot已有statistics，可直接完成良率查询与百分点差，不另派Tool或Python再算一遍。"
                 "聚合数值和指标比较交付evidence；dataset用于需要向下游交付行数据的任务，回答里显示表格不等于dataset。"
                 "只有确需Python、文件或外部资料工具时才安排Tool；artifact_formats仅填写用户明确要求导出的格式，未要求文件时为空。\n"
@@ -169,6 +174,8 @@ class MultiPrompts(PromptAssembler):
                 "仅整理历史回答为文件时，聊天正文简短说明已交付的实际文件及必要限制，不重新展开整份历史分析。"
                 "一次辅助工具失败不等于事实冲突，也不自动否定已成功的取证或计算；只有不同证据的事实不一致才叫冲突。"
                 "只有用户要求独立复核或证据本身存在实质缺陷时才要求二次核验，不额外添加验收目标。"
+                "missing_goals严格对应原始intent.goals；未被用户要求的扩展资料不能作为未完成目标。"
+                "分支因无新信息停止只表示该来源路径停止，不能据此否定其他来源已经支持的答案。"
             )
         return result
 
@@ -410,7 +417,10 @@ class MultiAgent(Investigator):
             )
             try:
                 plan = validate_plan(parse_control(turn.text, Plan), goals, available)
-                validate_delivery_plan(plan, state["intent"])
+                if plan.finish_with_existing and not state.get("plan_version"):
+                    raise ValueError("INITIAL_PLAN_REQUIRES_INVESTIGATION")
+                if not plan.finish_with_existing:
+                    validate_delivery_plan(plan, state["intent"])
                 for spec in plan.tasks:
                     reusable_task(spec, previous, evidence)
                 blocked = [spec.key for spec in plan.tasks if not spec.reuse_key
@@ -463,8 +473,9 @@ class MultiAgent(Investigator):
             )
         state.update(plan_version=version, phase="dispatch",
                      synthesis_goals=[goals[i] for i in plan.synthesis_goal_indices])
-        if not admitted and not all(t.reuse_key for t in plan.tasks):
-            state.update(phase="finalize", stop_code="NO_NEW_INFORMATION", closing=True)
+        if plan.finish_with_existing or (not admitted and not all(t.reuse_key for t in plan.tasks)):
+            reason = self.harness.request_closeout("NO_NEW_INFORMATION")
+            state.update(phase="finalize", stop_code=reason, closing=True)
         self.tree()
         return state
 
@@ -667,6 +678,12 @@ class MultiAgent(Investigator):
         current_jobs = {r["observation"].get("job_id") for r in self.db.observations.find({
             "run_id": self.run["_id"], "observation.tool": "sandbox.python"})} - {None} if requested_files(state["intent"]) else set()
         missing = missing_files(state["intent"], evidence, current_jobs)
+        progress, branches = {}, []
+        if hasattr(self, "investigation"):
+            progress = self.investigation.packet(
+                list(range(len(state["intent"].get("goals", [])))), {r["evidence_id"] for r in evidence})
+            branches = [{k: t.get(k) for k in ("role", "goal_indices", "status", "summary", "completion_issues")}
+                        for t in self.db.tasks.find({"run_id": self.run["_id"]})]
         inputs = [
             {
                 "role": "user",
@@ -677,6 +694,9 @@ class MultiAgent(Investigator):
                         "draft_blocks": draft_blocks(state["draft"]),
                         "evidence": multi_evidence_views(evidence),
                         "executed": self.execution_summary(),
+                        "shared_progress": progress,
+                        "branches": branches,
+                        "replan_rule": "只有原目标确实缺事实且仍有不同的可用来源路径时才needs_retrieval；已查路径closed不得再派。同义改写、未要求的工程细节和格式建议不能触发补查。",
                         "missing_file_formats": missing,
                         "delivery_rule": "missing_file_formats是服务器实测缺少的文件；不能声称这些文件已生成。保留有据正文，将未交付记入missing_goals。",
                         "retrieval_available": not state.get("closing")
