@@ -57,17 +57,40 @@ def lease(identity):
         raise WebError("WEB_SNAPSHOT_EXPIRED")
 
 
+def snapshot_aliases(snapshot, owner_id):
+    """Resolve retained query/asset handles, including history-only references."""
+    found = {f"web:{snapshot['_id']}:{snapshot['content_hash']}"}
+    pending = set(found)
+    for _ in range(16):
+        additions = set()
+        for job in db().tool_jobs.find({"subject_id": owner_id,
+                "result.data.lineage_refs": {"$in": list(pending)}, "result_hash": {"$exists": True}},
+                {"_id": 1, "result_hash": 1}).limit(513):
+            additions.add(f"query:{job['_id']}:{job['result_hash']}")
+        for asset in db().assets.find({"owner_id": owner_id, "source_refs": {"$in": list(pending)}},
+                {"_id": 1, "ref.content_hash": 1}).limit(513):
+            additions.add(f"asset:{asset['_id']}:{asset['ref']['content_hash']}")
+        pending = additions - found
+        if not pending:
+            return sorted(found)
+        found.update(pending)
+        if len(found) > 512:
+            break
+    # Incomplete traversal must never authorize deletion.
+    raise WebError("RETENTION_LINEAGE_LIMIT")
+
+
 def status_for(row, *, purge=False):
     payload = {"run_id": row["run_id"], "owner_id": row["owner_id"], "purge": purge}
     snapshot = db().web_snapshots.find_one({"_id": row["_id"]})
     if snapshot:
         payload.update(snapshot_id=snapshot["_id"], content_hash=snapshot["content_hash"])
+        payload["lineage_aliases"] = snapshot_aliases(snapshot, row["owner_id"])
     status = call("agent", "POST", "/internal/v1/retention/snapshot", json=payload).json()
     if snapshot and not purge:
-        ref = f"web:{snapshot['_id']}:{snapshot['content_hash']}"
         latest = status.get("last_cited_at")
         latest = datetime.fromisoformat(latest) if isinstance(latest, str) else latest
-        for asset in db().assets.find({"owner_id": row["owner_id"], "source_refs": ref,
+        for asset in db().assets.find({"owner_id": row["owner_id"], "source_refs": {"$in": payload["lineage_aliases"]},
                                        "retention_version": {"$exists": False}, "revoked": {"$ne": True}}):
             # A registered export is a formal derivative; ordinary downloads and
             # orphan upload intents cannot extend the original's retention.

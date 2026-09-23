@@ -121,7 +121,39 @@ def test_only_registered_exports_extend_retention_not_orphan_assets(monkeypatch)
     db.tool_jobs.find_one.return_value = {"result": {"data": {"artifacts": [{"asset_id": "export"}]}}}
     monkeypatch.setattr(retention, "db", lambda: db)
     monkeypatch.setattr(retention, "call", lambda *a, **kw: SimpleNamespace(json=lambda: expired()))
+    monkeypatch.setattr(retention, "snapshot_aliases", lambda *args: ["query:linked:hash"])
     status = retention.status_for(candidate)
     assert retention.deadline(status) == stamp + timedelta(days=90)
     db.tool_jobs.find_one.return_value = None
     assert retention.status_for(candidate)["last_cited_at"] is None
+
+
+def test_snapshot_aliases_follow_indirect_queries_and_assets_without_cycles(monkeypatch):
+    db = Mock()
+    db.tool_jobs.find.return_value.limit.side_effect = [
+        [{"_id": "q1", "result_hash": "h1"}], [{"_id": "q2", "result_hash": "h2"}],
+        [{"_id": "q1", "result_hash": "h1"}]]
+    db.assets.find.return_value.limit.side_effect = [[], [{"_id": "file", "ref": {"content_hash": "hf"}}], []]
+    monkeypatch.setattr(retention, "db", lambda: db)
+    refs = retention.snapshot_aliases({"_id": "snapshot", "content_hash": "h"}, "owner")
+    assert set(refs) == {"web:snapshot:h", "query:q1:h1", "query:q2:h2", "asset:file:hf"}
+    assert all(c.args[0]["subject_id"] == "owner" for c in db.tool_jobs.find.call_args_list)
+
+
+def test_alias_overflow_cannot_be_mistaken_for_no_citations(monkeypatch):
+    db = Mock()
+    db.tool_jobs.find.return_value.limit.return_value = [{"_id": str(i), "result_hash": "h"} for i in range(513)]
+    db.assets.find.return_value.limit.return_value = []
+    monkeypatch.setattr(retention, "db", lambda: db)
+    with pytest.raises(ValueError, match="RETENTION_LINEAGE_LIMIT"):
+        retention.snapshot_aliases({"_id": "s", "content_hash": "h"}, "owner")
+
+
+def test_agent_retention_includes_indirect_history_in_citation_lookup():
+    db = Mock()
+    db.runs.find_one.return_value = {"command": {"subject_ref": "owner"}, "status": "succeeded", "completed_at": now()}
+    db.evidence.find.return_value = []
+    form = RetentionRequest(run_id=str(uuid4()), owner_id="owner", snapshot_id=str(uuid4()),
+        content_hash="a" * 64, lineage_aliases=["query:job:hash"])
+    lifecycle(form, db)
+    assert "query:job:hash" in db.evidence.find.call_args.args[0]["lineage_refs"]["$in"]

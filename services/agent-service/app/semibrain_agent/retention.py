@@ -19,6 +19,7 @@ class RetentionRequest(BaseModel):
     owner_id: str = Field(max_length=128)
     snapshot_id: UUID | None = None
     content_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    lineage_aliases: list[str] = Field(default_factory=list, max_length=512)
     purge: bool = False
 
 
@@ -28,7 +29,8 @@ def lifecycle(form, db):
     if not run or run.get("command", {}).get("subject_ref") != form.owner_id:
         failure("RETENTION_RUN_UNAVAILABLE", 404)
     ref = f"web:{form.snapshot_id}:{form.content_hash}" if form.snapshot_id else None
-    records = list(db.evidence.find({"lineage_refs": ref})) if ref else []
+    refs = list(dict.fromkeys([ref, *form.lineage_aliases])) if ref else []
+    records = list(db.evidence.find({"lineage_refs": {"$in": refs}})) if refs else []
     latest, active = None, run.get("status") not in TERMINAL
     for item in records:
         owner_run = db.runs.find_one({"_id": item["run_id"]})
@@ -77,7 +79,7 @@ def snapshot(form: RetentionRequest, request: Request):
         if not form.snapshot_id or expires > now():
             failure("RETENTION_NOT_DUE", 409)
         ref = f"web:{form.snapshot_id}:{form.content_hash}"
-        db.evidence.update_many({"lineage_refs": ref}, {"$unset": {"content": "", "text": ""},
+        db.evidence.update_many({"lineage_refs": {"$in": list(dict.fromkeys([ref, *form.lineage_aliases]))}}, {"$unset": {"content": "", "text": ""},
             "$set": {"body_expired_at": now()}})
         for run_id in {r["run_id"] for r in status["records"]}:
             purge_replicas(db, run_id)
