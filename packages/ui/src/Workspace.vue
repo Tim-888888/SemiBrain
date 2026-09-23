@@ -69,8 +69,7 @@ watch([scrollArea, messageColumn], ([area, column], _, cleanup) => {
 }, { flush: 'post' })
 function clearImages() {
   uploadController?.abort(); uploadController = null; uploading.value = false
-  if (uploadingPreview.value) URL.revokeObjectURL(uploadingPreview.value)
-  uploadingPreview.value = ''; imageUploads.value.forEach(image => URL.revokeObjectURL(image.preview)); imageUploads.value = []
+  uploadingPreview.value = ''; imageUploads.value = []
 }
 function newChat() { rememberChat(); multiAgent.value = false; clearImages(); scrollFollow.reset(); allowWeb.value = false; generation++; closeStream(); conversation.value = null; messages.value = []; activeRun.value = null; error.value = ''; pending = null; selectedDocuments.value = []; attached.value = []; messagesCursor.value = null; view.value = 'chat' }
 async function openChat(item: any) {
@@ -115,7 +114,9 @@ async function uploadImages(files: File[]) {
   try {
     for (const file of files) {
       if (current !== generation || controller.signal.aborted) return
-      uploadingPreview.value = URL.createObjectURL(file)
+      const preview = await imagePreview(file, controller.signal)
+      if (current !== generation || controller.signal.aborted) return
+      uploadingPreview.value = preview
       const body = new FormData(); body.append('file', file); body.append('allow_external', 'true')
       const result = await api('/v1/attachments/images', { method: 'POST', body, signal: controller.signal })
       if (current !== generation || controller.signal.aborted) return
@@ -125,14 +126,23 @@ async function uploadImages(files: File[]) {
   } catch (e) { if (current === generation && !controller.signal.aborted) error.value = (e as Error).message }
   finally {
     if (uploadController === controller) {
-      if (uploadingPreview.value) URL.revokeObjectURL(uploadingPreview.value)
       uploadingPreview.value = ''; uploading.value = false; uploadController = null
     }
   }
 }
+function imagePreview(file: File, signal: AbortSignal): Promise<string> {
+  // The deployed CSP already permits data images, but deliberately excludes blob URLs.
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    const abort = () => { reader.abort(); reject(new DOMException('Aborted', 'AbortError')) }
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(new Error('图片预览读取失败，请重新选择。'))
+    reader.onloadend = () => signal.removeEventListener('abort', abort)
+    if (signal.aborted) { abort(); return }
+    signal.addEventListener('abort', abort, { once: true }); reader.readAsDataURL(file)
+  })
+}
 function removeImage(id: string) {
-  const image = imageUploads.value.find(item => item.asset_id === id)
-  if (image) URL.revokeObjectURL(image.preview)
   imageUploads.value = imageUploads.value.filter(item => item.asset_id !== id)
   attached.value = attached.value.filter(item => item !== id)
 }
