@@ -75,8 +75,8 @@ def test_web_snapshot_keeps_bounded_original_text_when_transport_is_large():
     before = deepcopy(source)
     views = multi_evidence_views([source] * 8)
     assert source == before
-    assert sum(len(v["content"]["text"]) for v in views) == 16000
-    assert views[0]["content"]["text"] == source["content"]["text"][:2000]
+    assert len(views) == 1  # Identical source/range is sent once, not split eight ways.
+    assert views[0]["content"]["text"] == source["content"]["text"]
     assert views[0]["content"]["offset"] == 7000
     assert views[0]["source"]["locator"] == source["source"]["locator"]
-    assert views[0]["projection"]["text_omitted_characters"] == len(source["content"]["text"]) - 2000
+    assert views[0]["projection"]["text_omitted_characters"] == 0

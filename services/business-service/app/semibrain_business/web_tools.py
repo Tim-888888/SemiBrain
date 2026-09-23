@@ -10,6 +10,7 @@ from uuid import UUID
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 from semibrain_common.runtime import call, digest, now, transaction
+from semibrain_common.text_window import read_window
 
 from semibrain_business.safe_fetch import WebError, fetch_static, validate_url
 from semibrain_business.security import db
@@ -36,6 +37,8 @@ class WebRead(BaseModel):
     snapshot_id: UUID
     content_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     offset: int = Field(default=0, ge=0, le=200000)
+    length: int = Field(default=7000, ge=200, le=12000)
+    query: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 def configured():
@@ -247,6 +250,7 @@ def search(form, job):
 
 def fetch(form, job):
     from semibrain_business.knowledge import store_asset
+    from semibrain_business.retention import reserve
 
     access = authorization(job)
     protected = protected_values(job)
@@ -263,12 +267,14 @@ def fetch(form, job):
     authorization(job)
     content_hash = digest(page["text"])
     snapshot_id = job["_id"]
+    reserve(snapshot_id, job["run_id"], job["subject_id"], len(page["text"].encode()) + 2048)
     asset = store_asset(
         ("来源：" + page["url"] + "\n\n" + page["text"]).encode(),
         "text/plain; charset=utf-8",
         job["subject_id"],
         "web-snapshot.txt",
         job_id=job["_id"],
+        retention_version=1,
     )
     row = {
         "_id": snapshot_id,
@@ -277,6 +283,7 @@ def fetch(form, job):
         "content_hash": content_hash,
         "asset_id": asset["_id"],
         "observed_at": now(),
+        "retention_version": 1,
         **page,
     }
     db().web_snapshots.update_one({"_id": snapshot_id}, {"$setOnInsert": row}, upsert=True)
@@ -284,6 +291,7 @@ def fetch(form, job):
 
 
 def read_snapshot(form, job):
+    from semibrain_business.retention import lease
     authorization(job)
     row = db().web_snapshots.find_one(
         {
@@ -293,18 +301,23 @@ def read_snapshot(form, job):
             "content_hash": form.content_hash,
         }
     )
+    if row and row.get("body_expired_at"):
+        raise WebError("WEB_SNAPSHOT_EXPIRED")
     if not row or form.offset >= len(row["text"]):
         raise WebError("WEB_SNAPSHOT_UNAVAILABLE")
-    end = min(form.offset + 7000, len(row["text"]))
+    lease(row["_id"])
+    window = read_window(row["text"], form.offset, form.length, form.query)
     return {
         "snapshot_id": row["_id"],
         "content_hash": row["content_hash"],
         "url": row["url"],
         "title": row["title"],
-        "text": row["text"][form.offset : end],
-        "offset": form.offset,
-        "next_offset": end if end < len(row["text"]) else None,
-        "partial_page": form.offset > 0 or end < len(row["text"]) or row["truncated"],
+        "text": window["text"],
+        "offset": window["offset"],
+        "next_offset": window["next_offset"],
+        "query_found": window["query_found"],
+        "total_characters": window["total_characters"],
+        "partial_page": window["partial"] or row["truncated"],
         "asset_id": row["asset_id"],
         "observed_at": row["observed_at"].isoformat(),
         "data_origin": "public",
@@ -326,6 +339,6 @@ WEB_TOOLS = {
     "web.read": (
         WebRead,
         read_snapshot,
-        "按快照 ID、哈希和 next_offset 继续读取本运行已有网页，不重新抓取或切换来源。",
+        "按快照 ID、哈希和offset/length读取原文；可用query在整个已保存正文内精确定位。不重新抓取；源站或抓取阶段已截掉的部分无法恢复。",
     ),
 }

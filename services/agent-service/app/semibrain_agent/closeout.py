@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from semibrain_common.runtime import canonical
 
 from semibrain_agent.citations import cited_markers
+from semibrain_agent.context_policy import project_evidence, source_version
 from semibrain_agent.harness import BudgetExhausted, estimate_reservation
 from semibrain_agent.review_delivery import draft_blocks
 
@@ -69,16 +70,16 @@ def select_packet(question, intent, evidence, project, executed, missing_files):
                      for row in executed[-12:]],
         "missing_file_formats": missing_files,
     }
-    # Keep both early findings and recent corrections. Originals remain in the ledger.
-    for count in (8, 4, 2, 1):
-        selected = evidence if len(evidence) <= count else evidence[:count // 2] + evidence[-(count - count // 2):]
-        for size in (3000, 1600, 800):
-            packet = {**base, "evidence": project(selected, content_chars=size),
-                      "omitted_sources": len(evidence) - len(selected)}
-            review_probe = {**packet, "draft_blocks": [{"id": 0, "text": "文" * 1800}]}
-            if (fits(packet, ANSWER_SYSTEM, ANSWER_OUTPUT, ANSWER_CEILING)
-                    and fits(review_probe, REVIEW_SYSTEM, REVIEW_OUTPUT, REVIEW_CEILING)):
-                return packet
+    # Select by relevance and recent corrections across ALL sources, not only
+    # the first/last N entries. Both model calls must fit the fixed 20k reserve.
+    for tokens in (5000, 3500, 2200, 1000):
+        views = project_evidence(evidence, token_budget=tokens, question=question)
+        packet = {**base, "evidence": views, "evidence_version": source_version(evidence),
+                  "omitted_sources": len(evidence) - len(views)}
+        review_probe = {**packet, "draft_blocks": [{"id": 0, "text": "文" * 1800}]}
+        if (views and fits(packet, ANSWER_SYSTEM, ANSWER_OUTPUT, ANSWER_CEILING)
+                and fits(review_probe, REVIEW_SYSTEM, REVIEW_OUTPUT, REVIEW_CEILING)):
+            return packet
     raise BudgetExhausted("CLOSEOUT_CONTEXT_LIMIT")
 
 

@@ -42,11 +42,10 @@ def bucket():
     return os.getenv("SEMIBRAIN_MINIO_BUCKET", "knowledge-assets")
 
 
-def store_asset(content, media_type, owner_id, filename, *, document_id=None, job_id=None):
+def store_asset(content, media_type, owner_id, filename, *, document_id=None, job_id=None, retention_version=None):
     asset_id = uid()
     content_hash = hashlib.sha256(content).hexdigest()
     key = owner_id + "/" + asset_id + "/" + content_hash
-    objects().put_object(bucket(), key, io.BytesIO(content), len(content), content_type=media_type)
     ref = AssetRef(
         asset_id=asset_id, content_hash=content_hash, media_type=media_type, size_bytes=len(content)
     ).model_dump(mode="json")
@@ -59,12 +58,21 @@ def store_asset(content, media_type, owner_id, filename, *, document_id=None, jo
         "document_id": document_id,
         "job_id": job_id,
         "created_at": now(),
+        **({"retention_version": retention_version} if retention_version else {}),
     }
-    db().assets.insert_one(row)
+    # Track managed object intent before upload so failed uploads remain reclaimable.
+    if retention_version:
+        db().assets.insert_one(row)
+    objects().put_object(bucket(), key, io.BytesIO(content), len(content), content_type=media_type)
+    if not retention_version:
+        db().assets.insert_one(row)
     return row
 
 
 def read_asset(asset):
+    if asset.get("retention_version"):
+        from semibrain_business.retention import lease
+        lease(asset["job_id"])
     response = objects().get_object(bucket(), asset["object_key"])
     try:
         content = response.read(33 * 1024**2)

@@ -50,7 +50,13 @@ def reduce_progress(events, goal_indices):
             "attempted_urls": [], "closed": False})
         for key in ("evidence_ids", "queries", "reads", "candidate_urls", "attempted_urls"):
             path[key] = list(dict.fromkeys([*path[key], *event.get(key, [])]))
-        if event.get("new_content"):
+        # Validated IDs make this a scoped model opinion, not a new source. When
+        # supplied, topic coverage takes precedence over novel raw chunk hashes.
+        if event.get("coverage_gain") is True:
+            path["stalls"] = 0
+        elif event.get("coverage_gain") is False:
+            path["stalls"] += 1
+        elif event.get("new_content"):
             path["stalls"] = 0
         elif event.get("transient_only"):
             path["failures"] += 1
@@ -82,7 +88,35 @@ class InvestigationProgress:
             path["pending_urls"] = [u for u in path["candidate_urls"] if u not in path["attempted_urls"]][:8]
             for key in ("queries", "reads", "candidate_urls", "attempted_urls"):
                 path[key] = path[key][-12:]
+        coverage = list(self.db.investigation_progress.find({"run_id": self.run_id,
+            "kind": "coverage", "goal_indices": {"$in": goals}}).sort("created_at", 1))
+        if coverage:
+            paths["goal_coverage"] = {"kind": "model_assessment_not_source_evidence",
+                "assessments": [{**item, "evidence_ids": [i for i in item["evidence_ids"] if i in authorized_ids]}
+                    for row in coverage[-4:] for item in row["assessments"]]}
         return paths
+
+    def record_coverage(self, task, logical_id, assessments):
+        self.harness.save_record("investigation_progress", logical_id + ":coverage", {
+            "kind": "coverage", "task_id": task["_id"], "goal_indices": task["goal_indices"],
+            "assessments": assessments, "created_at": now()})
+
+    def search_exhausted(self, goals, path):
+        events = self.events()
+        counts = {g: sum(len(e.get("queries", [])) for e in events
+                  if e["path"] == path and g in e.get("goal_indices", [])) for g in goals}
+        if hasattr(self, "db"):
+            # Include calls already committed in the current parallel tool batch.
+            known = {i for event in events for i in event.get("observation_ids", [])}
+            tasks = {t["_id"]: t for t in self.db.tasks.find({"run_id": self.run_id})}
+            for row in self.db.observations.find({"run_id": self.run_id, "observation.tool": path + ".search"}):
+                result = row["observation"]
+                if result.get("call_ref") in known or not result.get("arguments", {}).get("query"):
+                    continue
+                for g in tasks.get(row.get("task_id"), {}).get("goal_indices", []):
+                    if g in counts:
+                        counts[g] += 1
+        return bool(counts) and all(n >= 2 for n in counts.values())
 
     def record_batch(self, task, round_number, results, before, *, baseline=None):
         events = self.events()
@@ -113,6 +147,15 @@ class InvestigationProgress:
                 "attempted_urls": [r["arguments"]["url"] for r in selected if r.get("arguments", {}).get("url")],
                 "transient_only": all(r.get("status") == "failed" and r.get("retryable") for r in selected),
             }
+            coverage = list(self.db.investigation_progress.find({"run_id": self.run_id,
+                "kind": "coverage", "_id": {"$in": [str(r.get("call_ref")) + ":coverage" for r in selected]}}))
+            opinions = [a for e in coverage for a in e["assessments"]]
+            if opinions and set(task["goal_indices"]) <= {a["goal_index"] for a in opinions}:
+                supported = {i for a in opinions for i in a["evidence_ids"]}
+                prior = {i for e in events if e["path"] == path and
+                         set(task["goal_indices"]) & set(e["goal_indices"]) for i in e.get("supported_ids", [])}
+                event.update(coverage_gain=bool(supported - prior), supported_ids=sorted(supported),
+                             coverage_kind="model_assessment_not_source_evidence")
             identity = str(uuid5(NAMESPACE_URL, f"{self.run_id}:progress:{task['_id']}:{round_number}:{path}"))
             self.harness.save_record("investigation_progress", identity, event)
 

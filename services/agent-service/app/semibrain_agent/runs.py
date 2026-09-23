@@ -69,6 +69,11 @@ def accept(command, session):
         "_id": str(command.run_id),
         "command": payload,
         "payload_hash": payload_hash,
+        "retention_version": 1,
+        "execution_policy": {
+            "context": os.getenv("SEMIBRAIN_DSH_CONTEXT_ENABLED", "true").lower() == "true",
+            "efficiency": os.getenv("SEMIBRAIN_DSH_EFFICIENCY_ENABLED", "true").lower() == "true",
+        },
         "status": "queued",
         "sequence": 1,
         "attempt": 0,
@@ -133,6 +138,8 @@ def snapshot(run_id: str, request: Request):
             result[key] = row[key]
     if row.get("report_id"):
         report = db().reports.find_one({"_id": row["report_id"]})
+        expired_ids = {r["evidence_id"] for r in db().evidence.find({"run_id": run_id, "body_expired_at": {"$exists": True}})}
+        result["citations"] = [{**c, "body_expired": c["evidence_id"] in expired_ids} for c in row.get("citations", [])]
         result.update(
             {
                 "body_markdown": report["body_markdown"],

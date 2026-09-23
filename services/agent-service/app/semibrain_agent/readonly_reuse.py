@@ -28,6 +28,8 @@ class WebRead(BaseModel):
     snapshot_id: UUID
     content_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     offset: int = Field(default=0, ge=0, le=200000)
+    length: int = Field(default=7000, ge=200, le=12000)
+    query: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 READONLY = {**{k: v[0] for k, v in LOCAL_TOOLS.items()},

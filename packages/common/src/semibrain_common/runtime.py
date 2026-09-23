@@ -264,6 +264,9 @@ def call(service: str, method: str, path: str, *, delegation=None, timeout=30, *
     url = os.environ[f"SEMIBRAIN_{service.upper()}_URL"] + path
     response = httpx.request(method, url, headers=headers, timeout=timeout, **kwargs)
     if response.status_code >= 400:
+        if (service == "business" and response.status_code == 410 and method == "GET"
+                and path.startswith("/internal/v1/assets/") and path.endswith("/content")):
+            failure("WEB_SNAPSHOT_EXPIRED", 410)
         if (service == "business" and method == "POST"
                 and path == "/internal/v1/tool-jobs" and response.status_code == 400):
             from semibrain_common.tool_errors import SANDBOX_ARGUMENT_ERRORS

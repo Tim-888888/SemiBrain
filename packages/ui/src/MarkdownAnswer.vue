@@ -18,7 +18,8 @@ async function copy() { await navigator.clipboard.writeText(props.text) }
     </div>
     <div v-if="citations?.length" class="citations" aria-label="引用来源">
       <template v-for="citation in citations" :key="citation.evidence_id">
-        <a v-if="citation.asset_id" class="citation" :href="`/v1/assets/${citation.asset_id}/content`" target="_blank" rel="noopener noreferrer">▤ {{ citation.marker }} · {{ citation.title }}</a>
+        <span v-if="citation.body_expired" class="citation">▤ {{ citation.marker }} · {{ citation.title }} · 原快照已过期</span>
+        <a v-else-if="citation.asset_id" class="citation" :href="`/v1/assets/${citation.asset_id}/content`" target="_blank" rel="noopener noreferrer">▤ {{ citation.marker }} · {{ citation.title }}</a>
         <span v-else class="citation">▦ {{ citation.marker }} · {{ citation.title }}</span>
         <a v-if="typeof citation.location?.url === 'string' && /^https?:\/\//.test(citation.location.url)" class="citation" :href="citation.location.url" target="_blank" rel="noopener noreferrer">原网页 ↗</a>
       </template>

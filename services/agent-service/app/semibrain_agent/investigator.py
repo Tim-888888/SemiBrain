@@ -178,6 +178,11 @@ class Investigator:
             try:
                 return self.model_call_once(state, **kwargs)
             except ModelError as exc:
+                if (exc.code == "MODEL_CONTEXT_OVERFLOW" and not retry
+                        and getattr(self, "context_policy_enabled", False)):
+                    kwargs = {**kwargs, "context_retry": True,
+                              "suffix": kwargs.get("suffix", "") + "-context-retry"}
+                    continue
                 if retry or not exc.retryable:
                     raise
                 self.harness.check()
@@ -197,6 +202,7 @@ class Investigator:
         max_tokens=2200,
         system_override=None,
         reservation_ceiling=None,
+        context_retry=False,
     ):
         identity = f"{self.run['_id']}:{state['step']}:{role}:{suffix}"
         cached = self.db.model_turns.find_one({"_id": identity, "run_id": self.run["_id"]})
@@ -204,10 +210,24 @@ class Investigator:
             return ModelTurn(**cached["turn"]), identity
         profile = ModelProfile(**self.bundle["models"][role], credential_prefix="SEMIBRAIN_LLM")
         inputs = inputs or self.messages(state)
-        inputs, compressed = compact_messages(inputs)
+        system = system_override if system_override is not None else self.prompts.system(role)
+        if getattr(self, "context_policy_enabled", False):
+            from semibrain_agent.context_policy import fit_messages
+
+            budget = self.harness.check()["budget"]
+            available = (budget["limits"]["tokens"] - budget["settled_tokens"]
+                         - budget["reserved_tokens"]
+                         - (0 if final else budget["limits"]["final_token_reserve"]))
+            if reservation_ceiling is not None:
+                available = min(available, reservation_ceiling)
+            inputs, compressed = fit_messages(
+                inputs, system, tools, profile, output=max_tokens,
+                question=self.context["input"]["question"], available=available, force=context_retry,
+            )
+        else:
+            inputs, compressed = compact_messages(inputs)
         if compressed:
             self.notify({"progress": "正在整理上下文，证据仍可追溯"})
-        system = system_override if system_override is not None else self.prompts.system(role)
         basis = token_basis(system, inputs, tools, profile.snapshot())
         baselines = self.db.model_turns.find(
             {"run_id": self.run["_id"], "token_basis.context": basis["context"],
@@ -791,6 +811,16 @@ class Investigator:
             except (BudgetExhausted, ModelError) as exc:
                 evidence = self.executor.evidence()
                 preserved = reviewed_partial(state, "执行额度或模型响应未支持继续修订")
+                if (preserved and getattr(self, "context_policy_enabled", False)
+                        and isinstance(exc, BudgetExhausted) and not state.get("closing")
+                        and str(exc) != "RUN_TIME_BUDGET"):
+                    from semibrain_agent.context_policy import source_version
+
+                    if state.get("reviewed_evidence_version") != source_version(evidence):
+                        # A late successful page is not covered by an older review.
+                        # Retain the old body as fallback, but spend the reserved
+                        # closeout once on the latest authorized snapshot first.
+                        preserved = None
                 if preserved:
                     state = {**state, "phase": "done", "outcome": "partial",
                              "stop_code": str(exc), "draft": preserved}
@@ -876,7 +906,7 @@ class Investigator:
             ],
             lineage_refs=refs,
         ).model_dump(mode="json")
-        self.client.request("POST", "/internal/v1/lineage/check", json={"refs": refs})
+        self.client.request("POST", "/internal/v1/lineage/check", json={"refs": refs, "protect_for_publication": True})
 
         def commit(session):
             changed = self.db.runs.find_one_and_update(

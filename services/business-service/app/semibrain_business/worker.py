@@ -17,6 +17,13 @@ def tick():
     query.delay()
     ingest.delay()
     sandbox_cleanup.delay()
+    evidence_cleanup.delay()
+
+
+@app.task(name="business.evidence_cleanup", base=PollTask)
+def evidence_cleanup():
+    from semibrain_business.retention import sweep
+    sweep()
 
 
 @app.task(name="business.sandbox_cleanup", base=PollTask)

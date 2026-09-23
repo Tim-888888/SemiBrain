@@ -63,7 +63,7 @@ def require_manager(claim):
         failure("ADMIN_REQUIRED", 403)
 
 
-def lineage_check(refs, claim, _seen=None):
+def lineage_check(refs, claim, _seen=None, *, protect_for_publication=False):
     seen = set() if _seen is None else _seen
     for ref in refs:
         if ref in seen:
@@ -83,17 +83,24 @@ def lineage_check(refs, claim, _seen=None):
                 failure("EVIDENCE_UNAVAILABLE", 403)
             if job.get("tool", "").startswith("business.") and "demo" not in claim["resource_ids"]:
                 failure("RESOURCE_SCOPE_DENIED", 403)
-            lineage_check((job.get("result", {}).get("data") or {}).get("lineage_refs", []), claim, seen)
+            lineage_check((job.get("result", {}).get("data") or {}).get("lineage_refs", []), claim, seen, protect_for_publication=protect_for_publication)
         elif kind == "asset":
             asset = db().assets.find_one({"_id": identity, "owner_id": claim["subject_id"]})
             if not asset or asset.get("revoked") or asset["ref"]["content_hash"] != version:
                 failure("ASSET_UNAVAILABLE", 403)
-            lineage_check(asset.get("source_refs", []), claim, seen)
+            lineage_check(asset.get("source_refs", []), claim, seen, protect_for_publication=protect_for_publication)
         elif kind == "web":
             snapshot = db().web_snapshots.find_one(
                 {"_id": identity, "owner_id": claim["subject_id"], "content_hash": version}
             )
             if not snapshot:
                 failure("WEB_EVIDENCE_UNAVAILABLE", 403)
+            if protect_for_publication:
+                from semibrain_business.retention import lease
+                from semibrain_business.safe_fetch import WebError
+                try:
+                    lease(identity)
+                except WebError:
+                    failure("WEB_SNAPSHOT_EXPIRED", 410)
         else:
             failure("UNKNOWN_LINEAGE", 403)

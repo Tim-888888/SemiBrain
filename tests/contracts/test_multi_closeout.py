@@ -92,6 +92,20 @@ def test_no_evidence_stops_without_model_and_explains_gap(monkeypatch):
     assert "执行额度" in agent.finished["draft"]
 
 
+def test_late_evidence_does_not_silently_reuse_an_older_review(monkeypatch):
+    from semibrain_agent.context_policy import source_version
+    old = evidence()
+    late = {**old[0], "marker": "2", "content": "FT tests packaged devices; CP is not a replacement."}
+    agent = agent_fixture(monkeypatch, records=[*old, late])
+    agent.state.update(reviewed_content="Previously checked CP [1].",
+                       reviewed_evidence_version=source_version(old))
+    agent.execute()
+    assert [c["role"] for c in agent.calls] == ["rca", "reviewer"]
+    packet = json.loads(agent.calls[0]["inputs"][0]["content"])
+    assert any("packaged devices" in str(r["content"]) for r in packet["evidence"])
+    assert agent.finished["closeout_evidence_version"] == source_version([*old, late])
+
+
 def test_failed_closeout_does_not_publish_unreviewed_text_or_retry(monkeypatch):
     agent = agent_fixture(monkeypatch, error=ModelError("MODEL_HTTP_503"))
     agent.execute()

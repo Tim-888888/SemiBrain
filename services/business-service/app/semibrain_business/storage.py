@@ -4,6 +4,10 @@ from semibrain_business.security import db
 
 
 def initialize():
+    migrate(db(), "d-retention-001", [
+        ("retention_objects", [("state", 1), ("checked_at", 1)], {}),
+        ("retention_audits", [("audit_expires_at", 1)], {"expireAfterSeconds": 0}),
+    ])
     migrate(
         db(),
         "c-001",

@@ -6,6 +6,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from semibrain_common.runtime import canonical, digest, now
+from semibrain_common.text_window import read_window
 from semibrain_common.tool_errors import SANDBOX_ARGUMENT_ERRORS
 from semibrain_contracts.models import EvidenceRef, SourceRef, assert_no_credentials
 
@@ -30,6 +31,9 @@ class Read(BaseModel):
 class EvidenceRead(BaseModel):
     model_config = ConfigDict(extra="forbid")
     evidence_id: UUID
+    offset: int = Field(default=0, ge=0, le=1000000)
+    length: int | None = Field(default=None, ge=200, le=12000)
+    query: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 LOCAL_TOOLS = {
@@ -43,7 +47,7 @@ LOCAL_TOOLS = {
     ),
     "evidence.read": (
         EvidenceRead,
-        "重新读取本运行已经保存的证据，适用于上下文压缩后的原内容核验。",
+        "读取本运行已保存证据，可用offset/length取原文区段或query在留存原文中精确定位。网页未抓取部分无法恢复，请用web.read续读快照。",
     ),
 }
 
@@ -82,7 +86,7 @@ class ToolExecutor:
 
     def evidence(self):
         records = list(
-            self.db.evidence.find({"run_id": self.run_id, "marker": {"$exists": True}}).sort(
+            self.db.evidence.find({"run_id": self.run_id, "marker": {"$exists": True}, "body_expired_at": {"$exists": False}}).sort(
                 "ordinal", 1
             )
         )
@@ -249,9 +253,16 @@ class ToolExecutor:
                 records = {item["evidence_id"]: item for item in self.evidence()}
                 if args["evidence_id"] not in records:
                     raise ValueError("EVIDENCE_NOT_IN_RUN")
+                record = self.observation(records[args["evidence_id"]])
+                value = record.get("content")
+                field = next((k for k in ("text", "stdout") if isinstance(value, dict) and isinstance(value.get(k), str)), None)
+                if (args.get("length") or args.get("query") or args.get("offset")) and (isinstance(value, str) or field):
+                    window = read_window(value[field] if field else value, args["offset"], args.get("length") or 7000, args.get("query"))
+                    record["content"] = {**value, field: window["text"]} if field else window["text"]
+                    record["projection"] = {k: v for k, v in window.items() if k != "text"}
                 observation = {
                     "status": "succeeded",
-                    "evidence": [self.observation(records[args["evidence_id"]])],
+                    "evidence": [record],
                 }
             else:
                 result = self.client.tool(

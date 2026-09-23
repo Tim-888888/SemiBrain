@@ -539,12 +539,13 @@ class LineageInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     # A run may hold 50 evidence items with both a query and a web snapshot reference.
     refs: list[str] = Field(max_length=120)
+    protect_for_publication: bool = False
 
 
 @router.post("/internal/v1/lineage/check")
 def check(form: LineageInput, request: Request):
     claim = authorize_request(request, "lineage.check")
-    lineage_check(form.refs, claim)
+    lineage_check(form.refs, claim, protect_for_publication=form.protect_for_publication)
     return {"valid": True}
 
 
@@ -571,6 +572,13 @@ def asset_content(asset_id: str, request: Request):
         lineage_check(asset.get("source_refs", []), claim)
     else:
         failure("ASSET_UNAVAILABLE", 403)
+    if asset.get("retention_version"):
+        from semibrain_business.retention import lease
+        from semibrain_business.safe_fetch import WebError
+        try:
+            lease(asset["job_id"])
+        except WebError:
+            failure("WEB_SNAPSHOT_EXPIRED", 410)
     content = read_asset(asset)
     # Proxy enforces live access on every request, including already-copied links.
     from urllib.parse import quote

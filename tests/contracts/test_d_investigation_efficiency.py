@@ -131,6 +131,7 @@ def test_business_transport_failures_remain_retryable_even_with_generic_false_hi
 
 def test_progress_replay_identity_is_batch_stable_and_navigation_only_gets_one_allowance():
     harness = SimpleNamespace(db=Mock(), run_id="run", save_record=Mock())
+    harness.db.investigation_progress.find.return_value = []
     tracker = InvestigationProgress(harness)
     tracker.events = lambda: [event("web", new_navigation=True, candidate_urls=["https://example.com/1"])]
     task = {"_id": "t", "goal_indices": [0]}

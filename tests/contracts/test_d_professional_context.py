@@ -4,7 +4,7 @@ import json
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from semibrain_agent.multi_agent import Expert
+from semibrain_agent.multi_agent import Expert, multi_evidence_views
 
 
 def test_recent_read_result_reaches_professional_even_without_new_evidence():
@@ -19,7 +19,7 @@ def test_recent_read_result_reaches_professional_even_without_new_evidence():
     expert.context = {"input": {"question": "Read original"}}
     expert.intent, expert.role, expert.wire = {}, "rag", []
     expert.prompts = SimpleNamespace(sources={})
-    expert.parent = SimpleNamespace(attachments=[])
+    expert.parent = SimpleNamespace(attachments=[], project_evidence=multi_evidence_views)
     expert.catalog = {}
     captured = {}
 
