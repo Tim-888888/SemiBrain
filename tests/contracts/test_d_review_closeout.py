@@ -42,10 +42,17 @@ def test_approved_prose_does_not_erase_budget_stop_or_unmet_retrieval(
 
 
 def test_multi_closeout_keeps_actual_sandbox_stdout_and_artifacts():
+    from semibrain_common.runtime import canonical, digest
+
     agent = reviewer({})
     data = {"sandbox": {"transport": "x" * 20000}, "stdout": "Observed result: 7\n",
             "exit_code": 0, "artifacts": [{"name": "distribution.csv", "asset_id": "registered"}]}
-    agent.executor.evidence = lambda: [{"job_id": "computed", "content": data, "marker": "1"}]
+    agent.executor.evidence = lambda: [{"job_id": "computed", "content": data, "marker": "1",
+        "lineage_refs": ["query:computed"], "source": {"source_version": "1",
+            "content_hash": digest(canonical(data))}}]
+    agent.db = SimpleNamespace(tasks=SimpleNamespace(find=lambda *_: []),
+                               observations=SimpleNamespace(find=lambda *_: []))
+    agent.tree = lambda: None
     captured = []
     agent.notify = lambda *_: None
     agent.model_call = lambda *_, **kwargs: (

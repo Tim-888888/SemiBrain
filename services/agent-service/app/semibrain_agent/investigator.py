@@ -195,6 +195,8 @@ class Investigator:
         final=False,
         suffix="",
         max_tokens=2200,
+        system_override=None,
+        reservation_ceiling=None,
     ):
         identity = f"{self.run['_id']}:{state['step']}:{role}:{suffix}"
         cached = self.db.model_turns.find_one({"_id": identity, "run_id": self.run["_id"]})
@@ -205,7 +207,7 @@ class Investigator:
         inputs, compressed = compact_messages(inputs)
         if compressed:
             self.notify({"progress": "正在整理上下文，证据仍可追溯"})
-        system = self.prompts.system(role)
+        system = system_override if system_override is not None else self.prompts.system(role)
         basis = token_basis(system, inputs, tools, profile.snapshot())
         baselines = self.db.model_turns.find(
             {"run_id": self.run["_id"], "token_basis.context": basis["context"],
@@ -217,6 +219,8 @@ class Investigator:
             estimate_reservation(system, inputs, tools, max_tokens, basis=basis, previous=previous)
             for previous in baselines
         ]])
+        if reservation_ceiling is not None and amount > reservation_ceiling:
+            raise BudgetExhausted("CLOSEOUT_CONTEXT_LIMIT")
         reservation = self.harness.model_reserve(
             amount, phase=state["phase"], final=final, task_id=self.context["task_id"]
         )
@@ -849,7 +853,8 @@ class Investigator:
             if not state.get("delivery_unavailable"):
                 notice = ("尚未生成可下载的 " + "、".join(missing) + " 文件。"
                           "文件交付未通过核验，本轮仅部分完成。")
-                body = notice + ("\n\n" + body if state.get("review", {}).get("approved") else "")
+                body = notice + ("\n\n" + body if state.get("review", {}).get("approved")
+                                 or state.get("closeout_verified_body") else "")
         if not body.strip():
             body = self.partial_body("没有生成可发布的回答", evidence)
             state["outcome"] = "partial"
@@ -859,6 +864,7 @@ class Investigator:
         }):
             body = "本轮未能发起联网搜索，以下内容仅基于已取得的资料。\n\n" + body
             state["outcome"] = "partial"
+        body = self.publication_body(state, body)
         report = Report(
             report_id=uid(),
             run_id=self.run["_id"],
@@ -918,3 +924,6 @@ class Investigator:
             )
 
         transaction(commit)
+
+    def publication_body(self, state, body):
+        return body

@@ -10,6 +10,20 @@ from langgraph.graph import END, START, StateGraph
 from semibrain_common.runtime import canonical, now, transaction
 
 from semibrain_agent.citations import cited_markers
+from semibrain_agent.closeout import (
+    ANSWER_CEILING,
+    ANSWER_OUTPUT,
+    ANSWER_SYSTEM,
+    REVIEW_CEILING,
+    REVIEW_OUTPUT,
+    REVIEW_SYSTEM,
+    CloseoutReview,
+    answer_inputs,
+    fits,
+    reviewed_body,
+    select_packet,
+    stop_notice,
+)
 from semibrain_agent.delivery import (
     answer_input,
     missing_files,
@@ -41,7 +55,7 @@ from semibrain_agent.task_outputs import (
     reusable_task,
 )
 
-MULTI_VERSION = "multi-supervisor-v11"
+MULTI_VERSION = "multi-supervisor-v12"
 ROLE_RULES = {
     "sqlbot": "你是 SQLBot。使用授权业务工具核验目标、阶段、程序、时间与分母。原问题已给出必要参数时直接查询，不为重复确认编号先列目录或读上下文；缺失且可自行补足时才查询目录。仅完成分配给自己的目标，不重复其他分支负责的计算。交回引用证据与缺口，不给无证据根因。",
     "rag": "你是 RAG Agent。检索并读取与分配目标相关的授权原文，保留版本、否定和限制。缺少内容明确记录，不用常识填成引用。",
@@ -50,15 +64,16 @@ ROLE_RULES = {
 }
 
 
-def multi_evidence_views(records):
-    views = evidence_views(records)
+def multi_evidence_views(records, *, content_chars=None):
+    views = evidence_views(records, content_chars=content_chars or 6000)
+    allowance = max(100, content_chars // max(1, len(records))) if content_chars else 4000
     for record, view in zip(records, views):
         data = record.get("content")
         if (record.get("source", {}).get("kind") == "web" and isinstance(data, dict)
                 and data.get("snapshot_id") and isinstance(data.get("text"), str)):
             # Preserve an excerpt before duplicative transport metadata consumes the
             # allowance. It is still source text, never a generated evidence summary.
-            limit = min(4000, max(800, 16000 // max(1, len(records))))
+            limit = min(allowance, max(800, 16000 // max(1, len(records))))
             view["content"] = {k: data.get(k) for k in
                                ("snapshot_id", "content_hash", "offset", "next_offset", "partial_page", "data_origin")}
             view["content"]["text"] = data["text"][:limit]
@@ -71,14 +86,14 @@ def multi_evidence_views(records):
         # Keep executable results legible: transport lineage and binary asset metadata must
         # not crowd the stdout and registered export manifest out of the review context.
         stdout = data.get("stdout", "")
-        view["content"] = {"exit_code": data.get("exit_code"), "stdout": stdout[:4000],
+        view["content"] = {"exit_code": data.get("exit_code"), "stdout": stdout[:allowance],
                            "input_job_ids": data.get("input_job_ids", []),
                            "input_answer_run_id": data.get("input_answer_run_id"),
                            "artifacts": [{k: a.get(k) for k in ("name", "asset_id")}
                                          for a in data.get("artifacts", [])],
                            "data_origin": data.get("data_origin"), "truncated": data.get("truncated")}
         view["projection"] = {"partial": True, "transport_metadata_omitted": True,
-                              "stdout_omitted_characters": max(0, len(stdout) - 4000),
+                              "stdout_omitted_characters": max(0, len(stdout) - allowance),
                               "notice": "省略传输元数据；统计只核对已显示stdout，artifacts为服务器登记的实际产物。"}
     return views
 
@@ -210,13 +225,109 @@ class MultiAgent(Investigator):
         return client
 
     def model_call_once(self, state, **kwargs):
+        # Normal synthesis/review must not spend the fixed closeout reserve.
+        closing = bool(state.get("closing"))
+        kwargs["final"] = closing
         identity = f"{self.run['_id']}:{state['step']}:{kwargs.get('role', 'investigator')}:{kwargs.get('suffix', '')}"
         if not self.db.model_turns.find_one({"_id": identity, "run_id": self.run["_id"]}):
             control_calls = self.db.model_calls.count_documents({
                 "run_id": self.run["_id"], "phase": {"$not": {"$regex": "^expert\\."}}})
-            if control_calls >= 16:
+            if control_calls >= (16 if closing else 14):
+                if not closing:
+                    self.harness.request_closeout("SUPERVISOR_REQUEST_LIMIT")
                 raise BudgetExhausted("SUPERVISOR_REQUEST_LIMIT")
         return super().model_call_once(state, **kwargs)
+
+    def model_call(self, state, **kwargs):
+        if state.get("closing"):
+            # Unknown usage remains charged; no repeated paid recovery attempts.
+            return self.model_call_once(state, **kwargs)
+        return super().model_call(state, **kwargs)
+
+    def node(self, phase):
+        invoke = super().node(phase)
+
+        def guarded(value):
+            if not value["payload"].get("closing"):
+                self.harness.investigation_gate()
+            return invoke(value)
+
+        return guarded
+
+    def finalize(self, state):
+        state["closing"] = True
+        state["closeout_reason"] = state["stop_code"]
+        for task in self.db.tasks.find({"run_id": self.run["_id"], "status": "queued"}):
+            self.task_update(task["_id"], {"status": "partial", "error": state["stop_code"],
+                                         "completed_at": now()})
+        self.tree()
+        self.notify({"progress": "调查已停止，正在用预留额度整理已取得的信息"})
+        evidence = [r for r in self.executor.evidence() if not evidence_issues([r])]
+        if not evidence:
+            state.update(phase="done", outcome="partial",
+                         draft=self.partial_body("没有取得可核验的证据", []))
+            return state
+        jobs = {r["observation"].get("job_id") for r in self.db.observations.find({
+            "run_id": self.run["_id"], "observation.tool": "sandbox.python"})}
+        packet = select_packet(
+            self.context["input"]["question"], state["intent"], evidence,
+            multi_evidence_views, self.execution_summary(),
+            missing_files(state["intent"], evidence, jobs),
+        )
+        turn, _ = self.model_call(
+            state, role="rca", inputs=answer_inputs(packet), final=True, suffix="closeout",
+            max_tokens=ANSWER_OUTPUT, system_override=ANSWER_SYSTEM,
+            reservation_ceiling=ANSWER_CEILING,
+        )
+        state.update(draft=turn.text, phase="review", closeout_packet=packet)
+        return state
+
+    def review_closeout(self, state):
+        packet = {**state["closeout_packet"], "draft_blocks": draft_blocks(state["draft"])}
+        if not fits(packet, REVIEW_SYSTEM, REVIEW_OUTPUT, REVIEW_CEILING):
+            raise BudgetExhausted("CLOSEOUT_CONTEXT_LIMIT")
+        turn, _ = self.model_call(
+            state, role="reviewer", inputs=answer_inputs(packet), final=True,
+            suffix="closeout-review", max_tokens=REVIEW_OUTPUT,
+            system_override=REVIEW_SYSTEM, reservation_ceiling=REVIEW_CEILING,
+        )
+        try:
+            verdict = parse_control(turn.text, CloseoutReview)
+            # Revalidate the original evidence; projected content is not a new source.
+            valid = {r["marker"] for r in self.executor.evidence() if not evidence_issues([r])}
+            valid &= {r["marker"] for r in packet["evidence"]}
+            body = reviewed_body(state["draft"], verdict, valid)
+        except ValueError as exc:
+            raise ModelError("CLOSEOUT_REVIEW_INVALID") from exc
+        state["closeout_verdict"] = verdict.model_dump()
+        state["review"] = {"approved": bool(body), "missing_goals": verdict.missing_goals,
+                           "issues": [b.reason for b in verdict.blocks if b.verdict == "unsupported"]}
+        if body:
+            state["reviewed_content"] = body
+            if any(b.verdict == "unsupported" for b in verdict.blocks):
+                body += "\n\n> 部分内容尚未通过证据核对，已省略。"
+        state.update(phase="done", outcome="partial", draft=body or self.partial_body(
+            "本轮资料尚不足以形成可核验的回答", self.executor.evidence()))
+        return state
+
+    def finish(self, state):
+        reason = state.get("closeout_reason") or state.get("stop_code")
+        budget_reasons = {"MODEL_BUDGET_EXHAUSTED", "TOOL_BUDGET_EXHAUSTED", "FINAL_TIME_RESERVED",
+                          "RUN_TIME_BUDGET", "SUPERVISOR_REQUEST_LIMIT", "ROUND_LIMIT",
+                          "EVIDENCE_BUDGET_EXHAUSTED", "CLOSEOUT_CONTEXT_LIMIT"}
+        if reason in budget_reasons:
+            state["outcome"] = "partial"
+            state["budget_notice"] = stop_notice(reason)
+            verified = state.get("reviewed_content", "")
+            state["closeout_verified_body"] = bool(verified and verified in state.get("draft", ""))
+        return super().finish(state)
+
+    def publication_body(self, state, body):
+        # Add the server-owned notice after file-delivery and fallback checks, so
+        # it survives those paths and never relies on the model remembering it.
+        if state.get("budget_notice"):
+            return "> " + state["budget_notice"] + "\n\n" + body
+        return body
 
     def understand(self, state):
         state = super().understand(state)
@@ -464,6 +575,8 @@ class MultiAgent(Investigator):
         return state
 
     def review(self, state):
+        if state.get("closeout_packet") is not None:
+            return self.review_closeout(state)
         evidence = self.executor.evidence()
         cited = cited_markers(state["draft"])
         current_jobs = {r["observation"].get("job_id") for r in self.db.observations.find({
