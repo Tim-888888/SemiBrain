@@ -107,6 +107,8 @@ class ToolExecutor:
         job_id=None,
         location=None,
         limitations=None,
+        image_refs=None,
+        context_header=None,
     ):
         identity = str(
             uuid5(
@@ -151,6 +153,8 @@ class ToolExecutor:
             "asset_id": asset_id,
             "job_id": job_id,
             "location": location or {},
+            "image_refs": image_refs or [],
+            "context_header": context_header or "",
         }
         self.harness.save_record("evidence", identity, record)
         return {"_id": identity, **record}
@@ -168,6 +172,8 @@ class ToolExecutor:
                 "source",
                 "limitations",
                 "job_id",
+                "image_refs",
+                "context_header",
             )
         }
 
@@ -191,6 +197,8 @@ class ToolExecutor:
                 refs=[chunk["lineage_ref"]],
                 asset_id=chunk["asset_id"],
                 location=chunk["location"],
+                image_refs=chunk.get("image_refs", []),
+                context_header=chunk.get("context_header", ""),
                 limitations=["PARTIAL_DOCUMENT"] if chunk.get("truncated") else [],
             )
             evidence.append(

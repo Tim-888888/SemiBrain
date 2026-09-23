@@ -66,10 +66,20 @@ def upload(
     allow_external: bool = Form(False),
     document_id: str = Form(""),
     expected_revision: int = Form(0),
+    images: list[UploadFile] = File(default=[]),
+    image_paths: str = Form("[]"),
     user=Depends(admin),
 ):
     raw = file.file.read(32 * 1024**2 + 1)
-    if len(raw) > 32 * 1024**2:
+    parts = [("file", (file.filename, raw, file.content_type))]
+    total = len(raw)
+    if len(images) > 50:
+        failure("DOCUMENT_IMAGES_INVALID")
+    for image_file in images:
+        content = image_file.file.read(16 * 1024**2 + 1)
+        total += len(content)
+        parts.append(("images", (image_file.filename, content, image_file.content_type)))
+    if total > 32 * 1024**2:
         failure("UPLOAD_TOO_LARGE", 413)
     return business(
         user,
@@ -77,7 +87,7 @@ def upload(
         "/internal/v1/knowledge/uploads",
         operation="knowledge.manage",
         timeout=120,
-        files={"file": (file.filename, raw, file.content_type)},
+        files=parts,
         data={
             "request_id": str(request_id),
             "document_path": document_path,
@@ -86,6 +96,7 @@ def upload(
             "allow_external": str(allow_external).lower(),
             "document_id": document_id,
             "expected_revision": str(expected_revision),
+            "image_paths": image_paths,
         },
     ).json()
 
@@ -144,12 +155,13 @@ def unpublish(document_id: UUID, form: Revision, user=Depends(admin)):
 
 
 @router.get("/v1/assets/{asset_id}/content")
-def download(asset_id: UUID, user=Depends(current_user)):
+def download(asset_id: UUID, preview_version: UUID | None = None, user=Depends(current_user)):
     response = business(
         user,
         "GET",
         "/internal/v1/assets/" + str(asset_id) + "/content",
         operation="asset.read",
+        params={"preview_version": str(preview_version)} if preview_version else {},
         timeout=60,
     )
     return Response(
@@ -161,6 +173,7 @@ def download(asset_id: UUID, user=Depends(current_user)):
                 "content-disposition",
                 "cache-control",
                 "x-content-type-options",
+                "content-security-policy",
             )
             if name in response.headers
         },

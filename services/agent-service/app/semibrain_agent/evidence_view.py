@@ -75,7 +75,7 @@ def evidence_views(records, *, content_chars=6000):
             omitted = [{"path": [k], "field_omitted": True} for k in original if k not in projected]
         view = {key: record.get(key) for key in ("marker", "title", "limitations")}
         # Handles survive projection so dependent tasks can read the authorized full result.
-        view.update({key: record[key] for key in ("evidence_id", "job_id", "asset_id")
+        view.update({key: record[key] for key in ("evidence_id", "job_id", "asset_id", "image_refs", "context_header")
                      if record.get(key)})
         if record.get("source"):
             view["source"] = {key: record["source"].get(key)

@@ -84,7 +84,7 @@ def source_version(records):
 def project_record(record, *, budget=INLINE_TOKENS, question=""):
     view = {k: copy.deepcopy(record[k]) for k in (
         "evidence_id", "marker", "title", "limitations", "job_id", "asset_id",
-        "document_id", "version", "next_offset", "source", "location",
+        "document_id", "version", "next_offset", "source", "location", "image_refs", "context_header",
     ) if k in record}
     original = record.get("content")
     content = copy.deepcopy(original)

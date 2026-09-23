@@ -1,9 +1,7 @@
 """Ingestion saga: immutable assets -> parser -> Mongo chunks -> vector staging -> CAS publish."""
 
-import base64
 import hashlib
 import io
-import mimetypes
 import os
 import tempfile
 from datetime import timedelta
@@ -100,43 +98,27 @@ def validate_path(path):
 
 
 def chunk_blocks(parsed, document_id, version):
-    from markdown_it import MarkdownIt
+    from semibrain_business.chunking import CHUNKER_VERSION, split_markdown
 
-    blocks = [b.model_dump() for b in parsed.blocks]
-    if not blocks:
-        # Some upstream engines expose only Markdown. Preserve real line locations, not guessed pages.
-        lines = parsed.markdown.splitlines()
-        tokens = MarkdownIt("commonmark").enable("table").parse(parsed.markdown)
-        blocks = [
-            {
-                "text": "\n".join(lines[t.map[0] : t.map[1]]),
-                "kind": t.type,
-                "location": {"line_start": t.map[0] + 1, "line_end": t.map[1]},
-            }
-            for t in tokens
-            if t.map and t.level == 0 and t.type != "inline"
-        ]
+    # Preserve parser page/cell locators for text-only PDF/DOCX/CSV. Canonical Markdown
+    # uses one document coordinate space so image spans and heading paths agree.
+    use_markdown = bool(parsed.image_refs) or not parsed.blocks or any(
+        b.location.get("line_start") is not None for b in parsed.blocks)
+    blocks = [{"text": parsed.markdown, "kind": "markdown", "location": {}}] if use_markdown else [b.model_dump() for b in parsed.blocks]
     chunks = []
     for block in blocks:
-        text = block["text"].strip()
-        if not text:
-            continue
-        # Split only overlong structural blocks. Original block locator remains attached.
-        for start in range(0, len(text), 2400):
-            fragment = text[start : start + 2600]
-            identity = digest(document_id + ":" + version + ":" + str(len(chunks)))
-            chunks.append(
-                {
-                    "_id": identity,
-                    "document_id": document_id,
-                    "version": version,
-                    "text": fragment,
-                    "content_hash": digest(fragment),
-                    "location": {**block["location"], "block_offset": start},
-                    "kind": block["kind"],
-                    "embedding_version": EMBEDDING_VERSION,
-                }
-            )
+        for piece in split_markdown(block["text"]):
+            start, end = piece["location"]["character_start"], piece["location"]["character_end"]
+            text, header = piece["text"], piece["context_header"]
+            chunks.append({
+                "_id": digest(document_id + ":" + version + ":" + str(len(chunks))),
+                "document_id": document_id, "version": version, "text": text,
+                "content_hash": digest(text), "context_header": header,
+                "embedding_text": (header + "\n\n" if header else "") + text,
+                "location": {**piece["location"], **block["location"]}, "kind": block["kind"],
+                "image_refs": [r for r in parsed.image_refs if r["start"] < end and r["end"] > start] if use_markdown else [],
+                "chunker_version": CHUNKER_VERSION, "embedding_version": EMBEDDING_VERSION,
+            })
     if not chunks or len(chunks) > 1500:
         raise ValueError("CHUNK_COUNT_INVALID")
     return chunks
@@ -189,26 +171,13 @@ def process_one():
                 profile=ParseProfile(allow_external=job["allow_external"], timeout_seconds=180),
             )
         version = job["version"]
-        manifest = parsed.model_dump(exclude={"images", "markdown", "blocks"})
-        text_asset = store_asset(
-            parsed.markdown.encode(),
-            "text/markdown",
-            document["owner_id"],
-            "parsed.md",
-            document_id=document["_id"],
-        )
-        image_refs = []
-        for image_name, encoded in parsed.images.items():
-            # Images are immutable assets, never large base64 blobs in queues or model state.
-            raw = encoded.split(",", 1)[-1] if encoded.startswith("data:") else encoded
-            image = store_asset(
-                base64.b64decode(raw),
-                mimetypes.guess_type(image_name)[0] or "application/octet-stream",
-                document["owner_id"],
-                PurePosixPath(image_name).name,
-                document_id=document["_id"],
-            )
-            image_refs.append(image["_id"])
+        from semibrain_business.chunking import CHUNKER_VERSION
+        from semibrain_business.document_images import bind_images
+        image_refs = bind_images(parsed, document, job, store_asset, read_asset, db().assets)
+        parsed.parser_manifest["chunker_version"] = CHUNKER_VERSION
+        manifest = parsed.model_dump(exclude={"images", "markdown", "blocks", "image_refs"})
+        text_asset = store_asset(parsed.markdown.encode(), "text/markdown", document["owner_id"],
+                                 "parsed.md", document_id=document["_id"])
         snapshot = store_asset(
             parsed.model_dump_json(exclude={"images"}).encode(),
             "application/json",
@@ -239,6 +208,7 @@ def process_one():
                         "parsed_asset_id": text_asset["_id"],
                         "snapshot_asset_id": snapshot["_id"],
                         "image_asset_ids": image_refs,
+                        "image_refs": parsed.image_refs,
                         "manifest": manifest,
                         "created_at": now(),
                         "generation": job["generation"],

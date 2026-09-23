@@ -14,7 +14,7 @@ from semibrain_common.runtime import canonical, digest
 from semibrain_agent.delivery import Delivery
 from semibrain_agent.evidence_view import evidence_views
 
-PROMPT_VERSION = "investigator-prompts-v27"
+PROMPT_VERSION = "investigator-prompts-v28"
 CARD_VERSION = "semiconductor-intents-v1"
 INTENT_CARDS = [
     {
@@ -52,6 +52,7 @@ SYSTEM_RULES = """你是 SemiBrain 半导体调查系统的一个执行阶段；
 查询所需范围已明确且工具可自行验证时，直接调用相应查询，不为了重复确认已给定编号而先列目录再查上下文。仅缺少必要范围时查询目录/上下文。同一轮可提出多个互不依赖的只读查询；依赖尚未返回的 job_id 或证据的调用必须等结果后再提出。已有证据足够时立即收尾，不重复取证。
 每个新事实需要已核验来源。工具结果中的 evidence_id/marker/lineage_ref 是引用句柄。计算须使用统计工具对已有授权结果计算，不能自己填造数值或运行任意代码。
 观察结果与上一轮相同而无新信息时停止重复。完成用户各目标或明确说明未完成原因；缺少反证、样本或对照时标注限制，统计相关不等于工艺因果。
+相关证据包含 image_refs 时，可在对应解释段落后插入 1～3 张有助理解的原文配图，使用标准 Markdown：![原文图注](image_refs.url)，附近标注来源 [编号]。仅使用已登记的完整 url，不改造路径、不引用外部图片或臆造资产。图注按原文说明；展示原文配图不等于模型已视觉核验，不据未读取的像素编造新结论。没有相关配图则正常用文字回答。
 事实引用仅使用已登记的 [编号]。不得编造资产或下载链接。
 合成数据必须标为演示数据。没有图像输入不可声称查看了缺陷图。只展示执行摘要、可验证证据和结论，不展示隐藏推理过程。"""
 

@@ -438,6 +438,8 @@ class Investigator:
                                 asset_id=citation.get("asset_id"),
                                 job_id=citation.get("job_id"),
                                 location=citation.get("location"),
+                                image_refs=record.get("image_refs", []),
+                                context_header=record.get("context_header", ""),
                             )
             state["phase"] = "model"
         return state
@@ -933,6 +935,7 @@ class Investigator:
                     "job_id",
                     "location",
                     "lineage_ref",
+                    "image_refs",
                 )
             }
             for record in evidence

@@ -292,6 +292,7 @@ def run_context(run_id: str, request: Request):
                             "run_id": message["run_id"],
                             "lineage_refs": prior.get("lineage_refs", []),
                             "citations": prior.get("citations", []),
+                            "image_refs": prior.get("image_refs", []),
                         }
                     )
             except Exception:

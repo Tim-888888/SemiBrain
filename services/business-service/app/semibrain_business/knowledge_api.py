@@ -1,4 +1,5 @@
 import hashlib
+import json
 from pathlib import Path
 from typing import Literal
 from uuid import UUID
@@ -148,6 +149,8 @@ def upload(
     allow_external: bool = Form(False),
     document_id: str = Form(""),
     expected_revision: int = Form(0),
+    images: list[UploadFile] = File(default=[]),
+    image_paths: str = Form("[]"),
 ):
     claim = authorize_request(request, "knowledge.manage")
     require_manager(claim)
@@ -160,6 +163,24 @@ def upload(
     content = file.file.read(32 * 1024**2 + 1)
     if not content or len(content) > 32 * 1024**2:
         failure("UPLOAD_SIZE_INVALID", 413)
+    from semibrain_business.document_images import BUNDLE_LIMIT, IMAGE_LIMIT, safe_image
+    try:
+        paths = json.loads(image_paths)
+        if not isinstance(paths, list) or len(paths) != len(images) or len(paths) > IMAGE_LIMIT:
+            raise ValueError("DOCUMENT_IMAGE_PATHS_INVALID")
+        attachments, total = [], len(content)
+        for image_file, image_path in zip(images, paths, strict=True):
+            image_path = validate_path(image_path)
+            raw = image_file.file.read(16 * 1024**2 + 1)
+            total += len(raw)
+            if total > BUNDLE_LIMIT:
+                raise ValueError("DOCUMENT_BUNDLE_TOO_LARGE")
+            safe, media = safe_image(raw, image_path)
+            attachments.append((image_path, safe, media))
+        if len({p for p, _, _ in attachments}) != len(attachments):
+            raise ValueError("DUPLICATE_IMAGE_PATH")
+    except (ValueError, TypeError):
+        failure("DOCUMENT_IMAGES_INVALID")
     raw_hash = hashlib.sha256(content).hexdigest()
     key = digest(claim["subject_id"] + ":" + str(request_id))
     payload_hash = digest(
@@ -167,6 +188,7 @@ def upload(
             {
                 "path": path,
                 "hash": raw_hash,
+                "images": [(p, digest(raw.hex())) for p, raw, _ in attachments],
                 "visibility": visibility,
                 "origin": data_origin,
                 "external": allow_external,
@@ -235,6 +257,10 @@ def upload(
 
     job = transaction(accept)
     if job["status"] == "receiving":
+        image_assets = []
+        for image_path, raw, media in attachments:
+            stored = store_asset(raw, media, claim["subject_id"], Path(image_path).name, document_id=job["document_id"])
+            image_assets.append({"path": image_path, "asset_id": stored["_id"]})
         asset = store_asset(
             content,
             file.content_type or "application/octet-stream",
@@ -250,6 +276,7 @@ def upload(
                     "step": "queued",
                     "asset_id": asset["_id"],
                     "source_hash": raw_hash,
+                    "image_attachments": image_assets,
                 }
             },
         )
@@ -297,6 +324,7 @@ def preview(document_id: str, version: str, request: Request):
     content = read_asset(asset).decode("utf-8")
     return {
         "body_markdown": content[:100000],
+        "image_refs": [{**r, "display_url": r["url"] + "?preview_version=" + version} for r in row.get("image_refs", [])],
         "truncated": len(content) > 100000,
         "manifest": row["manifest"],
         "chunk_count": len(row.get("chunk_ids", [])),
@@ -457,7 +485,9 @@ def read_document(form: ReadDocumentInput, request: Request):
     if form.offset > len(content):
         failure("READ_OFFSET_INVALID")
     end = min(len(content), form.offset + form.length)
-    text = content[form.offset : end]
+    from semibrain_business.document_images import slice_markdown
+    start, end, image_refs = slice_markdown(content, form.offset, end, version.get("image_refs", []))
+    text = content[start : end]
     return {
         "evidence": [
             {
@@ -466,13 +496,14 @@ def read_document(form: ReadDocumentInput, request: Request):
                 "version": version["_id"],
                 "title": document["title"],
                 "text": text,
+                "image_refs": image_refs,
                 "truncated": form.offset > 0 or end < len(content),
                 "next_offset": end if end < len(content) else None,
                 "content_hash": digest(text),
                 "data_origin": document["data_origin"],
                 "location": {
                     "representation": "parsed_markdown",
-                    "character_start": form.offset,
+                    "character_start": start,
                     "character_end": end,
                 },
                 "lineage_ref": "document:" + document["_id"] + ":" + version["_id"],
@@ -505,7 +536,9 @@ def attachment_context(request: Request):
             failure("ATTACHMENT_VERSION_UNAVAILABLE", 403)
         parsed = db().assets.find_one({"_id": version["parsed_asset_id"]})
         content = read_asset(parsed).decode("utf-8")
-        taken = content[: min(12000, remaining)]
+        from semibrain_business.document_images import slice_markdown
+        _, end, image_refs = slice_markdown(content, 0, min(12000, remaining), version.get("image_refs", []))
+        taken = content[:end]
         remaining -= len(taken)
         items.append(
             {
@@ -514,6 +547,7 @@ def attachment_context(request: Request):
                 "version": version["_id"],
                 "title": document["title"],
                 "text": taken,
+                "image_refs": image_refs,
                 "truncated": len(taken) < len(content),
                 "content_hash": digest(taken),
                 "data_origin": document["data_origin"],
@@ -550,7 +584,7 @@ def check(form: LineageInput, request: Request):
 
 
 @router.get("/internal/v1/assets/{asset_id}/content")
-def asset_content(asset_id: str, request: Request):
+def asset_content(asset_id: str, request: Request, preview_version: UUID | None = None):
     claim = authorize_request(request, "asset.read")
     asset = db().assets.find_one({"_id": asset_id})
     if not asset:
@@ -558,8 +592,12 @@ def asset_content(asset_id: str, request: Request):
     if asset.get("revoked"):
         failure("ASSET_UNAVAILABLE", 403)
     if asset.get("document_id"):
-        document = authorized_document(asset["document_id"], claim, active=True)
-        version = db().document_versions.find_one({"_id": document["active_version"]})
+        document = authorized_document(asset["document_id"], claim, active=preview_version is None)
+        if preview_version is not None and claim["role"] != "admin" and document["owner_id"] != claim["subject_id"]:
+            failure("PREVIEW_DENIED", 403)
+        version = db().document_versions.find_one({"_id": str(preview_version) if preview_version else document["active_version"], "document_id": document["_id"]})
+        if not version:
+            failure("ASSET_VERSION_UNAVAILABLE", 403)
         valid = {version["raw_asset_id"], version["parsed_asset_id"], *version["image_asset_ids"]}
         if asset_id not in valid:
             failure("ASSET_VERSION_UNAVAILABLE", 403)
@@ -588,7 +626,8 @@ def asset_content(asset_id: str, request: Request):
         media_type=asset["ref"]["media_type"],
         headers={
             "Cache-Control": "no-store",
-            "Content-Disposition": "attachment; filename*=UTF-8''" + quote(asset["filename"]),
+            "Content-Disposition": ("inline" if asset["ref"]["media_type"].startswith("image/") else "attachment") + "; filename*=UTF-8''" + quote(asset["filename"]),
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
             "X-Content-Type-Options": "nosniff",
         },
     )

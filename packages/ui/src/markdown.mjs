@@ -16,8 +16,16 @@ md.use(texmath, {
     },
   },
 })
-md.renderer.rules.image = (tokens, idx) => `<span class="image-label">[图片：${md.utils.escapeHtml(tokens[idx].content)}]</span>`
+const assetPath = /^\/v1\/assets\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/content(?:\?preview_version=[0-9a-f-]{36})?$/i
+md.renderer.rules.image = (tokens, idx, options, env) => {
+  const token = tokens[idx], alt = md.utils.escapeHtml(token.content || '原文配图')
+  const source = token.attrGet('src')
+  const record = env?.images?.find(image => image.url === source)
+  const url = record?.display_url || record?.url
+  if (!record || !assetPath.test(url)) return `<span class="image-label">[图片：${alt}]</span>`
+  return `<span class="inline-image"><img src="${md.utils.escapeHtml(url)}" alt="${alt}" loading="lazy" decoding="async" referrerpolicy="no-referrer" tabindex="0" /><span class="image-fallback" hidden>图片暂不可用：${alt}</span></span>`
+}
 
-export function renderMarkdown(source) {
-  return md.render(source || '')
+export function renderMarkdown(source, images = []) {
+  return md.render(source || '', { images })
 }

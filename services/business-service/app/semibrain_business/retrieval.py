@@ -77,7 +77,7 @@ def index_chunks(document, version, chunks):
     client = vectors()
     for start in range(0, len(chunks), 8):
         batch = chunks[start : start + 8]
-        dense = embeddings([row["text"] for row in batch])
+        dense = embeddings([row.get("embedding_text", row["text"]) for row in batch])
         client.upsert(
             COLLECTION,
             [
@@ -88,7 +88,7 @@ def index_chunks(document, version, chunks):
                     "scope": "demo"
                     if document["visibility"] == "demo"
                     else "owner:" + document["owner_id"],
-                    "text": row["text"],
+                    "text": row.get("embedding_text", row["text"]),
                     "dense": vector,
                 }
                 for row, vector in zip(batch, dense, strict=True)
@@ -115,7 +115,7 @@ def rerank(query, chunks, top_k):
         headers={"Authorization": "Bearer " + os.environ["SEMIBRAIN_RERANK_API_KEY"]},
         json={
             "model": os.getenv("SEMIBRAIN_RERANK_MODEL", "qwen3.7-text-rerank"),
-            "input": {"query": query, "documents": [c["text"] for c in chunks]},
+            "input": {"query": query, "documents": [(c.get("context_header", "") + "\n" + c["text"]).strip() for c in chunks]},
             "parameters": {"top_n": top_k, "return_documents": False},
         },
         timeout=45,
@@ -217,6 +217,8 @@ def search(query, claim, top_k=5):
             chunks.append(
                 {
                     "chunk_id": chunk["_id"],
+                    "context_header": chunk.get("context_header", ""),
+                    "image_refs": chunk.get("image_refs", []),
                     "document_id": document["_id"],
                     "version": chunk["version"],
                     "text": chunk["text"],
