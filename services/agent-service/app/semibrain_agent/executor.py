@@ -282,7 +282,7 @@ class ToolExecutor:
                     "warnings": result.get("warnings", []),
                     "error": result.get("error"),
                 }
-                if name in {"web.search", "vision.inspect"}:
+                if name in {"web.search", "web.fetch", "vision.inspect"}:
                     self.harness.settle_external_tool(
                         logical_id, (result.get("data") or {}).get("usage")
                     )
@@ -325,7 +325,7 @@ class ToolExecutor:
         except (RunStopped, BudgetExhausted):
             raise
         except (ValueError, HTTPException, TimeoutError) as exc:
-            if name in {"web.search", "vision.inspect"}:
+            if name in {"web.search", "web.fetch", "vision.inspect"}:
                 self.harness.settle_external_tool(logical_id, None)
             code = (
                 "QUERY_SCOPE_MISMATCH"

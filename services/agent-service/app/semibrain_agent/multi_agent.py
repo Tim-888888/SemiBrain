@@ -69,7 +69,7 @@ from semibrain_agent.task_outputs import (
     reusable_task,
 )
 
-MULTI_VERSION = "multi-supervisor-v18"
+MULTI_VERSION = "multi-supervisor-v19"
 ROLE_RULES = {
     "sqlbot": "你是 SQLBot。使用授权业务工具核验目标、阶段、程序、时间与分母。原问题已给出必要参数时直接查询，不为重复确认编号先列目录或读上下文；缺失且可自行补足时才查询目录。仅完成分配给自己的目标，不重复其他分支负责的计算。交回引用证据与缺口，不给无证据根因。",
     "rag": "你是 RAG Agent。检索并读取与分配目标相关的授权原文，保留版本、否定和限制。缺少内容明确记录，不用常识填成引用。",
@@ -97,6 +97,8 @@ class MultiPrompts(PromptAssembler):
                     "读到足够原文立即结束，不重复同义检索或重复读同一区段。"
                     "shared_progress是本次调查已尝试路径，inherited_evidence是此前分支取得的授权证据，接着补缺口即可。"
                     "web_navigation中的URL只是待阅读线索，不是事实；已有相关候选页面优先web.fetch读取，不重新搜索。"
+                    "navigation_summary和snippet仅帮助选页。web.fetch的provider_extracted_excerpt是指定网页提取片段，"
+                    "可支持text中实际覆盖的事实；partial_page只表示未覆盖整页，不等于片段不可用。"
                     "对概念介绍达到定义和主要用途即可完成，不主动扩展到所有系统架构、落地案例或生产标准。"
                     "已有job_id须通过sandbox.python的job_ids显式装入，文件不会自动出现在沙箱；"
                     "文件名query-<job_id>.json，按实际JSON字段计算，不能手抄或猜测数组。"
@@ -491,13 +493,31 @@ class MultiAgent(Investigator):
                      if r.get("tool") == "knowledge.read" and r.get("status") == "succeeded"}
         fetched = {r.get("arguments", {}).get("url") for r in observations
                    if r.get("tool") == "web.fetch" and r.get("status") in {"succeeded", "partial"}}
-        urls = list(dict.fromkeys(s["url"] for r in observations if r.get("tool") == "web.search"
-                    for s in (r.get("data") or {}).get("sources", []) if s.get("url")))
+        candidates = {}
+        for observation in observations:
+            if observation.get("tool") != "web.search":
+                continue
+            data = observation.get("data") or {}
+            summary_added = False
+            for source in data.get("sources", []):
+                url = source.get("url")
+                if not url or url in candidates:
+                    continue
+                item = {"url": url, "read": url in fetched, "fact_evidence": False}
+                for field, maximum in (("title", 240), ("snippet", 1200)):
+                    if isinstance(source.get(field), str):
+                        item[field] = source[field][:maximum]
+                if not summary_added and data.get("navigation_summary"):
+                    item["navigation_summary"] = data["navigation_summary"][:2500]
+                    item["summary_kind"] = "provider_generated_navigation"
+                    summary_added = True
+                candidates[url] = item
+        urls = list(candidates)
         if "web.fetch" not in {t["name"] for t in self.catalog["tools"]}:
             urls = []
         docs = sorted({r.get("source", {}).get("source_id") for r in evidence
                        if r.get("source", {}).get("kind") == "document"} - read_docs - {None})
-        navigation = [{"url": u, "read": u in fetched, "fact_evidence": False} for u in urls[:12]]
+        navigation = [candidates[u] for u in urls[:12]]
         return navigation, {"rag": docs[:12], "tool": [u for u in urls if u not in fetched][:8]}
 
     def task_update(self, identity, values, *, attempt=None):

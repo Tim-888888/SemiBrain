@@ -261,7 +261,7 @@ class Harness:
             return
         self.investigation_gate(row)
         field = {"web.search": "searches", "web.fetch": "pages"}.get(name)
-        token_reservation = {"web.search": 8000, "vision.inspect": 12000}.get(name, 0)
+        token_reservation = {"web.search": 8000, "web.fetch": 8000, "vision.inspect": 12000}.get(name, 0)
         limit = row["budget"]["limits"]
 
         def reserve(session):

@@ -174,7 +174,7 @@ def catalog(request: Request):
     claim = authorize_request(request, "business.catalog")
     business_authorized = "demo" in claim["resource_ids"]
     return {
-        "version": "p1-tools-v6",
+        "version": "p1-tools-v7",
         "data_origin": "synthetic",
         "business_access": {
             "resource_authorized": business_authorized,
@@ -496,7 +496,8 @@ def execute_one():
         data["result_state"] = result_state(data)
         source = SourceRef(
             source_id=job["_id"],
-            source_version="vision-v1" if job["tool"].startswith("vision.")
+            source_version="web-v2" if job["tool"].startswith("web.")
+            else "vision-v1" if job["tool"].startswith("vision.")
             else "docker-v1" if job["tool"].startswith("sandbox.") else w.METRIC_VERSION,
             content_hash=digest(canonical(data)),
             scope_ref="demo",
@@ -528,10 +529,15 @@ def execute_one():
             if isinstance(exc, DBAPIError) and getattr(exc.orig, "sqlstate", None) == "57014"
             else "TOOL_EXECUTION_FAILED"
         )
+        external_data = {}
+        if job["tool"] in {"web.search", "web.fetch"}:
+            attempt = db().web_attempts.find_one({"_id": job["_id"] + ":" + str(job["attempt"])})
+            external_data["usage"] = attempt.get("usage") if attempt else {"total_tokens": 0}
         result = ToolResult(
             job_id=job["_id"],
             logical_call_id=job["logical_call_id"],
             status="cancelled" if isinstance(exc, QueryCancelled) else "failed",
+            data=external_data,
             error=ErrorInfo(
                 code=code, message=business_errors.get(code, "工具未完成，请核对范围或稍后重试。"), trace_id=job["_id"]
             ),
