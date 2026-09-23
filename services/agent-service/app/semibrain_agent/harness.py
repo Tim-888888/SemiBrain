@@ -27,6 +27,20 @@ DEFAULT_LIMITS = {
 }
 
 
+def token_limit(limits, *, final=False):
+    """A null cumulative cap still records reservations and settled provider usage."""
+    if limits["tokens"] is None:
+        return None
+    return limits["tokens"] - (0 if final else limits["final_token_reserve"])
+
+
+def remaining_tokens(budget, *, final=False):
+    limit = token_limit(budget["limits"], final=final)
+    if limit is None:
+        return None
+    return limit - budget["settled_tokens"] - budget["reserved_tokens"]
+
+
 def estimate_text(content):
     ascii_count = sum(ord(char) < 128 for char in content)
     return (ascii_count + 1) // 2 + (len(content) - ascii_count) * 2
@@ -141,7 +155,8 @@ class Harness:
             self.investigation_gate(row)
         budget = row["budget"]
         limits = budget["limits"]
-        token_limit = limits["tokens"] - (0 if final else limits["final_token_reserve"])
+        ceiling = token_limit(limits, final=final)
+        call_limit = limits["rounds"] + (2 if final else 0)
         if (
             not final
             and (row["deadline_at"] - now()).total_seconds() <= limits["final_seconds_reserve"]
@@ -151,22 +166,31 @@ class Harness:
 
         def reserve(session):
             admission = {} if final else {"closeout_reason": {"$exists": False}}
+            condition = {
+                **self.predicate(),
+                **admission,
+                "budget.model_calls": {"$lt": call_limit},
+            }
+            if ceiling is not None:
+                condition["$expr"] = {
+                    "$lte": [
+                        {"$add": ["$budget.reserved_tokens", "$budget.settled_tokens", amount]},
+                        ceiling,
+                    ]
+                }
             changed = self.db.runs.update_one(
-                {
-                    **self.predicate(),
-                    **admission,
-                    "$expr": {
-                        "$lte": [
-                            {"$add": ["$budget.reserved_tokens", "$budget.settled_tokens", amount]},
-                            token_limit,
-                        ]
-                    },
-                    "budget.model_calls": {"$lt": limits["rounds"] + (2 if final else 0)},
-                },
+                condition,
                 {"$inc": {"budget.reserved_tokens": amount, "budget.model_calls": 1}},
                 session=session,
             )
             if not changed.modified_count:
+                current = self.db.runs.find_one(self.predicate(), session=session)
+                if not current:
+                    raise RunStopped("MODEL_ADMISSION_LOST")
+                if not final and current.get("closeout_reason"):
+                    raise BudgetExhausted(current["closeout_reason"])
+                if current["budget"]["model_calls"] >= call_limit:
+                    raise BudgetExhausted("MODEL_CALL_LIMIT")
                 raise BudgetExhausted("MODEL_BUDGET_EXHAUSTED")
             self.db.model_calls.insert_one(
                 {
@@ -211,7 +235,7 @@ class Harness:
         reason = None
         if (row["deadline_at"] - now()).total_seconds() <= limits["final_seconds_reserve"]:
             reason = "FINAL_TIME_RESERVED"
-        elif budget["settled_tokens"] + budget["reserved_tokens"] >= limits["tokens"] - limits["final_token_reserve"]:
+        elif (remaining := remaining_tokens(budget)) is not None and remaining <= 0:
             reason = "MODEL_BUDGET_EXHAUSTED"
         if reason:
             raise BudgetExhausted(self.request_closeout(reason))
@@ -275,18 +299,14 @@ class Harness:
                 condition["budget." + field] = {"$lt": limit[field]}
                 increments["budget." + field] = 1
             if token_reservation:
-                condition["$expr"] = {
-                    "$lte": [
-                        {
-                            "$add": [
-                                "$budget.reserved_tokens",
-                                "$budget.settled_tokens",
-                                token_reservation,
-                            ]
-                        },
-                        limit["tokens"] - limit["final_token_reserve"],
-                    ]
-                }
+                ceiling = token_limit(limit)
+                if ceiling is not None:
+                    condition["$expr"] = {
+                        "$lte": [
+                            {"$add": ["$budget.reserved_tokens", "$budget.settled_tokens", token_reservation]},
+                            ceiling,
+                        ]
+                    }
                 increments["budget.reserved_tokens"] = token_reservation
             if not self.db.runs.update_one(
                 condition, {"$inc": increments}, session=session

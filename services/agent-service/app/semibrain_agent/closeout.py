@@ -11,7 +11,7 @@ from semibrain_agent.context_policy import project_evidence, source_version
 from semibrain_agent.harness import BudgetExhausted, estimate_reservation
 from semibrain_agent.review_delivery import draft_blocks
 
-# Parts of the existing fixed 20k reserve, not additional per-call allowances.
+# Bound the two closeout requests independently of the cumulative run-token policy.
 ANSWER_CEILING = 9000
 REVIEW_CEILING = 11000
 ANSWER_OUTPUT = 1200
@@ -71,7 +71,7 @@ def select_packet(question, intent, evidence, project, executed, missing_files):
         "missing_file_formats": missing_files,
     }
     # Select by relevance and recent corrections across ALL sources, not only
-    # the first/last N entries. Both model calls must fit the fixed 20k reserve.
+    # the first/last N entries. Both model calls retain their bounded context packs.
     for tokens in (5000, 3500, 2200, 1000):
         views = project_evidence(evidence, token_budget=tokens, question=question)
         packet = {**base, "evidence": views, "evidence_version": source_version(evidence),
@@ -140,4 +140,13 @@ def stop_notice(reason):
         return "本次调查未再获得新的有效信息，已停止重复查找。以下基于已有可核验资料回答，并注明尚未查清的内容。"
     if reason in {"RUN_TIME_BUDGET", "FINAL_TIME_RESERVED"}:
         return "本次调查已达到执行时间边界，以下仅基于已取得且可核验的信息；尚未查清的内容未作结论。"
-    return "本次调查已达到执行额度（Token 或调用次数限制），以下仅基于已取得且可核验的信息；尚未查清的内容未作结论。"
+    boundary = {
+        "MODEL_BUDGET_EXHAUSTED": "执行额度（Token 上限）",
+        "MODEL_CALL_LIMIT": "模型调用次数上限",
+        "SUPERVISOR_REQUEST_LIMIT": "协调模型调用次数上限",
+        "TOOL_BUDGET_EXHAUSTED": "工具执行额度",
+        "ROUND_LIMIT": "调查轮次上限",
+        "MODEL_CONTEXT_LIMIT": "模型上下文容量边界",
+        "CLOSEOUT_CONTEXT_LIMIT": "收尾上下文容量边界",
+    }.get(reason, "执行额度")
+    return f"本次调查已达到{boundary}，以下仅基于已取得且可核验的信息；尚未查清的内容未作结论。"

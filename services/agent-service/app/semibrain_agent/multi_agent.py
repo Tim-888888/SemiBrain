@@ -69,7 +69,7 @@ from semibrain_agent.task_outputs import (
     reusable_task,
 )
 
-MULTI_VERSION = "multi-supervisor-v19"
+MULTI_VERSION = "multi-supervisor-v20"
 ROLE_RULES = {
     "sqlbot": "你是 SQLBot。使用授权业务工具核验目标、阶段、程序、时间与分母。原问题已给出必要参数时直接查询，不为重复确认编号先列目录或读上下文；缺失且可自行补足时才查询目录。仅完成分配给自己的目标，不重复其他分支负责的计算。交回引用证据与缺口，不给无证据根因。",
     "rag": "你是 RAG Agent。检索并读取与分配目标相关的授权原文，保留版本、否定和限制。缺少内容明确记录，不用常识填成引用。",
@@ -250,7 +250,7 @@ class MultiAgent(Investigator):
         return client
 
     def model_call_once(self, state, **kwargs):
-        # Normal synthesis/review must not spend the fixed closeout reserve.
+        # Keep two coordinator calls for closeout, even without a cumulative token cap.
         closing = bool(state.get("closing"))
         kwargs["final"] = closing
         identity = f"{self.run['_id']}:{state['step']}:{kwargs.get('role', 'investigator')}:{kwargs.get('suffix', '')}"
@@ -338,9 +338,9 @@ class MultiAgent(Investigator):
 
     def finish(self, state):
         reason = state.get("closeout_reason") or state.get("stop_code")
-        budget_reasons = {"MODEL_BUDGET_EXHAUSTED", "TOOL_BUDGET_EXHAUSTED", "FINAL_TIME_RESERVED",
+        budget_reasons = {"MODEL_BUDGET_EXHAUSTED", "MODEL_CALL_LIMIT", "TOOL_BUDGET_EXHAUSTED", "FINAL_TIME_RESERVED",
                           "RUN_TIME_BUDGET", "SUPERVISOR_REQUEST_LIMIT", "ROUND_LIMIT",
-                          "EVIDENCE_BUDGET_EXHAUSTED", "CLOSEOUT_CONTEXT_LIMIT"}
+                          "EVIDENCE_BUDGET_EXHAUSTED", "CLOSEOUT_CONTEXT_LIMIT", "MODEL_CONTEXT_LIMIT"}
         if reason in budget_reasons | {"NO_NEW_INFORMATION"}:
             state["outcome"] = "partial"
             state["budget_notice"] = stop_notice(reason)

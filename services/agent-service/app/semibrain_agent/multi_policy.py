@@ -7,11 +7,12 @@ from pydantic import BaseModel, ConfigDict, Field
 MULTI_LIMITS = {
     "rounds": 40,
     "tools": 40,
-    "tokens": 200000,
+    # None disables cumulative token admission, not usage accounting or call limits.
+    "tokens": None,
     "seconds": 300,
     "searches": 3,
     "pages": 5,
-    "final_token_reserve": 20000,
+    "final_token_reserve": 0,
     "final_seconds_reserve": 45,
 }
 ROLE_TOOLS = {

@@ -25,6 +25,7 @@ from semibrain_agent.harness import (
     Harness,
     RunStopped,
     estimate_reservation,
+    remaining_tokens,
     token_basis,
 )
 from semibrain_agent.partial import partial_answer
@@ -215,11 +216,10 @@ class Investigator:
             from semibrain_agent.context_policy import fit_messages
 
             budget = self.harness.check()["budget"]
-            available = (budget["limits"]["tokens"] - budget["settled_tokens"]
-                         - budget["reserved_tokens"]
-                         - (0 if final else budget["limits"]["final_token_reserve"]))
+            available = remaining_tokens(budget, final=final)
             if reservation_ceiling is not None:
-                available = min(available, reservation_ceiling)
+                available = (reservation_ceiling if available is None
+                             else min(available, reservation_ceiling))
             inputs, compressed = fit_messages(
                 inputs, system, tools, profile, output=max_tokens,
                 question=self.context["input"]["question"], available=available, force=context_retry,
