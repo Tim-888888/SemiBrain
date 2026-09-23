@@ -4,6 +4,10 @@ from semibrain_agent.runs import db
 
 
 def initialize():
+    migrate(db(), "d-efficiency-001", [
+        ("investigation_progress", [("run_id", 1), ("created_at", 1)], {}),
+        ("readonly_requests", [("run_id", 1), ("status", 1)], {}),
+    ])
     migrate(
         db(),
         "c-001",

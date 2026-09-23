@@ -34,6 +34,11 @@ from semibrain_agent.delivery import (
 from semibrain_agent.evidence_view import evidence_views
 from semibrain_agent.executor import ToolExecutor, wire_tools
 from semibrain_agent.harness import BudgetExhausted, RunStopped
+from semibrain_agent.investigation_progress import (
+    InvestigationProgress,
+    compact_observation,
+    source_path,
+)
 from semibrain_agent.investigator import GraphState, Investigator
 from semibrain_agent.multi_policy import MULTI_LIMITS, ROLE_TOOLS, Plan, ready_tasks, validate_plan
 from semibrain_agent.multi_review import evidence_issues
@@ -45,6 +50,7 @@ from semibrain_agent.prompts import (
 )
 from semibrain_agent.provider import ModelError
 from semibrain_agent.quick_web import QuickClient
+from semibrain_agent.readonly_reuse import READONLY, ReadonlyReuse
 from semibrain_agent.review_delivery import draft_blocks, retain_reviewed, reviewed_partial
 from semibrain_agent.task_outputs import (
     COMPLETE_TOOL,
@@ -56,7 +62,7 @@ from semibrain_agent.task_outputs import (
     reusable_task,
 )
 
-MULTI_VERSION = "multi-supervisor-v13"
+MULTI_VERSION = "multi-supervisor-v14"
 ROLE_RULES = {
     "sqlbot": "你是 SQLBot。使用授权业务工具核验目标、阶段、程序、时间与分母。原问题已给出必要参数时直接查询，不为重复确认编号先列目录或读上下文；缺失且可自行补足时才查询目录。仅完成分配给自己的目标，不重复其他分支负责的计算。交回引用证据与缺口，不给无证据根因。",
     "rag": "你是 RAG Agent。检索并读取与分配目标相关的授权原文，保留版本、否定和限制。缺少内容明确记录，不用常识填成引用。",
@@ -69,6 +75,8 @@ def multi_evidence_views(records, *, content_chars=None):
     views = evidence_views(records, content_chars=content_chars or 6000)
     allowance = max(100, content_chars // max(1, len(records))) if content_chars else 4000
     for record, view in zip(records, views):
+        if record.get("source"):
+            view["source"]["source_version"] = record["source"].get("source_version")
         data = record.get("content")
         if (record.get("source", {}).get("kind") == "web" and isinstance(data, dict)
                 and data.get("snapshot_id") and isinstance(data.get("text"), str)):
@@ -108,6 +116,9 @@ class MultiPrompts(PromptAssembler):
                     "交回简短证据摘要供协调器汇总，不代替协调器写完整报告。"
                     "只用服务端已登记的数字marker引用，不将UUID截断当引用。"
                     "读到足够原文立即结束，不重复同义检索或重复读同一区段。"
+                    "shared_progress是本次调查已尝试路径，inherited_evidence是此前分支取得的授权证据，接着补缺口即可。"
+                    "web_navigation中的URL只是待阅读线索，不是事实；已有相关候选页面优先web.fetch读取，不重新搜索。"
+                    "对概念介绍达到定义和主要用途即可完成，不主动扩展到所有系统架构、落地案例或生产标准。"
                     "已有job_id须通过sandbox.python的job_ids显式装入，文件不会自动出现在沙箱；"
                     "文件名query-<job_id>.json，按实际JSON字段计算，不能手抄或猜测数组。"
                     "最近工具输出提供真实读页/执行结果，失败、空集、未调用分别说明。"
@@ -126,6 +137,10 @@ class MultiPrompts(PromptAssembler):
                 "独立取证任务不设依赖；计算/绘图依赖提供数据的角色。"
                 "缺图不要规划视觉，纯知识可只用RAG；不能扩大资料权限或联网范围。"
                 "补查仅安排能补足所列缺口的分支，不重复已完成工作。\n"
+                "shared_progress记录已查路径和缺口；closed路径禁止重复委派。此前partial分支的证据可以继承，"
+                "不能将partial理解为没有查过。对相同原目标、相同角色补查，必须填gap并从unread_targets选target_refs，"
+                "换一种查询说法不算新路径。RAG只能查知识库；缺少公开知识而有联网权限时，派Tool读取已有候选网页。"
+                "没有可用新来源时将目标放入synthesis_goal_indices，以已有证据收尾并说明缺口。\n"
                 "每项必须声明deliverables：读取表格数据用dataset；Python统计/文件导出用python并完整列artifact_formats；"
                 "其他取证用evidence。用户要求按编号升序前N个批次时，dataset填写lot_limit=N，"
                 "business.search_lots已保证lot_id升序，无需另查SQL。计算依赖dataset任务。"
@@ -174,6 +189,11 @@ class ConcurrentExecutor(ToolExecutor):
     def execute(self, name, raw_arguments, logical_id):
         if self.allowed is not None and name not in self.allowed:
             raise ValueError("ROLE_TOOL_DENIED")
+        if name in READONLY:
+            return ReadonlyReuse(self).execute(name, raw_arguments, logical_id, self.execute_actual)
+        return self.execute_actual(name, raw_arguments, logical_id)
+
+    def execute_actual(self, name, raw_arguments, logical_id):
         remote = name.startswith(("business.", "web.", "sandbox.", "vision."))
         if remote:
             self.harness.save_record(
@@ -189,6 +209,8 @@ class ConcurrentExecutor(ToolExecutor):
         self.db.tool_calls.update_one(
             {"_id": logical_id, "run_id": self.run_id}, {"$set": {"task_id": self.client.task_id}}
         )
+        self.db.observations.update_one({"_id": logical_id, "run_id": self.run_id},
+                                       {"$set": {"task_id": self.client.task_id}})
         if remote and result.get("job_id"):
             self.harness.save_record("stopped_tools", logical_id, {"completed_at": now()})
         return result
@@ -217,6 +239,7 @@ class MultiAgent(Investigator):
         super().__init__(run, fence, context, notify)
         self.client = self.make_client(context["task_id"])
         self.executor = ConcurrentExecutor(self.harness, self.client, self.reducer_lock)
+        self.investigation = InvestigationProgress(self.harness)
         if self.bundle.get("multi_prompt_version") != MULTI_VERSION:
             raise RuntimeError("MULTI_PROMPT_VERSION_INCOMPATIBLE")
 
@@ -316,7 +339,7 @@ class MultiAgent(Investigator):
         budget_reasons = {"MODEL_BUDGET_EXHAUSTED", "TOOL_BUDGET_EXHAUSTED", "FINAL_TIME_RESERVED",
                           "RUN_TIME_BUDGET", "SUPERVISOR_REQUEST_LIMIT", "ROUND_LIMIT",
                           "EVIDENCE_BUDGET_EXHAUSTED", "CLOSEOUT_CONTEXT_LIMIT"}
-        if reason in budget_reasons:
+        if reason in budget_reasons | {"NO_NEW_INFORMATION"}:
             state["outcome"] = "partial"
             state["budget_notice"] = stop_notice(reason)
             verified = state.get("reviewed_content", "")
@@ -355,6 +378,10 @@ class MultiAgent(Investigator):
         evidence = self.executor.evidence()
         previous = list(self.db.tasks.find({"run_id": self.run["_id"],
                                            "plan_version": state.get("plan_version", 0)}))
+        prior = list(self.db.tasks.find({"run_id": self.run["_id"]}))
+        navigation, unread = self.navigation_targets(evidence)
+        progress = self.investigation.packet(list(range(len(goals))),
+                                            {r["evidence_id"] for r in evidence})
         data = {
             "question": self.context["input"]["question"],
             "intent": state["intent"],
@@ -363,12 +390,16 @@ class MultiAgent(Investigator):
             "available_roles": available,
             "sources": self.prompts.sources,
             "attachments": self.attachments,
-            "existing_evidence": multi_evidence_views(evidence),
+            "existing_evidence": multi_evidence_views(evidence, content_chars=2400),
+            "shared_progress": progress,
+            "web_navigation": navigation,
+            "unread_targets": unread,
             "previous_tasks": [{k: t.get(k) for k in ("key", "role", "goal_indices", "status",
-                               "deliverables", "outputs", "completion_issues")} for t in previous],
+                               "deliverables", "outputs", "completion_issues", "summary", "error")} for t in previous],
             "review": state.get("review"),
         }
         plan = None
+        last_progress_plan = None
         for retry in range(2):
             turn, _ = self.model_call(
                 state,
@@ -382,16 +413,30 @@ class MultiAgent(Investigator):
                 validate_delivery_plan(plan, state["intent"])
                 for spec in plan.tasks:
                     reusable_task(spec, previous, evidence)
+                blocked = [spec.key for spec in plan.tasks if not spec.reuse_key
+                           and self.followup_blocked(spec, prior, unread)]
+                if blocked:
+                    last_progress_plan = plan
+                    raise ValueError("NO_NEW_PATH:" + ",".join(blocked) +
+                                     "；选择其他可用角色/未读来源，或将已耗尽目标留给汇总。")
                 break
             except ValueError as exc:
                 plan = None
                 data["validation_feedback"] = str(exc)[:1200]
         if plan is None:
-            raise ModelError("PLAN_INVALID")
+            if last_progress_plan and str(data.get("validation_feedback", "")).startswith("NO_NEW_PATH:"):
+                plan = last_progress_plan
+            else:
+                raise ModelError("PLAN_INVALID")
         version = state.get("plan_version", 0) + 1
+        admitted = 0
         for spec in plan.tasks:
             reused = reusable_task(spec, previous, evidence)
+            blocked = not reused and self.followup_blocked(spec, prior, unread)
+            admitted += not blocked and not reused
             identity = str(uuid5(NAMESPACE_URL, f"{self.run['_id']}:plan:{version}:{spec.key}"))
+            inherited = self.investigation.inherited_ids(spec.goal_indices, prior,
+                                                        {r["evidence_id"] for r in evidence})
             self.harness.save_record(
                 "tasks",
                 identity,
@@ -405,17 +450,50 @@ class MultiAgent(Investigator):
                     "attempt": 0,
                     "role_round": 0,
                     "state": {"phase": "model", "round": 0},
+                    "inherited_evidence_ids": inherited,
                     "created_at": now(),
                     **({k: reused.get(k) for k in ("status", "summary", "evidence_ids", "outputs",
                                                   "input_job_ids", "completion_issues")}
                        if reused else {}),
                     **({"reused_from": reused["_id"], "completed_at": now()} if reused else {}),
+                    **({"status": "partial", "summary": "已有路径未产生新信息，停止重复派工。",
+                        "completion_issues": ["NO_NEW_INFORMATION"], "evidence_ids": inherited,
+                        "completed_at": now()} if blocked else {}),
                 },
             )
         state.update(plan_version=version, phase="dispatch",
                      synthesis_goals=[goals[i] for i in plan.synthesis_goal_indices])
+        if not admitted and not all(t.reuse_key for t in plan.tasks):
+            state.update(phase="finalize", stop_code="NO_NEW_INFORMATION", closing=True)
         self.tree()
         return state
+
+    def followup_blocked(self, spec, prior, unread):
+        if spec.deliverables.kind != "evidence" or spec.role not in {"rag", "tool"}:
+            return False
+        repeated = [t for t in prior if t["role"] == spec.role
+                    and set(t.get("goal_indices", [])) & set(spec.goal_indices)
+                    and t.get("status") == "partial"]
+        valid_target = bool(spec.gap and spec.target_refs and
+            set(spec.target_refs) <= set(unread.get(spec.role, [])) and
+            not set(spec.target_refs).intersection(ref for t in repeated for ref in t.get("target_refs", [])))
+        return bool(self.investigation.exhausted(spec.goal_indices, spec.role)
+                    or repeated and not valid_target)
+
+    def navigation_targets(self, evidence):
+        observations = [r["observation"] for r in self.db.observations.find({"run_id": self.run["_id"]})]
+        read_docs = {r.get("arguments", {}).get("document_id") for r in observations
+                     if r.get("tool") == "knowledge.read" and r.get("status") == "succeeded"}
+        fetched = {r.get("arguments", {}).get("url") for r in observations
+                   if r.get("tool") == "web.fetch" and r.get("status") in {"succeeded", "partial"}}
+        urls = list(dict.fromkeys(s["url"] for r in observations if r.get("tool") == "web.search"
+                    for s in (r.get("data") or {}).get("sources", []) if s.get("url")))
+        if "web.fetch" not in {t["name"] for t in self.catalog["tools"]}:
+            urls = []
+        docs = sorted({r.get("source", {}).get("source_id") for r in evidence
+                       if r.get("source", {}).get("kind") == "document"} - read_docs - {None})
+        navigation = [{"url": u, "read": u in fetched, "fact_evidence": False} for u in urls[:12]]
+        return navigation, {"rag": docs[:12], "tool": [u for u in urls if u not in fetched][:8]}
 
     def task_update(self, identity, values, *, attempt=None):
         def commit(session):
@@ -456,6 +534,8 @@ class MultiAgent(Investigator):
             "outputs",
             "completion_issues",
             "reused_from",
+            "tool_attempts",
+            "tool_reuses",
         )
         rows = list(self.db.tasks.find({"run_id": self.run["_id"]}).sort("created_at", 1))
         for row in rows:
@@ -472,9 +552,13 @@ class MultiAgent(Investigator):
                     (c.get("usage") or {}).get("total_tokens", 0) for c in calls
                 )
                 + sum((t.get("usage") or {}).get("total_tokens", 0) for t in tools),
+                tool_attempts=self.db.observations.count_documents({"run_id": self.run["_id"],
+                    "task_id": row["_id"], "observation.tool": {"$exists": True}}),
+                tool_reuses=self.db.observations.count_documents({"run_id": self.run["_id"],
+                    "task_id": row["_id"], "observation.reused_from": {"$exists": True}}),
             )
             self.task_update(
-                row["_id"], {k: row[k] for k in ("model_calls", "tool_calls", "settled_tokens")}
+                row["_id"], {k: row[k] for k in ("model_calls", "tool_calls", "settled_tokens", "tool_attempts", "tool_reuses")}
             )
         self.notify(
             {
@@ -685,6 +769,7 @@ class Expert(Investigator):
             original_system = self.prompts.system
             self.prompts.system = lambda role: original_system("vision")
         self.intent = intent
+        self.investigation = parent.investigation
         self.executor.intent = intent
         self.notify = lambda *args, **kwargs: None
         builder = StateGraph(GraphState)
@@ -701,6 +786,7 @@ class Expert(Investigator):
 
     def execute_task(self):
         state = copy.deepcopy(self.task["state"])
+        state.setdefault("inherited_evidence_ids", self.task.get("inherited_evidence_ids", []))
         while state["phase"] != "done":
             self.harness.check()
             state = self.graph.invoke({"payload": state})["payload"]
@@ -715,7 +801,7 @@ class Expert(Investigator):
                 "status": state.get("outcome", "partial"),
                 "summary": state.get("summary", ""),
                 "completed_at": now(),
-                "evidence_ids": state.get("evidence_ids", []),
+                "evidence_ids": sorted(set(state.get("evidence_ids", [])) | set(state.get("inherited_evidence_ids", []))),
                 "outputs": state.get("outputs", {}),
                 "completion_issues": state.get("completion_issues", []),
                 "input_job_ids": state.get("input_job_ids", []),
@@ -745,8 +831,22 @@ class Expert(Investigator):
                     "completion_issues": ["DEPENDENCY_INPUT_MISSING:" + key for key in missing]}
         state["input_job_ids"] = [i["job_id"] for i in manifest]
         relevant = set(state.get("evidence_ids", []))
+        relevant.update(state.get("inherited_evidence_ids", []))
         for dependency in dependencies:
             relevant.update(dependency.get("evidence_ids", []))
+        progress, navigation = {}, []
+        if hasattr(self, "investigation"):
+            progress = self.investigation.packet(self.task.get("goal_indices", []),
+                                                {r["evidence_id"] for r in evidence})
+            navigation, _ = self.parent.navigation_targets(evidence)
+        recent_outputs = []
+        for item in state.get("last_outputs", []):
+            row = self.db.observations.find_one({"_id": item["logical_id"], "run_id": self.run["_id"]})
+            result = row["observation"] if row else {"status": "failed", "error": "ROLE_TOOL_DENIED"}
+            recent_outputs.append((item, result))
+        recent_ids = {r.get("evidence_id") for _, result in recent_outputs for r in result.get("evidence", [])}
+        selected = [x for x in evidence if x["evidence_id"] in relevant - recent_ids]
+        visible_ids = {x["evidence_id"] for x in selected}
         # Each subgraph starts from immutable task inputs rather than another agent transcript.
         inputs = [
             {
@@ -760,6 +860,11 @@ class Expert(Investigator):
                         "answer_input": answer_input(self.intent, self.context)
                         if self.role == "tool" else None,
                         "completion_feedback": state.get("completion_issues", []),
+                        "shared_progress": progress,
+                        "inherited_evidence": state.get("inherited_evidence_ids", []),
+                        "web_navigation": navigation if self.role == "tool" else [],
+                        "gap": self.task.get("gap", ""),
+                        "target_refs": self.task.get("target_refs", []),
                         "intent": self.intent,
                         "attachments": [
                             {k: a.get(k) for k in ("asset_id", "title", "media_type", "location")}
@@ -771,9 +876,7 @@ class Expert(Investigator):
                         "table_catalog": self.catalog.get("tables", {})
                         if self.role == "sqlbot"
                         else {},
-                        "evidence": multi_evidence_views(
-                            [x for x in evidence if x["evidence_id"] in relevant]
-                        ),
+                        "evidence": multi_evidence_views(selected, content_chars=3000 if recent_outputs else 7000),
                         "dependencies": [
                             {k: t.get(k) for k in ("role", "status", "summary", "error")}
                             for t in dependencies
@@ -786,12 +889,16 @@ class Expert(Investigator):
         ]
         # Replay the last native call/result pairs. A status-only summary cannot tell a
         # professional what evidence.read, page reads or Python actually returned.
-        for item in state.get("last_outputs", []):
+        for item, observation in recent_outputs:
             inputs.append({"type": "function_call", **item["call"]})
-            row = self.db.observations.find_one({"_id": item["logical_id"], "run_id": self.run["_id"]})
-            observation = row["observation"] if row else {"status": "failed", "error": "ROLE_TOOL_DENIED"}
+            if observation.get("evidence") and hasattr(self, "investigation"):
+                records = observation["evidence"]
+                views = multi_evidence_views(records, content_chars=max(2000, 8000 // len(recent_outputs)))
+                for record, view in zip(records, views):
+                    view.update({k: record[k] for k in ("document_id", "version", "next_offset") if k in record})
+                observation = {**observation, "evidence": views}
             inputs.append({"type": "function_call_output", "call_id": item["call"]["call_id"],
-                           "output": canonical(observation)})
+                           "output": canonical(compact_observation(observation, visible_ids))})
         callstate = {
             "step": self.task["_id"] + ":" + str(state["round"]),
             "phase": "expert." + self.role,
@@ -813,8 +920,10 @@ class Expert(Investigator):
         return state
 
     def task_tools(self, state):
+        before = self.executor.evidence()
+        baseline = self.investigation.begin_batch(self.task, state["round"], before) if hasattr(self, "investigation") else None
         observed, ids = list(state.get("observations", [])), set(state.get("evidence_ids", []))
-        last_outputs = []
+        last_outputs, results = [], []
         for index, item in enumerate(state["calls"]):
             name = self.names.get(item["name"])
             logical_id = str(uuid5(NAMESPACE_URL, state["turn_id"] + ":" + item["call_id"]))
@@ -829,6 +938,7 @@ class Expert(Investigator):
                 observed.append({"status": "failed", "error": "ROLE_TOOL_DENIED"})
                 continue
             result = self.execute_bound_tool(name, item["arguments"], logical_id)
+            results.append(result)
             ids.update(x["evidence_id"] for x in result.get("evidence", []))
             observed.append(self.observation_summary(result))
             # Search navigation is necessary to select a page; never turn it into fact evidence.
@@ -836,6 +946,17 @@ class Expert(Investigator):
                 observed[-1]["data"] = result.get("data")
         state.update(phase="model", observations=observed[-8:], evidence_ids=sorted(ids),
                      last_outputs=last_outputs)
+        if hasattr(self, "investigation"):
+            self.investigation.record_batch(self.task, state["round"], results, before, baseline=baseline)
+            # Stop only the exhausted read path; independent branches and real file
+            # execution continue. Existing evidence remains available to synthesis.
+            requirement = Deliverables.model_validate(self.task.get("deliverables", {}))
+            if (requirement.kind == "evidence" and results and
+                    all(source_path(r.get("tool", "")) for r in results) and
+                    self.investigation.exhausted(self.task["goal_indices"], self.role)):
+                state.update(phase="done", outcome="partial",
+                             summary="连续取证未获得新内容，已保留现有证据并停止此路径。",
+                             completion_issues=["NO_NEW_INFORMATION"])
         return state
 
     def execute_bound_tool(self, name, raw_arguments, logical_id):
@@ -871,12 +992,14 @@ class Expert(Investigator):
         # A consumer may cite its declared producer's evidence. Only its own
         # execution results can prove that it computed/exported the requested work.
         claimable = {r["evidence_id"] for r in own}
+        claimable.update(state.get("inherited_evidence_ids", []))
         for dependency in self.dependencies():
             if dependency["key"] in self.task.get("depends_on", []):
                 claimable.update(dependency.get("evidence_ids", []))
         claimable &= {r["evidence_id"] for r in records}
         requirement = Deliverables.model_validate(self.task.get("deliverables", {}))
-        outputs, issues = check_outputs(requirement, own, input_jobs=state.get("input_job_ids", []),
+        checked = [r for r in records if r["evidence_id"] in claimable] if requirement.kind == "evidence" else own
+        outputs, issues = check_outputs(requirement, checked, input_jobs=state.get("input_job_ids", []),
                                        answer_run_id=self.intent.get("delivery", {}).get("answer_run_id"))
         try:
             completion = Completion.model_validate_json(item["arguments"])

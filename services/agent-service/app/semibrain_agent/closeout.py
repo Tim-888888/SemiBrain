@@ -135,6 +135,8 @@ def closeout_blocks(draft):
 
 
 def stop_notice(reason):
+    if reason == "NO_NEW_INFORMATION":
+        return "本次调查未再获得新的有效信息，已停止重复查找。以下基于已有可核验资料回答，并注明尚未查清的内容。"
     if reason in {"RUN_TIME_BUDGET", "FINAL_TIME_RESERVED"}:
         return "本次调查已达到执行时间边界，以下仅基于已取得且可核验的信息；尚未查清的内容未作结论。"
     return "本次调查已达到执行额度（Token 或调用次数限制），以下仅基于已取得且可核验的信息；尚未查清的内容未作结论。"

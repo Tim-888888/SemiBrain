@@ -22,6 +22,21 @@ from semibrain_business.security import (
 router = APIRouter()
 
 
+@router.get("/internal/v1/knowledge/snapshot")
+def knowledge_snapshot(request: Request):
+    claim = authorize_request(request, "knowledge.search")
+    rows = list(db().documents.find({"active_version": {"$ne": None}, "revoked": {"$ne": True},
+        "$or": [{"visibility": "demo"}, {"owner_id": claim["subject_id"]}]}).limit(2001))
+    if len(rows) > 2000:
+        return {"cacheable": False}
+    restrictions = claim.get("document_ids", [])
+    versions = sorted((r["_id"], r.get("active_version"), r.get("revision")) for r in rows
+                      if can_read(r, claim) and (not restrictions or r["_id"] in restrictions))
+    return {"cacheable": True, "snapshot": digest(canonical([
+        claim["subject_id"], claim["role"], sorted(claim["resource_ids"]),
+        sorted(restrictions), versions, "knowledge-retrieval-v1"]))}
+
+
 @router.post("/internal/v1/attachments/images", status_code=201)
 def upload_image(request: Request, file: UploadFile = File(...),
                  allow_external: bool = Form(False),
@@ -415,6 +430,15 @@ class ReadDocumentInput(BaseModel):
     version: UUID
     offset: int = Field(default=0, ge=0, le=1000000)
     length: int = Field(default=6000, ge=500, le=8000)
+
+
+@router.post("/internal/v1/knowledge/read-scope")
+def read_scope(form: ReadDocumentInput, request: Request):
+    claim = authorize_request(request, "knowledge.read")
+    document = authorized_document(str(form.document_id), claim, active=True, version=str(form.version))
+    return {"scope": digest(canonical([claim["subject_id"], claim["role"],
+        sorted(claim["resource_ids"]), sorted(claim.get("document_ids", [])),
+        document["_id"], document["active_version"], document["revision"]]))}
 
 
 @router.post("/internal/v1/knowledge/read")

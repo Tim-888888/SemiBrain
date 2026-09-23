@@ -67,6 +67,9 @@ class PlannedTask(BaseModel):
     reuse_key: str | None = Field(
         default=None, description="补查计划可引用上一版已验证完成且要求相同的任务key，复用其产物。"
     )
+    gap: str = Field(default="", max_length=600, description="补查对应的原目标缺口；不新增目标。")
+    target_refs: list[str] = Field(default_factory=list, max_length=4,
+        description="同一路径补查必须列已发现但尚未读取的document_id或URL；不填同义查询。")
 
 
 class Plan(BaseModel):
