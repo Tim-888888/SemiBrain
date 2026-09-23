@@ -255,7 +255,7 @@ onUnmounted(() => { closeStream(); clearImages() })
           </div>
         </div>
         <div class="composer-area">
-          <button v-if="!followLatest" type="button" class="latest-button" @click="bottom(true)">↓ 回到最新</button>
+          <button v-if="!followLatest && (messages.length || activeRun)" type="button" class="latest-button" @click="bottom(true)">↓ 回到最新</button>
           <p v-if="error" class="error" role="alert">{{ error }}</p>
           <div class="composer">
             <div v-if="imageUploads.some(image => attached.includes(image.asset_id)) || uploading" class="composer-images" aria-label="本轮图片附件">
