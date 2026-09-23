@@ -1,9 +1,4 @@
-"""Token-aware evidence views. Originals and permissions remain with their owners.
-
-Inspired by DSH 00102833 compaction/spill boundaries, adapted to stored evidence
-handles. No model call is made to compress evidence and excerpts are never facts
-invented by a summarizer. The legacy single-agent projector is unaffected.
-"""
+"""Source previews and legacy packet fitting; history summaries live in compaction.py."""
 
 import copy
 import json
@@ -17,6 +12,21 @@ from semibrain_agent.harness import BudgetExhausted, estimate_text
 VERSION = "evidence-context-v1"
 INLINE_TOKENS = 12500
 EVIDENCE_KEYS = {"evidence", "existing_evidence"}
+
+
+def history_observation(observation, authorized, *, question=""):
+    """Revalidate source access before replay; preserve intentional range reads.
+
+    Ordinary oversized results may use a source preview, but an explicit read
+    must not be cut again. Stored originals are never mutated here.
+    """
+    if not observation.get("evidence"):
+        return observation
+    allowed = {r["evidence_id"] for r in authorized}
+    records = [r for r in observation["evidence"] if r.get("evidence_id") in allowed]
+    read = observation.get("tool") in {"evidence.read", "web.read", "knowledge.read"}
+    views = copy.deepcopy(records) if read else project_evidence(records, question=question)
+    return {**observation, "evidence": views}
 
 
 def terms(text):

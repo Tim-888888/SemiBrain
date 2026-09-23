@@ -60,9 +60,12 @@ def purge_replicas(db, run_id):
     db.observations.update_many({"run_id": run_id}, {"$unset": {"observation.evidence": ""},
         "$set": {"replicas_expired_at": now()}})
     db.tasks.update_many({"run_id": run_id}, {"$unset": {"state": ""}})
+    db.context_compactions.update_many({"run_id": run_id},
+        {"$unset": {"summary": "", "history_manifest": "", "covered_hashes": ""},
+         "$set": {"replicas_expired_at": now()}})
     db.checkpoints.delete_many({"thread_id": run_id})
     db.checkpoint_writes.delete_many({"thread_id": run_id})
-    db.runs.update_one({"_id": run_id}, {"$unset": {"committed_checkpoint_ref": ""},
+    db.runs.update_one({"_id": run_id}, {"$unset": {"committed_checkpoint_ref": "", "context_heads": ""},
         "$set": {"replicas_expired_at": now()}})
 
 

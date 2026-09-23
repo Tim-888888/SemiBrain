@@ -225,6 +225,31 @@ runtime during acceptance. Never mount oracle files, expected answers or evaluat
 verdicts into running services. Evaluation envelopes may contain measurement
 metadata; the answer body always remains unrestricted Markdown.
 
+## History compaction
+
+New investigation runs freeze `SEMIBRAIN_CONTEXT_COMPACTION_ENABLED` (default true)
+and the optional `SEMIBRAIN_COMPACTION_POLICY_JSON` operator configuration. Older
+runs without this snapshot retain the previous context path. Near the routed model's
+window threshold, older closed tool exchanges are summarized while current goals
+and recent original messages remain intact. This does not restore a cumulative
+multi-agent Token cap or reset model/tool/time limits; summary requests are accounted
+as `context.compact` and cannot consume the dedicated final-call allowance.
+
+Defaults are `threshold_ratio=0.8`, `retain_ratio=0.16`, `headroom_tokens=65536`, and
+`summary_tokens=8192`. Configure smaller routes explicitly using `default` settings
+and exact model-name entries under `models`; invalid capacity is rejected. Source
+bodies remain in the existing evidence/snapshot stores and can be read through
+authorized `evidence.read` and `web.read` handles. Summaries are historical data,
+not independently citable facts. Native history journals and `context_compactions`
+are covered by the existing terminal-run replica cleanup; published reports and
+formal source retention policies are unchanged.
+
+The Mongo migration only creates an index. Committed summary pointers are fenced
+per run/task/role; unsuccessful or unknown requests do not overwrite history or
+automatically resubmit the same source span. See `scripts/verify/context_compaction.py`
+for an opt-in, isolated real-Mongo probe with synthetic data and no provider calls.
+This adaptation follows the [DSH compaction design](https://github.com/deepseek-ai/deepseek-harness/tree/00102833dfaee1da9f48a3a8eae9d34005a75218/packages/compaction/compaction-basic).
+
 ## Provenance
 
 See `THIRD_PARTY_NOTICES.md`, `vendor/weknora-docreader/provenance.json`, package license

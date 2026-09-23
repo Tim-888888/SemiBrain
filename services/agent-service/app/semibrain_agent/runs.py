@@ -21,6 +21,7 @@ from semibrain_common.runtime import (
 from semibrain_contracts.models import CitationBinding, EvidenceRef, Report, RunRequest, SourceRef
 
 from semibrain_agent.client import BusinessClient
+from semibrain_agent.compaction import policy_snapshot
 from semibrain_agent.model import ModelAdapter
 
 router = APIRouter()
@@ -70,6 +71,7 @@ def accept(command, session):
         "command": payload,
         "payload_hash": payload_hash,
         "retention_version": 1,
+        "context_compaction": policy_snapshot(),
         "execution_policy": {
             "context": os.getenv("SEMIBRAIN_DSH_CONTEXT_ENABLED", "true").lower() == "true",
             "efficiency": os.getenv("SEMIBRAIN_DSH_EFFICIENCY_ENABLED", "true").lower() == "true",

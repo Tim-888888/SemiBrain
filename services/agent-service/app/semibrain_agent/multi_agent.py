@@ -69,7 +69,7 @@ from semibrain_agent.task_outputs import (
     reusable_task,
 )
 
-MULTI_VERSION = "multi-supervisor-v20"
+MULTI_VERSION = "multi-supervisor-v21"
 ROLE_RULES = {
     "sqlbot": "你是 SQLBot。使用授权业务工具核验目标、阶段、程序、时间与分母。原问题已给出必要参数时直接查询，不为重复确认编号先列目录或读上下文；缺失且可自行补足时才查询目录。仅完成分配给自己的目标，不重复其他分支负责的计算。交回引用证据与缺口，不给无证据根因。",
     "rag": "你是 RAG Agent。检索并读取与分配目标相关的授权原文，保留版本、否定和限制。缺少内容明确记录，不用常识填成引用。",
@@ -256,7 +256,7 @@ class MultiAgent(Investigator):
         identity = f"{self.run['_id']}:{state['step']}:{kwargs.get('role', 'investigator')}:{kwargs.get('suffix', '')}"
         if not self.db.model_turns.find_one({"_id": identity, "run_id": self.run["_id"]}):
             control_calls = self.db.model_calls.count_documents({
-                "run_id": self.run["_id"], "phase": {"$not": {"$regex": "^expert\\."}}})
+                "run_id": self.run["_id"], "phase": {"$not": {"$regex": "^(expert\\.|context\\.compact)"}}})
             if control_calls >= (16 if closing else 14):
                 if not closing:
                     self.harness.request_closeout("SUPERVISOR_REQUEST_LIMIT")
@@ -790,6 +790,7 @@ class Expert(Investigator):
     def __init__(self, parent, task, intent, attempt):
         self.parent, self.task, self.attempt = parent, task, attempt
         self.context_policy_enabled = parent.context_policy_enabled
+        self.compaction_snapshot = getattr(parent, "compaction_snapshot", None)
         self.run, self.db, self.harness, self.bundle = (
             parent.run,
             parent.db,
@@ -945,7 +946,11 @@ class Expert(Investigator):
         # professional what evidence.read, page reads or Python actually returned.
         for item, observation in recent_outputs:
             inputs.append({"type": "function_call", **item["call"]})
-            if observation.get("evidence") and hasattr(self, "investigation"):
+            if getattr(self, "compaction_snapshot", None):
+                from semibrain_agent.context_policy import history_observation
+                observation = history_observation(observation, evidence,
+                                                   question=" ".join(self.task["goals"]))
+            elif observation.get("evidence") and hasattr(self, "investigation"):
                 allowed_ids = {r["evidence_id"] for r in evidence}
                 records = [r for r in observation["evidence"] if r.get("evidence_id") in allowed_ids]
                 views = self.parent.project_evidence(records, question=" ".join(self.task["goals"]))
@@ -953,7 +958,12 @@ class Expert(Investigator):
                     view.update({k: record[k] for k in ("document_id", "version", "next_offset") if k in record})
                 observation = {**observation, "evidence": views}
             inputs.append({"type": "function_call_output", "call_id": item["call"]["call_id"],
-                           "output": canonical(compact_observation(observation, visible_ids))})
+                            "output": canonical(observation if getattr(self, "compaction_snapshot", None)
+                                                else compact_observation(observation, visible_ids))})
+        if getattr(self, "compaction_snapshot", None) and state.get("model_turn_ids"):
+            inputs = [inputs[0], *self.replay_history(
+                state["model_turn_ids"], evidence, question=" ".join(self.task["goals"]))]
+        history_end = len(inputs)
         feedback = state.get("completion_issues", [])
         if feedback:
             inputs.append({"role": "user", "content": canonical({"completion_feedback": feedback})})
@@ -962,13 +972,19 @@ class Expert(Investigator):
         callstate = {
             "step": self.task["_id"] + ":" + str(state["round"]),
             "phase": "expert." + self.role,
+            "history_ranges": [("work", 1, history_end)],
         }
         # Vision uses a purpose-bound image tool; planning remains with the text Tool profile.
         model_role = "tool" if self.role == "vision" else self.role
         turn, identity = self.model_call(
-            callstate, role=model_role, inputs=inputs, tools=self.wire, max_tokens=1800
+            callstate, role=model_role, inputs=inputs, tools=self.wire, max_tokens=1800,
+            history_ranges=[("work", 1, history_end)],
         )
         state.update(round=state["round"] + 1, turn_id=identity)
+        if getattr(self, "compaction_snapshot", None):
+            state["model_turn_ids"] = [*state.get("model_turn_ids", []), identity]
+        if callstate.get("context_compaction_refs"):
+            state["context_compaction_refs"] = callstate["context_compaction_refs"]
         if turn.calls:
             state.update(phase="tools", calls=turn.calls)
         else:
