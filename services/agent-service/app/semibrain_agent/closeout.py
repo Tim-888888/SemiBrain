@@ -7,8 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from semibrain_common.runtime import canonical
 
 from semibrain_agent.citations import cited_markers
-from semibrain_agent.context_policy import project_evidence, source_version
-from semibrain_agent.harness import BudgetExhausted, estimate_reservation
+from semibrain_agent.context_policy import project_evidence, project_record, source_version
+from semibrain_agent.harness import BudgetExhausted, estimate_reservation, estimate_text
 from semibrain_agent.review_delivery import draft_blocks
 
 # Bound the two closeout requests independently of the cumulative run-token policy.
@@ -117,16 +117,19 @@ def review_answer(runner, state):
     evidence = [r for r in runner.executor.evidence() if not evidence_issues([r])]
     normal = state.get("closeout_reason") == "ANSWER_READY"
     packet = state.get("closeout_packet")
-    ceiling = 48000 if normal else REVIEW_CEILING
+    ceiling = None if normal else REVIEW_CEILING
     if packet is None:
         jobs = {r["observation"].get("job_id") for r in runner.db.observations.find({
             "run_id": runner.run["_id"], "observation.tool": "sandbox.python"})}
         packet = {"question": runner.context["input"]["question"], "intent": state["intent"],
-                  "evidence": project_evidence(evidence, token_budget=12000,
-                                                question=runner.context["input"]["question"]),
+                  # Normal answers may cite any registered source. A second,
+                  # smaller evidence pack silently invalidates those citations.
+                  # The model profile owns the context-window boundary instead.
+                  "evidence": [project_record(r, budget=estimate_text(canonical(r.get("content"))) + 128)
+                               for r in evidence],
                   "missing_file_formats": missing_files(state["intent"], evidence, jobs)}
     packet = {**packet, "draft_blocks": closeout_blocks(state["draft"])}
-    if not fits(packet, REVIEW_SYSTEM, REVIEW_OUTPUT, ceiling):
+    if ceiling is not None and not fits(packet, REVIEW_SYSTEM, REVIEW_OUTPUT, ceiling):
         raise BudgetExhausted("CLOSEOUT_CONTEXT_LIMIT")
     turn, _ = runner.model_call(state, role="reviewer", inputs=answer_inputs(packet), final=True,
         suffix="closeout-review", max_tokens=REVIEW_OUTPUT, system_override=REVIEW_SYSTEM,
@@ -174,7 +177,23 @@ def reviewed_body(draft, verdict, available_markers):
             # A cited assertion must receive the stronger factual verdict.
             continue
         kept.append(block["text"])
-    return "\n\n".join(kept) if factual else ""
+    return "\n\n".join(without_empty_headings(kept)) if factual else ""
+
+
+def without_empty_headings(blocks):
+    """Drop section headings whose entire body was rejected by the reviewer."""
+    result, pending = [], []
+    for text in blocks:
+        heading = re.fullmatch(r"(#{1,6})[ \t]+[^\n]+", text.strip())
+        if heading:
+            level = len(heading[1])
+            pending = [(depth, title) for depth, title in pending if depth < level]
+            pending.append((level, text))
+        else:
+            result.extend(title for _, title in pending)
+            pending = []
+            result.append(text)
+    return result
 
 
 def closeout_blocks(draft):

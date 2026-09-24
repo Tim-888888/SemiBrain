@@ -253,7 +253,7 @@ def submit(form: ToolInput, request: Request):
         if saved:
             if saved["payload_hash"] != payload_hash:
                 failure("IDEMPOTENCY_CONFLICT", 409)
-            return saved
+            return saved, False
         row = {
             "_id": key,
             "logical_call_id": key,
@@ -271,10 +271,25 @@ def submit(form: ToolInput, request: Request):
             "execution_deadline_at": form.execution_deadline_at,
         }
         db().tool_jobs.insert_one(row, session=session)
-        return row
+        return row, True
 
-    saved = transaction(accept)
+    saved, created = transaction(accept)
+    if created:
+        wake_tool_worker()
     return {"job_id": key, "status": saved["status"]}
+
+
+def wake_tool_worker():
+    """One disposable wakeup per accepted job; MongoDB remains the work queue.
+
+    Periodic polling recovers a broker outage. Do not coalesce simultaneous page
+    submissions into one wakeup: each available worker can claim a different job.
+    """
+    try:
+        from semibrain_business.worker import app
+        app.send_task("business.query", expires=30, retry=False)
+    except Exception:
+        pass  # The durable job is accepted; the periodic tick will recover it.
 
 
 @router.get("/internal/v1/tool-jobs/{job_id}")
@@ -429,6 +444,7 @@ def execute_one():
             "$set": {
                 "status": "running",
                 "fence": fence,
+                "started_at": now(),
                 "lease_until": now() + timedelta(seconds=90),
             },
             "$inc": {"attempt": 1},

@@ -33,7 +33,10 @@ def sandbox_cleanup():
 
 @app.task(name="business.query", base=PollTask)
 def query():
-    execute_one()
+    if execute_one():
+        # Drain durable work without waiting for the next periodic tick. This
+        # follow-up is coalesced, so an idle queue cannot create a wakeup loop.
+        query.delay()
 
 
 @app.task(name="business.ingest", base=PollTask)
