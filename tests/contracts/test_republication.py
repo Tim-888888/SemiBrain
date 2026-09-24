@@ -217,13 +217,17 @@ def test_concurrent_change_after_preflight_cannot_be_overwritten(state, monkeypa
 
 
 @pytest.mark.parametrize("code,status,expected", [
+    ("REPROCESS_PENDING", 409, "REPROCESS_PENDING"),
+    ("REPROCESS_SOURCE_UNAVAILABLE", 409, "REPROCESS_SOURCE_UNAVAILABLE"),
+    ("CONTEXT_DATA_INCOMPLETE", 409, "CONTEXT_DATA_INCOMPLETE"),
     ("REPUBLISH_DATA_INCOMPLETE", 409, "REPUBLISH_DATA_INCOMPLETE"),
     ("REPUBLISH_CHECK_UNAVAILABLE", 503, "REPUBLISH_CHECK_UNAVAILABLE"),
     ("secret provider error", 409, "REVISION_CONFLICT"),
 ])
-def test_gateway_passes_only_safe_republication_errors(monkeypatch, code, status, expected):
+@pytest.mark.parametrize("action", ["republish", "reprocess", "publish"])
+def test_gateway_passes_only_safe_republication_errors(monkeypatch, code, status, expected, action):
     for key, value in {"SEMIBRAIN_SERVICE": "conversation", "SEMIBRAIN_SERVICE_TOKEN": "test",
                        "SEMIBRAIN_BUSINESS_URL": "http://business"}.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setattr(httpx, "request", lambda *a, **k: httpx.Response(status, json={"detail": {"code": code}}))
-    assert_error(expected, lambda: runtime.call("business", "POST", "/internal/v1/knowledge/documents/id/republish"), status)
+    assert_error(expected, lambda: runtime.call("business", "POST", "/internal/v1/knowledge/documents/id/" + action), status)

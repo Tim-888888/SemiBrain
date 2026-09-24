@@ -266,7 +266,7 @@ def call(service: str, method: str, path: str, *, delegation=None, timeout=30, *
     if response.status_code >= 400:
         if (service == "business" and method == "POST"
                 and path.startswith("/internal/v1/knowledge/documents/")
-                and path.endswith("/republish")):
+                and path.endswith(("/republish", "/reprocess", "/publish"))):
             # Only fixed, public lifecycle codes may cross the service boundary.
             try:
                 code = response.json().get("detail", {}).get("code")
