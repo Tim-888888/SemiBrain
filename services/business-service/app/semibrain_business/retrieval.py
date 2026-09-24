@@ -217,6 +217,9 @@ def search(query, claim, top_k=5):
             chunks.append(
                 {
                     "chunk_id": chunk["_id"],
+                    "parent_id": chunk.get("parent_id"),
+                    "source_unit": chunk.get("source_unit"),
+                    "context_version": chunk.get("context_version"),
                     "context_header": chunk.get("context_header", ""),
                     "image_refs": chunk.get("image_refs", []),
                     "document_id": document["_id"],
@@ -239,9 +242,13 @@ def search(query, claim, top_k=5):
         chunks = authorized_chunks(hits)
         refilled = True
     # Authorization and current version checks above precede external reranking.
-    ranked, ranking = rank_candidates(query, chunks, top_k)
+    from semibrain_business.diversity import select_mmr
+    from semibrain_business.retrieval_context import RETRIEVAL_VERSION, expand_context
+    ranked, ranking = rank_candidates(query, chunks, min(len(chunks), max(top_k * 3, top_k)))
+    selected, diversity = select_mmr(ranked, top_k)
+    assembled, context_trace = expand_context(selected, db())
     final = []
-    for row in ranked:
+    for row in assembled:
         authorized_document(row["document_id"], claim, active=True, version=row["version"])
         final.append(row)
     return final, {
@@ -254,4 +261,7 @@ def search(query, claim, top_k=5):
         "sparse": "BM25",
         "embedding_version": EMBEDDING_VERSION,
         "rerank": ranking,
+        "diversity": diversity,
+        "context": context_trace,
+        "retrieval_version": RETRIEVAL_VERSION,
     }

@@ -143,6 +143,16 @@ class Revision(BaseModel):
     expected_revision: int
 
 
+class Reprocess(Revision):
+    source_version: UUID
+
+
+@router.post("/admin/v1/knowledge/documents/{document_id}/reprocess", status_code=202)
+def reprocess(document_id: UUID, form: Reprocess, user=Depends(admin)):
+    return business(user, "POST", f"/internal/v1/knowledge/documents/{document_id}/reprocess",
+                    operation="knowledge.manage", json=form.model_dump(mode="json")).json()
+
+
 @router.post("/admin/v1/knowledge/documents/{document_id}/republish")
 def republish(document_id: UUID, form: Revision, user=Depends(admin)):
     return business(

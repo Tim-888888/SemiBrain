@@ -9,7 +9,7 @@ from markdown_it import MarkdownIt
 
 from semibrain_business.document_images import image_spans
 
-CHUNKER_VERSION = 'weknora-adapted-markdown-v1'
+CHUNKER_VERSION = 'weknora-adapted-markdown-v2'
 TARGET = 2200
 HARD = 4300
 

@@ -10,7 +10,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from semibrain_common.runtime import canonical, digest, failure, now, transaction, uid
 
 from semibrain_business.knowledge import read_asset, store_asset, validate_path
-from semibrain_business.publication import last_published_version, restore_target, verify_restore
+from semibrain_business.publication import (
+    last_published_version,
+    restore_target,
+    verify_context_version,
+    verify_restore,
+)
 from semibrain_business.retrieval import search
 from semibrain_business.security import (
     authorize_request,
@@ -36,7 +41,7 @@ def knowledge_snapshot(request: Request):
                       if can_read(r, claim) and (not restrictions or r["_id"] in restrictions))
     return {"cacheable": True, "snapshot": digest(canonical([
         claim["subject_id"], claim["role"], sorted(claim["resource_ids"]),
-        sorted(restrictions), versions, "knowledge-retrieval-v1"]))}
+        sorted(restrictions), versions, "hybrid-mmr-section-v2"]))}
 
 
 @router.post("/internal/v1/attachments/images", status_code=201)
@@ -134,9 +139,13 @@ def documents(request: Request):
                         "chunk_count",
                         "error",
                         "quality_findings",
+                        "operation",
                     )
                 }
                 view["ingestion"]["id"] = latest["_id"]
+                view["reprocess_source_version"] = row.get("active_version") or latest["version"]
+                view["reprocess_pending"] = (latest.get("generation") == row["revision"]
+                    and latest["status"] in {"receiving", "queued", "running", "staged"})
         items.append(view)
     return {"items": items}
 
@@ -367,6 +376,7 @@ def activate(document_id: str, form: PublishInput, request: Request):
         )
         if not version or version["manifest"]["status"] != "staged":
             failure("VERSION_NOT_READY", 409)
+        verify_context_version(version)
         changed = db().documents.update_one(
             {"_id": document_id, "revision": form.expected_revision, "revoked": False},
             {
@@ -404,6 +414,16 @@ class UnpublishInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     request_id: UUID
     expected_revision: int
+
+
+class ReprocessInput(UnpublishInput):
+    source_version: UUID
+
+
+@router.post("/internal/v1/knowledge/documents/{document_id}/reprocess", status_code=202)
+def reprocess_document(document_id: str, form: ReprocessInput, request: Request):
+    from semibrain_business.reprocessing import reprocess
+    return reprocess(document_id, form, authorize_request(request, "knowledge.manage"))
 
 
 @router.post("/internal/v1/knowledge/documents/{document_id}/republish")

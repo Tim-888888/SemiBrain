@@ -98,30 +98,8 @@ def validate_path(path):
 
 
 def chunk_blocks(parsed, document_id, version):
-    from semibrain_business.chunking import CHUNKER_VERSION, split_markdown
-
-    # Preserve parser page/cell locators for text-only PDF/DOCX/CSV. Canonical Markdown
-    # uses one document coordinate space so image spans and heading paths agree.
-    use_markdown = bool(parsed.image_refs) or not parsed.blocks or any(
-        b.location.get("line_start") is not None for b in parsed.blocks)
-    blocks = [{"text": parsed.markdown, "kind": "markdown", "location": {}}] if use_markdown else [b.model_dump() for b in parsed.blocks]
-    chunks = []
-    for block in blocks:
-        for piece in split_markdown(block["text"]):
-            start, end = piece["location"]["character_start"], piece["location"]["character_end"]
-            text, header = piece["text"], piece["context_header"]
-            chunks.append({
-                "_id": digest(document_id + ":" + version + ":" + str(len(chunks))),
-                "document_id": document_id, "version": version, "text": text,
-                "content_hash": digest(text), "context_header": header,
-                "embedding_text": (header + "\n\n" if header else "") + text,
-                "location": {**piece["location"], **block["location"]}, "kind": block["kind"],
-                "image_refs": [r for r in parsed.image_refs if r["start"] < end and r["end"] > start] if use_markdown else [],
-                "chunker_version": CHUNKER_VERSION, "embedding_version": EMBEDDING_VERSION,
-            })
-    if not chunks or len(chunks) > 1500:
-        raise ValueError("CHUNK_COUNT_INVALID")
-    return chunks
+    from semibrain_business.chunk_tree import build_chunk_tree
+    return build_chunk_tree(parsed, document_id, version, EMBEDDING_VERSION)[0]
 
 
 def process_one():
@@ -245,9 +223,14 @@ def process_one():
                 },
             )
             return True
-        chunks = chunk_blocks(parsed, document["_id"], version)
+        from semibrain_business.chunk_tree import CONTEXT_VERSION, build_chunk_tree, tree_manifest
+        if parsed.parser_manifest.get("chunker_version") != CHUNKER_VERSION:
+            raise ValueError("CHUNKER_VERSION_CHANGED_REBUILD_REQUIRED")
+        chunks, parents = build_chunk_tree(parsed, document["_id"], version, EMBEDDING_VERSION)
         for chunk in chunks:
             db().chunks.update_one({"_id": chunk["_id"]}, {"$setOnInsert": chunk}, upsert=True)
+        for parent in parents:
+            db().knowledge_parents.update_one({"_id": parent["_id"]}, {"$setOnInsert": parent}, upsert=True)
         db().ingestion_jobs.update_one(
             {"_id": job["_id"], "fence": fence}, {"$set": {"step": "indexing"}}
         )
@@ -265,6 +248,9 @@ def process_one():
                     "$set": {
                         "projection_verified": True,
                         "chunk_ids": [c["_id"] for c in chunks],
+                        "context_version": CONTEXT_VERSION,
+                        "parent_ids": [p["_id"] for p in parents],
+                        "parent_manifest_hash": tree_manifest(parents),
                         "chunk_manifest_hash": digest(
                             canonical([c["content_hash"] for c in chunks])
                         ),

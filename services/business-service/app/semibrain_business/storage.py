@@ -4,6 +4,10 @@ from semibrain_business.security import db
 
 
 def initialize():
+    migrate(db(), "knowledge-context-001", [
+        ("knowledge_parents", [("document_id", 1), ("version", 1)], {}),
+        ("ingestion_jobs", [("document_id", 1), ("created_at", -1)], {}),
+    ])
     migrate(db(), "knowledge-republication-001", [
         ("publication_commands", [("result.document_id", 1), ("result.revision", -1)], {}),
     ])

@@ -273,7 +273,8 @@ def call(service: str, method: str, path: str, *, delegation=None, timeout=30, *
             except (ValueError, AttributeError):
                 code = None
             allowed = {
-                409: {"REPUBLISH_DATA_INCOMPLETE", "REPUBLISH_NEW_VERSION_PENDING",
+                409: {"REPROCESS_SOURCE_UNAVAILABLE", "REPROCESS_PENDING", "CONTEXT_DATA_INCOMPLETE",
+                      "REPUBLISH_DATA_INCOMPLETE", "REPUBLISH_NEW_VERSION_PENDING",
                       "NO_PUBLISHED_VERSION", "DOCUMENT_ALREADY_PUBLISHED",
                       "REVISION_CONFLICT", "IDEMPOTENCY_CONFLICT"},
                 503: {"REPUBLISH_CHECK_UNAVAILABLE"},

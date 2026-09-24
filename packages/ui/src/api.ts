@@ -23,6 +23,9 @@ const labels: Record<string, string> = {
   REPUBLISH_NEW_VERSION_PENDING: '此文档有新版本正在处理或等待发布，请先处理新版本。',
   NO_PUBLISHED_VERSION: '此文档没有已发布过的版本，请先完成解析并确认发布。',
   DOCUMENT_ALREADY_PUBLISHED: '文档已经上架，请刷新查看。',
+  REPROCESS_SOURCE_UNAVAILABLE: '原文件或配图已不可用，无法重建。请重新上传完整资料。',
+  REPROCESS_PENDING: '此文档已有处理任务或待发布的新版本，请先查看处理结果。',
+  CONTEXT_DATA_INCOMPLETE: '新版本的内容片段或上下文关系不完整，暂不能发布。请重新处理。',
   IDEMPOTENCY_CONFLICT: '操作请求已发生变化，请刷新后重试。',
   INVALID_ARGUMENT: '填写内容不符合要求，请检查后重试。',
 }

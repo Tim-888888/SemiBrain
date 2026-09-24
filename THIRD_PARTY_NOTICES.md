@@ -21,6 +21,16 @@ continue to apply. The parser subset above remains pinned to its original commit
 Inline image presentation also follows the general Markdown/path-resolution
 design inspected in DeepSeek Harness commit
 `46a7f68b0922371ce7144b668b90e377d8e799f4`. No DSH source was copied into the Vue UI.
+
+Retrieval diversity and bounded section/neighbor context assembly in
+`services/business-service/app/semibrain_business/{diversity,chunk_tree,retrieval_context}.py`
+adapt algorithmic ideas from Tencent/WeKnora commit
+`2e712a97a10900c82bed74993362823a7c77254f`, particularly
+`internal/agent/tools/search_knowledge.go` and
+`internal/application/service/chat_pipeline/{merge,merge_expand}.go`.
+This independently tested Python implementation uses Chinese-aware lexical MMR,
+immutable versioned section mappings, original source coordinates, and explicit
+context-size bounds. The retained upstream license above applies to the reference.
 Dependency metadata is recorded in `infra/images/python-licenses.json` and
 `infra/images/node-licenses.json`. `UNKNOWN` in generated metadata is not a license:
 the SemiBrain workspace packages do not declare a project-wide license, the vendored

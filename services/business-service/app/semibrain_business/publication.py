@@ -64,6 +64,7 @@ def verify_restore(document, version):
         incomplete()
     if digest(canonical(hashes)) != version.get("chunk_manifest_hash"):
         incomplete()
+    verify_context_version(version, rows)
 
     refs = version.get("image_refs", [])
     image_ids = set(version.get("image_asset_ids", []))
@@ -107,3 +108,23 @@ def verify_restore(document, version):
         if (row["document_id"] != document["_id"] or row["version"] != version["_id"]
                 or row["scope"] != scope or row["text"] != chunk.get("embedding_text", chunk["text"])):
             incomplete()
+
+
+def verify_context_version(version, chunks=None):
+    """Old immutable versions need no fabricated parent relation."""
+    if not version.get("context_version"):
+        return
+    from semibrain_business.chunk_tree import CONTEXT_VERSION, tree_manifest, validate_tree
+    if version["context_version"] != CONTEXT_VERSION:
+        failure("CONTEXT_DATA_INCOMPLETE", 409)
+    parents = list(db().knowledge_parents.find({"_id": {"$in": version.get("parent_ids", [])},
+                                               "document_id": version["document_id"], "version": version["_id"]}))
+    if not parents or tree_manifest(parents) != version.get("parent_manifest_hash"):
+        failure("CONTEXT_DATA_INCOMPLETE", 409)
+    if chunks is None:
+        chunks = list(db().chunks.find({"_id": {"$in": version.get("chunk_ids", [])},
+                                       "document_id": version["document_id"], "version": version["_id"]}))
+    try:
+        validate_tree(chunks, parents)
+    except (KeyError, ValueError, TypeError):
+        failure("CONTEXT_DATA_INCOMPLETE", 409)
