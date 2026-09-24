@@ -264,6 +264,22 @@ def call(service: str, method: str, path: str, *, delegation=None, timeout=30, *
     url = os.environ[f"SEMIBRAIN_{service.upper()}_URL"] + path
     response = httpx.request(method, url, headers=headers, timeout=timeout, **kwargs)
     if response.status_code >= 400:
+        if (service == "business" and method == "POST"
+                and path.startswith("/internal/v1/knowledge/documents/")
+                and path.endswith("/republish")):
+            # Only fixed, public lifecycle codes may cross the service boundary.
+            try:
+                code = response.json().get("detail", {}).get("code")
+            except (ValueError, AttributeError):
+                code = None
+            allowed = {
+                409: {"REPUBLISH_DATA_INCOMPLETE", "REPUBLISH_NEW_VERSION_PENDING",
+                      "NO_PUBLISHED_VERSION", "DOCUMENT_ALREADY_PUBLISHED",
+                      "REVISION_CONFLICT", "IDEMPOTENCY_CONFLICT"},
+                503: {"REPUBLISH_CHECK_UNAVAILABLE"},
+            }
+            if isinstance(code, str) and code in allowed.get(response.status_code, set()):
+                failure(code, response.status_code)
         if (service == "business" and response.status_code == 410 and method == "GET"
                 and path.startswith("/internal/v1/assets/") and path.endswith("/content")):
             failure("WEB_SNAPSHOT_EXPIRED", 410)

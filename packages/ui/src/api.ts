@@ -18,6 +18,12 @@ const labels: Record<string, string> = {
   MULTI_AGENT_UNAVAILABLE: '多 Agent 功能当前未开放，请关闭协作开关后提交。', CONVERSATION_RUN_ACTIVE: '当前会话仍在执行，请先停止本轮再切换。', IMAGE_SIZE_INVALID: '图片大小不符合要求，请重新选择（上限 3 MB）。', IMAGE_FORMAT_INVALID: '请选择 PNG、JPEG 或 WebP 图片（不超过 1600 万像素）。',
   WEB_SNAPSHOT_EXPIRED: '原网页快照已过期；可查看来源链接，当前网页内容可能已变化。',
   DOCUMENT_IMAGES_INVALID: '配图格式、大小或路径不正确，请检查后重新上传。',
+  REPUBLISH_DATA_INCOMPLETE: '原发布版本的正文、配图或检索索引不完整，暂不能重新上架。请重新上传解析，或联系管理员修复。',
+  REPUBLISH_CHECK_UNAVAILABLE: '暂时无法校验原版本，请稍后重试。文档仍保持下架。',
+  REPUBLISH_NEW_VERSION_PENDING: '此文档有新版本正在处理或等待发布，请先处理新版本。',
+  NO_PUBLISHED_VERSION: '此文档没有已发布过的版本，请先完成解析并确认发布。',
+  DOCUMENT_ALREADY_PUBLISHED: '文档已经上架，请刷新查看。',
+  IDEMPOTENCY_CONFLICT: '操作请求已发生变化，请刷新后重试。',
   INVALID_ARGUMENT: '填写内容不符合要求，请检查后重试。',
 }
 export async function api<T = any>(path: string, options: RequestInit = {}): Promise<T> {

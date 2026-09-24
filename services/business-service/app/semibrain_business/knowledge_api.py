@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from semibrain_common.runtime import canonical, digest, failure, now, transaction, uid
 
 from semibrain_business.knowledge import read_asset, store_asset, validate_path
+from semibrain_business.publication import last_published_version, restore_target, verify_restore
 from semibrain_business.retrieval import search
 from semibrain_business.security import (
     authorize_request,
@@ -117,6 +118,8 @@ def documents(request: Request):
         ):
             continue
         view = document_view(row)
+        if claim["role"] == "admin" and not row.get("active_version") and not row.get("revoked"):
+            view["restore_version"] = last_published_version(row)
         if claim["role"] == "admin" or row["owner_id"] == claim["subject_id"]:
             latest = db().ingestion_jobs.find_one(
                 {"document_id": row["_id"]}, sort=[("created_at", -1)]
@@ -369,6 +372,7 @@ def activate(document_id: str, form: PublishInput, request: Request):
             {
                 "$set": {
                     "active_version": str(form.version),
+                    "last_published_version": str(form.version),
                     "raw_asset_id": version["raw_asset_id"],
                 },
                 "$inc": {"revision": 1},
@@ -402,6 +406,66 @@ class UnpublishInput(BaseModel):
     expected_revision: int
 
 
+@router.post("/internal/v1/knowledge/documents/{document_id}/republish")
+def republish(document_id: str, form: UnpublishInput, request: Request):
+    claim = authorize_request(request, "knowledge.manage")
+    require_manager(claim)
+    document = authorized_document(document_id, claim)
+    key = str(form.request_id)
+    payload_hash = digest(canonical({"action": "republish", "document_id": document_id,
+                                     **form.model_dump(mode="json")}))
+
+    def replay(session=None):
+        previous = db().publication_commands.find_one({"_id": key}, session=session)
+        if previous:
+            if previous["payload_hash"] != payload_hash:
+                failure("IDEMPOTENCY_CONFLICT", 409)
+            return previous["result"]
+
+    previous = replay()
+    if previous:
+        return previous
+    if document["revision"] != form.expected_revision:
+        failure("REVISION_CONFLICT", 409)
+    version = restore_target(document)
+    verify_restore(document, version)
+
+    def commit(session):
+        previous = replay(session)
+        if previous:
+            return previous
+        current = db().documents.find_one(
+            {"_id": document_id, "revision": form.expected_revision, "revoked": False},
+            session=session,
+        )
+        if not current:
+            failure("REVISION_CONFLICT", 409)
+        if restore_target(current, session=session)["_id"] != version["_id"]:
+            failure("REVISION_CONFLICT", 409)
+        changed = db().documents.update_one(
+            {"_id": document_id, "revision": form.expected_revision, "active_version": None,
+             "revoked": False},
+            {"$set": {"active_version": version["_id"], "last_published_version": version["_id"],
+                      "raw_asset_id": version["raw_asset_id"]}, "$inc": {"revision": 1}},
+            session=session,
+        )
+        if not changed.modified_count:
+            failure("REVISION_CONFLICT", 409)
+        db().ingestion_jobs.update_one(
+            {"document_id": document_id, "version": version["_id"]},
+            {"$set": {"status": "published", "step": "published"}}, session=session,
+        )
+        result = {"document_id": document_id, "active_version": version["_id"],
+                  "revision": form.expected_revision + 1}
+        db().publication_commands.insert_one(
+            {"_id": key, "payload_hash": payload_hash, "result": result, "at": now(),
+             "action": "republish", "actor_id": claim["subject_id"]}, session=session,
+        )
+        return result
+
+    return transaction(commit)
+
+
 @router.post("/internal/v1/knowledge/documents/{document_id}/unpublish")
 def unpublish(document_id: str, form: UnpublishInput, request: Request):
     claim = authorize_request(request, "knowledge.manage")
@@ -420,9 +484,16 @@ def unpublish(document_id: str, form: UnpublishInput, request: Request):
             if previous["payload_hash"] != payload_hash:
                 failure("IDEMPOTENCY_CONFLICT", 409)
             return previous["result"]
+        current = db().documents.find_one(
+            {"_id": document_id, "revision": form.expected_revision}, session=session)
+        if not current:
+            failure("REVISION_CONFLICT", 409)
+        updates = {"active_version": None}
+        if current.get("active_version"):
+            updates["last_published_version"] = current["active_version"]
         changed = db().documents.update_one(
             {"_id": document_id, "revision": form.expected_revision},
-            {"$set": {"active_version": None}, "$inc": {"revision": 1}},
+            {"$set": updates, "$inc": {"revision": 1}},
             session=session,
         )
         if not changed.modified_count:

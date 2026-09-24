@@ -4,6 +4,9 @@ from semibrain_business.security import db
 
 
 def initialize():
+    migrate(db(), "knowledge-republication-001", [
+        ("publication_commands", [("result.document_id", 1), ("result.revision", -1)], {}),
+    ])
     migrate(db(), "d-retention-002", [
         ("tool_jobs", [("subject_id", 1), ("result.data.lineage_refs", 1)], {}),
         ("assets", [("owner_id", 1), ("source_refs", 1)], {}),

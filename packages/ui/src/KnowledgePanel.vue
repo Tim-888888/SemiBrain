@@ -6,6 +6,7 @@ import { documentBundle, documentFile } from './knowledge-upload.mjs'
 const props = defineProps<{ manage: boolean }>()
 const items = ref<any[]>([]), error = ref(''), busy = ref(false), preview = ref<any>(null), selected = ref<any>(null)
 const path = ref(''), origin = ref('public'), external = ref(false), files = ref<File[]>([])
+const changing = ref(''), notice = ref('')
 let timer: ReturnType<typeof setInterval>
 async function load() { try { items.value = (await api('/v1/knowledge/documents')).items } catch (e) { error.value = (e as Error).message } }
 function choose(event: Event) { files.value = Array.from((event.target as HTMLInputElement).files || []); if (files.value.length === 1) path.value = files.value[0].name }
@@ -34,12 +35,25 @@ async function view(item: any) {
   catch (e) { error.value = (e as Error).message }
 }
 async function publish(item: any) {
-  try { await post(`/admin/v1/knowledge/documents/${item.id}/publish`, { request_id: crypto.randomUUID(), expected_revision: item.revision, version: item.ingestion.version }); preview.value = null; await load() }
-  catch (e) { error.value = (e as Error).message }
+  await changePublication(item, 'publish')
 }
 async function unpublish(item: any) {
-  try { await post(`/admin/v1/knowledge/documents/${item.id}/unpublish`, { request_id: crypto.randomUUID(), expected_revision: item.revision }); await load() }
-  catch (e) { error.value = (e as Error).message }
+  await changePublication(item, 'unpublish')
+}
+async function changePublication(item: any, action: 'publish' | 'unpublish' | 'republish') {
+  if (changing.value) return
+  changing.value = item.id; error.value = ''; notice.value = ''
+  try {
+    await post(`/admin/v1/knowledge/documents/${item.id}/${action}`, {
+      request_id: crypto.randomUUID(), expected_revision: item.revision,
+      ...(action === 'publish' ? { version: item.ingestion.version } : {}),
+    })
+    preview.value = null
+    notice.value = action === 'unpublish' ? '文档已下架，后续知识库检索将排除这份文档。'
+      : action === 'republish' ? '文档已重新上架，可以继续用于知识库检索。' : '文档已发布。'
+    await load()
+  } catch (e) { error.value = (e as Error).message; await load() }
+  finally { changing.value = '' }
 }
 const statusNames: Record<string, string> = { published: '已发布', unpublished: '已下架', staged: '待预览发布', queued: '等待解析', running: '处理中', failed: '处理失败', needs_attention: '需检查内容', receiving: '正在接收' }
 onMounted(() => { load(); timer = setInterval(load, 5000) }); onUnmounted(() => clearInterval(timer))
@@ -55,8 +69,9 @@ onMounted(() => { load(); timer = setInterval(load, 5000) }); onUnmounted(() => 
       <button class="primary" :disabled="!files.length || busy" @click="upload">{{ busy ? '正在上传…' : '上传并解析' }}</button>
     </div>
     <p v-if="error" role="alert" class="error">{{ error }}</p>
+    <p v-if="notice" role="status" class="notice">{{ notice }}</p>
     <div v-if="!items.length" class="empty-card">知识库还没有资料。{{ manage ? '上传第一份文档，开始建立知识来源。' : '管理员发布资料后会显示在这里。' }}</div>
-    <div class="document-list"><article v-for="item in items" :key="item.id" class="document-row"><span class="file-icon">▤</span><div class="document-detail"><strong>{{ item.title }}</strong><p class="muted small">{{ item.path }}</p><p v-if="item.ingestion?.error" class="error small">解析未完成，请检查文件或稍后重试。</p></div><span class="status-pill">{{ statusNames[item.ingestion?.status] || (item.active_version ? '已发布' : '未发布') }}</span><div v-if="manage" class="row-actions"><button v-if="['staged', 'published', 'needs_attention'].includes(item.ingestion?.status)" class="secondary" @click="view(item)">预览</button><button v-if="item.active_version" class="text-button" @click="unpublish(item)">下架</button></div></article></div>
-    <div v-if="preview" class="modal-backdrop" @click.self="preview = null"><section class="preview-modal" role="dialog" aria-modal="true" aria-label="文档预览"><div class="page-title"><h2>{{ selected?.title }}</h2><button class="secondary" @click="preview = null">关闭</button></div><div class="preview-scroll"><MarkdownAnswer :text="preview.body_markdown" :image-refs="preview.image_refs" /><p v-if="preview.truncated" class="muted">预览仅显示部分内容，请核验原文件。</p><p v-if="preview.manifest?.quality_findings?.length" class="notice">内容提示：{{ preview.manifest.quality_findings.join('、') }}</p></div><div class="modal-footer"><span class="muted small">{{ preview.chunk_count }} 个内容片段</span><button v-if="selected?.ingestion?.status === 'staged'" class="primary" @click="publish(selected)">确认发布</button></div></section></div>
+    <div class="document-list"><article v-for="item in items" :key="item.id" class="document-row"><span class="file-icon">▤</span><div class="document-detail"><strong>{{ item.title }}</strong><p class="muted small">{{ item.path }}</p><p v-if="item.ingestion?.error" class="error small">解析未完成，请检查文件或稍后重试。</p></div><span class="status-pill">{{ item.active_version ? '已发布' : statusNames[item.ingestion?.status] || '未发布' }}</span><div v-if="manage" class="row-actions"><button v-if="['staged', 'published', 'unpublished', 'needs_attention'].includes(item.ingestion?.status)" class="secondary" @click="view(item)">预览</button><button v-if="item.active_version" class="text-button" :disabled="!!changing" @click="unpublish(item)">{{ changing === item.id ? '处理中…' : '下架' }}</button><button v-else-if="item.restore_version" class="secondary" :disabled="!!changing" @click="changePublication(item, 'republish')">{{ changing === item.id ? '正在校验并上架…' : '重新上架' }}</button></div></article></div>
+    <div v-if="preview" class="modal-backdrop" @click.self="preview = null"><section class="preview-modal" role="dialog" aria-modal="true" aria-label="文档预览"><div class="page-title"><h2>{{ selected?.title }}</h2><button class="secondary" @click="preview = null">关闭</button></div><div class="preview-scroll"><MarkdownAnswer :text="preview.body_markdown" :image-refs="preview.image_refs" /><p v-if="preview.truncated" class="muted">预览仅显示部分内容，请核验原文件。</p><p v-if="preview.manifest?.quality_findings?.length" class="notice">内容提示：{{ preview.manifest.quality_findings.join('、') }}</p></div><div class="modal-footer"><span class="muted small">{{ preview.chunk_count }} 个内容片段</span><button v-if="selected?.ingestion?.status === 'staged'" class="primary" :disabled="!!changing" @click="publish(selected)">确认发布</button><button v-else-if="!selected?.active_version && selected?.restore_version === selected?.ingestion?.version" class="primary" :disabled="!!changing" @click="changePublication(selected, 'republish')">{{ changing ? '正在校验并上架…' : '重新上架' }}</button></div></section></div>
   </section>
 </template>

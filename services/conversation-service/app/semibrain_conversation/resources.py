@@ -143,6 +143,14 @@ class Revision(BaseModel):
     expected_revision: int
 
 
+@router.post("/admin/v1/knowledge/documents/{document_id}/republish")
+def republish(document_id: UUID, form: Revision, user=Depends(admin)):
+    return business(
+        user, "POST", "/internal/v1/knowledge/documents/" + str(document_id) + "/republish",
+        operation="knowledge.manage", json=form.model_dump(mode="json"), timeout=120,
+    ).json()
+
+
 @router.post("/admin/v1/knowledge/documents/{document_id}/unpublish")
 def unpublish(document_id: UUID, form: Revision, user=Depends(admin)):
     return business(
