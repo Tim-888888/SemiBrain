@@ -18,13 +18,28 @@ class BudgetExhausted(RuntimeError):
 DEFAULT_LIMITS = {
     "rounds": 12,
     "tools": 20,
-    "tokens": 80000,
+    # Cumulative usage is accounted, but does not stop an investigation.
+    "tokens": None,
     "seconds": 180,
     "searches": 3,
     "pages": 5,
-    "final_token_reserve": 12000,
+    "final_token_reserve": 0,
     "final_seconds_reserve": 30,
 }
+
+
+def token_limit(limits, *, final=False):
+    """A null cumulative cap still records reservations and settled provider usage."""
+    if limits["tokens"] is None:
+        return None
+    return limits["tokens"] - (0 if final else limits["final_token_reserve"])
+
+
+def remaining_tokens(budget, *, final=False):
+    limit = token_limit(budget["limits"], final=final)
+    if limit is None:
+        return None
+    return limit - budget["settled_tokens"] - budget["reserved_tokens"]
 
 
 def estimate_text(content):
@@ -135,11 +150,14 @@ class Harness:
             self.last_renewed = time.monotonic()
         return row
 
-    def model_reserve(self, amount, *, phase, final=False):
+    def model_reserve(self, amount, *, phase, final=False, task_id=None):
         row = self.check()
+        if not final:
+            self.investigation_gate(row)
         budget = row["budget"]
         limits = budget["limits"]
-        token_limit = limits["tokens"] - (0 if final else limits["final_token_reserve"])
+        ceiling = token_limit(limits, final=final)
+        call_limit = limits["rounds"] + (2 if final else 0)
         if (
             not final
             and (row["deadline_at"] - now()).total_seconds() <= limits["final_seconds_reserve"]
@@ -148,21 +166,32 @@ class Harness:
         reservation_id = uid()
 
         def reserve(session):
+            admission = {} if final else {"closeout_reason": {"$exists": False}}
+            condition = {
+                **self.predicate(),
+                **admission,
+                "budget.model_calls": {"$lt": call_limit},
+            }
+            if ceiling is not None:
+                condition["$expr"] = {
+                    "$lte": [
+                        {"$add": ["$budget.reserved_tokens", "$budget.settled_tokens", amount]},
+                        ceiling,
+                    ]
+                }
             changed = self.db.runs.update_one(
-                {
-                    **self.predicate(),
-                    "$expr": {
-                        "$lte": [
-                            {"$add": ["$budget.reserved_tokens", "$budget.settled_tokens", amount]},
-                            token_limit,
-                        ]
-                    },
-                    "budget.model_calls": {"$lt": limits["rounds"] + (2 if final else 0)},
-                },
+                condition,
                 {"$inc": {"budget.reserved_tokens": amount, "budget.model_calls": 1}},
                 session=session,
             )
             if not changed.modified_count:
+                current = self.db.runs.find_one(self.predicate(), session=session)
+                if not current:
+                    raise RunStopped("MODEL_ADMISSION_LOST")
+                if not final and current.get("closeout_reason"):
+                    raise BudgetExhausted(current["closeout_reason"])
+                if current["budget"]["model_calls"] >= call_limit:
+                    raise BudgetExhausted("MODEL_CALL_LIMIT")
                 raise BudgetExhausted("MODEL_BUDGET_EXHAUSTED")
             self.db.model_calls.insert_one(
                 {
@@ -170,6 +199,7 @@ class Harness:
                     "run_id": self.run_id,
                     "fence": self.fence,
                     "phase": phase,
+                    "task_id": task_id,
                     "reserved_tokens": amount,
                     "status": "reserved",
                     "created_at": now(),
@@ -177,8 +207,43 @@ class Harness:
                 session=session,
             )
 
-        transaction(reserve)
+        try:
+            transaction(reserve)
+        except BudgetExhausted as exc:
+            if not final:
+                self.request_closeout(str(exc))
+            raise
         return reservation_id
+
+    def request_closeout(self, reason):
+        # First stop wins across professional threads and worker recovery. Admitted
+        # calls may settle; no later investigation admission may consume the reserve.
+        self.check()
+        self.db.runs.update_one(
+            {**self.predicate(), "closeout_reason": {"$exists": False}},
+            {"$set": {"closeout_reason": reason, "closeout_started_at": now()}},
+        )
+        return self.check().get("closeout_reason", reason)
+
+    def investigation_gate(self, row=None):
+        row = row or self.check()
+        if row.get("closeout_reason"):
+            raise BudgetExhausted(row["closeout_reason"])
+        budget = row["budget"]
+        limits = budget["limits"]
+        reason = None
+        if (row["deadline_at"] - now()).total_seconds() <= limits["final_seconds_reserve"]:
+            reason = "FINAL_TIME_RESERVED"
+        elif (remaining := remaining_tokens(budget)) is not None and remaining <= 0:
+            reason = "MODEL_BUDGET_EXHAUSTED"
+        if reason:
+            raise BudgetExhausted(self.request_closeout(reason))
+
+    def investigation_seconds(self):
+        row = self.check()
+        self.investigation_gate(row)
+        return max(0.1, (row["deadline_at"] - now()).total_seconds()
+                   - row["budget"]["limits"]["final_seconds_reserve"])
 
     def settle(self, reservation_id, usage, *, status, profile, elapsed_ms):
         def commit(session):
@@ -221,33 +286,31 @@ class Harness:
 
     def reserve_tool(self, logical_id, name):
         row = self.check()
+        self.investigation_gate(row)
         if self.db.tool_calls.find_one({"_id": logical_id, "run_id": self.run_id}):
             return
         field = {"web.search": "searches", "web.fetch": "pages"}.get(name)
-        token_reservation = 8000 if name == "web.search" else 0
+        token_reservation = {"web.search": 8000, "web.fetch": 8000, "vision.inspect": 12000}.get(name, 0)
         limit = row["budget"]["limits"]
 
         def reserve(session):
             if self.db.tool_calls.find_one({"_id": logical_id}, session=session):
                 return
             condition = {**self.predicate(), "budget.tools": {"$lt": limit["tools"]}}
+            condition["closeout_reason"] = {"$exists": False}
             increments = {"budget.tools": 1}
             if field:
                 condition["budget." + field] = {"$lt": limit[field]}
                 increments["budget." + field] = 1
             if token_reservation:
-                condition["$expr"] = {
-                    "$lte": [
-                        {
-                            "$add": [
-                                "$budget.reserved_tokens",
-                                "$budget.settled_tokens",
-                                token_reservation,
-                            ]
-                        },
-                        limit["tokens"] - limit["final_token_reserve"],
-                    ]
-                }
+                ceiling = token_limit(limit)
+                if ceiling is not None:
+                    condition["$expr"] = {
+                        "$lte": [
+                            {"$add": ["$budget.reserved_tokens", "$budget.settled_tokens", token_reservation]},
+                            ceiling,
+                        ]
+                    }
                 increments["budget.reserved_tokens"] = token_reservation
             if not self.db.runs.update_one(
                 condition, {"$inc": increments}, session=session
@@ -265,7 +328,11 @@ class Harness:
                 session=session,
             )
 
-        transaction(reserve)
+        try:
+            transaction(reserve)
+        except BudgetExhausted as exc:
+            self.request_closeout(str(exc))
+            raise
 
     def settle_external_tool(self, logical_id, usage):
         def commit(session):

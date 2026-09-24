@@ -319,10 +319,11 @@ def test_empty_knowledge_can_use_web_body_evidence(monkeypatch):
     assert {e["source"]["kind"] for e in r.prompt["evidence"]} == {"web"}
 
 
-@pytest.mark.parametrize("mode,searches,pages", [("quick_qa", 1, 2), ("investigation", 3, 5)])
+@pytest.mark.parametrize("mode,searches,pages", [("quick_qa", 2, 2), ("investigation", 3, 5)])
 def test_business_quotas_use_authenticated_run_mode(monkeypatch, mode, searches, pages):
     monkeypatch.setattr(web_tools, "authorization", lambda _: {"mode": mode})
     monkeypatch.setattr(web_tools, "configured", lambda: True)
+    monkeypatch.setenv("SEMIBRAIN_BOCHA_API_KEY", "test-only")
     monkeypatch.setattr(web_tools, "protected_values", lambda _: set())
     limits = []
 
@@ -340,6 +341,7 @@ def test_business_quotas_use_authenticated_run_mode(monkeypatch, mode, searches,
 
 def test_sensitive_search_is_denied_before_reserving_or_calling_a_provider(monkeypatch):
     monkeypatch.setattr(web_tools, "configured", lambda: True)
+    monkeypatch.setenv("SEMIBRAIN_BOCHA_API_KEY", "test-only")
     monkeypatch.setattr(web_tools, "protected_values", lambda _: {"PrivateProduct"})
     monkeypatch.setattr(
         web_tools, "authorization", lambda _: pytest.fail("must not reach provider")

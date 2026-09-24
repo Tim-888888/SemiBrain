@@ -21,6 +21,68 @@
         }
       }
     },
+    "/internal/v1/capabilities": {
+      "get": {
+        "summary": "Capabilities",
+        "operationId": "capabilities_internal_v1_capabilities_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/runs/{run_id}/tasks/{task_id}/authorization": {
+      "get": {
+        "summary": "Task Authorization",
+        "operationId": "task_authorization_internal_v1_runs__run_id__tasks__task_id__authorization_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/v1/runs": {
       "post": {
         "summary": "Submit",
@@ -248,6 +310,21 @@
             "type": "boolean",
             "title": "Allow Web",
             "default": false
+          },
+          "investigation_strategy": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "single_agent",
+                  "multi_agent"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Investigation Strategy"
           },
           "resource_restrictions": {
             "items": {

@@ -1,0 +1,402 @@
+"""Restricted Docker execution agent owned by the business service.
+
+Run separately with only the Engine socket and a private Unix control socket.
+No model command is ever executed in this process or in an application container.
+"""
+
+import base64
+import hmac
+import json
+import os
+import re
+import threading
+import time
+import unicodedata
+from http.server import BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
+
+import httpx
+
+MAX_BYTES = 16 * 1024**2
+LABEL = "net.semibrain.sandbox"
+ACTIVE = threading.BoundedSemaphore(2)
+CREATION = threading.Lock()
+LOCKS = {}
+TOUCHED = {}
+
+
+def safe_name(name):
+    # Preserve the exact Unicode spelling used by the sandbox code. Validate a
+    # single portable basename; never normalize/rename only one side of the I/O.
+    if not isinstance(name, str) or not name or len(name) > 120:
+        raise ValueError("SANDBOX_PATH_DENIED")
+    normalized = unicodedata.normalize("NFKC", name)
+    punctuation = " _.-()（）【】"
+    if (len(name.encode("utf-8", errors="surrogatepass")) > 240
+            or name[0] in " ." or name[-1] in " ."
+            or normalized[0] in " ." or normalized[-1] in " ."
+            or ".." in normalized
+            or any(not (c.isalnum() or unicodedata.category(c).startswith("M")
+                        or c in punctuation) for c in name)
+            or any(c in normalized for c in '/\\:*?"<>|')
+            or re.fullmatch(r"(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])",
+                            normalized.split(".", 1)[0].rstrip(" ."), re.IGNORECASE)):
+        raise ValueError("SANDBOX_PATH_DENIED")
+    return name
+
+
+def demultiplex(raw):
+    stdout, stderr = bytearray(), bytearray()
+    offset = 0
+    while offset < len(raw):
+        if len(raw) - offset < 8 or raw[offset + 1:offset + 4] != b"\x00\x00\x00":
+            raise ValueError("SANDBOX_STREAM_INVALID")
+        channel, length = raw[offset], int.from_bytes(raw[offset + 4:offset + 8], "big")
+        if channel not in {1, 2} or offset + 8 + length > len(raw):
+            raise ValueError("SANDBOX_STREAM_INVALID")
+        target = stdout if channel == 1 else stderr
+        target.extend(raw[offset + 8:offset + 8 + length])
+        if len(stdout) > MAX_BYTES or len(stderr) > 16384:
+            raise ValueError("SANDBOX_OUTPUT_SIZE")
+        offset += 8 + length
+    return bytes(stdout), bytes(stderr)
+
+
+def container_config(identity, image):
+    if not re.fullmatch(r"[a-f0-9]{64}", identity) or not re.fullmatch(
+        r"sha256:[a-f0-9]{64}", image
+    ):
+        raise ValueError("SANDBOX_CONFIG_INVALID")
+    return {
+        "Image": image,
+        "User": "10001:10001",
+        "WorkingDir": "/workspace",
+        "Cmd": ["/opt/runtime/bin/python", "-I", "-c", "import time; time.sleep(3600)"],
+        "Env": [
+            "HOME=/tmp",
+            "MPLCONFIGDIR=/tmp/matplotlib",
+            "MPLBACKEND=Agg",
+            "OPENBLAS_NUM_THREADS=1",
+            "OMP_NUM_THREADS=1",
+        ],
+        "Labels": {LABEL: identity, LABEL + ".created": str(time.time())},
+        "NetworkDisabled": True,
+        "HostConfig": {
+            "NetworkMode": "none",
+            "ReadonlyRootfs": True,
+            "CapDrop": ["ALL"],
+            "SecurityOpt": ["no-new-privileges:true"],
+            "Privileged": False,
+            "Memory": 768 * 1024**2,
+            "MemorySwap": 768 * 1024**2,
+            "NanoCpus": 1_000_000_000,
+            "PidsLimit": 64,
+            "AutoRemove": False,
+            "Tmpfs": {
+                "/workspace": "rw,nosuid,nodev,size=134217728,uid=10001,gid=10001,mode=0700",
+                "/tmp": "rw,nosuid,nodev,size=67108864,uid=10001,gid=10001,mode=0700",
+            },
+            "Ulimits": [
+                {"Name": "nofile", "Soft": 128, "Hard": 128},
+                {"Name": "fsize", "Soft": 16777216, "Hard": 16777216},
+            ],
+            "LogConfig": {"Type": "none"},
+        },
+    }
+
+
+class Engine:
+    def __init__(self):
+        self.client = httpx.Client(
+            transport=httpx.HTTPTransport(uds="/var/run/docker.sock"),
+            base_url="http://docker",
+            timeout=15,
+        )
+
+    def request(self, method, path, **kwargs):
+        response = self.client.request(method, path, **kwargs)
+        if response.status_code not in {200, 201, 204, 304}:
+            raise ValueError("SANDBOX_ENGINE_ERROR")
+        return response
+
+    def find(self, identity):
+        name = "semibrain-sandbox-" + identity[:32]
+        response = self.client.get("/containers/" + name + "/json")
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        row = response.json()
+        if row["Config"]["Labels"].get(LABEL) != identity:
+            raise ValueError("SANDBOX_BINDING_MISMATCH")
+        return row
+
+    def acquire(self, identity):
+        with CREATION:
+            row = self.find(identity)
+            if row:
+                return row["Id"], True
+            all_rows = self.request(
+                "GET",
+                "/containers/json",
+                params={"all": True, "filters": json.dumps({"label": [LABEL]})},
+            ).json()
+            if len(all_rows) >= 8:
+                raise ValueError("SANDBOX_CAPACITY")
+            config = container_config(identity, os.environ["SEMIBRAIN_SANDBOX_IMAGE"])
+            created = self.request(
+                "POST",
+                "/containers/create",
+                params={"name": "semibrain-sandbox-" + identity[:32]},
+                json=config,
+            ).json()
+            return created["Id"], False
+
+    def stop(self, identity, remove=False):
+        row = self.find(identity)
+        if not row:
+            return
+        self.request("POST", "/containers/" + row["Id"] + "/stop", params={"t": 1})
+        if remove:
+            self.request("DELETE", "/containers/" + row["Id"], params={"force": True})
+
+    def put(self, container, files):
+        # Archive upload rejects a read-only root even for a writable tmpfs.
+        # Fixed non-root helper; content is a data argument, never shell syntax.
+        if sum(map(len, files.values())) > MAX_BYTES:
+            raise ValueError("SANDBOX_INPUT_SIZE")
+        deadline = time.monotonic() + 20
+        helper = (
+            "import os,sys,base64; "
+            "flags=os.O_WRONLY|os.O_CREAT|os.O_NOFOLLOW|"
+            "(os.O_TRUNC if sys.argv[3]=='0' else os.O_APPEND); "
+            "fd=os.open(sys.argv[1],flags,0o600); "
+            "f=os.fdopen(fd,'wb');f.write(base64.b64decode(sys.argv[2],validate=True));f.close()"
+        )
+        for name, raw in files.items():
+            safe_name(name)
+            for offset in range(0, max(1, len(raw)), 48 * 1024):
+                exec_id = self.request("POST", "/containers/" + container + "/exec", json={
+                    "User": "10001:10001", "WorkingDir": "/workspace",
+                    "AttachStdout": False, "AttachStderr": False,
+                    "Cmd": ["/opt/runtime/bin/python", "-I", "-c", helper, "/workspace/" + name,
+                            base64.b64encode(raw[offset:offset + 48 * 1024]).decode(), str(offset)],
+                }).json()["Id"]
+                self.request("POST", "/exec/" + exec_id + "/start", json={"Detach": True, "Tty": False})
+                while True:
+                    state = self.request("GET", "/exec/" + exec_id + "/json").json()
+                    if not state["Running"]:
+                        if state["ExitCode"] != 0:
+                            raise ValueError("SANDBOX_TRANSFER_FAILED")
+                        break
+                    if time.monotonic() >= deadline:
+                        raise ValueError("SANDBOX_TRANSFER_TIMEOUT")
+                    time.sleep(0.01)
+
+    def get(self, container, name):
+        safe_name(name)
+        # Read in the container mount namespace as the sandbox user. Docker's
+        # archive endpoint does not expose this runtime's tmpfs contents reliably.
+        helper = (
+            "import os,sys,stat\n"
+            "try:\n fd=os.open(sys.argv[1],os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)\n"
+            "except FileNotFoundError:\n sys.exit(44)\n"
+            "except OSError:\n sys.exit(45)\n"
+            "with os.fdopen(fd,'rb') as f:\n st=os.fstat(f.fileno())\n"
+            " if not stat.S_ISREG(st.st_mode) or st.st_size>16777216: sys.exit(45)\n"
+            " data=f.read(16777217)\n"
+            "if len(data)>16777216: sys.exit(45)\n"
+            "sys.stdout.buffer.write(data)"
+        )
+        exec_id = self.request("POST", "/containers/" + container + "/exec", json={
+            "User": "10001:10001", "WorkingDir": "/workspace",
+            "AttachStdout": True, "AttachStderr": True,
+            "Cmd": ["/opt/runtime/bin/python", "-I", "-c", helper, "/workspace/" + name],
+        }).json()["Id"]
+        with self.client.stream("POST", "/exec/" + exec_id + "/start",
+                                json={"Detach": False, "Tty": False}) as response:
+            response.raise_for_status()
+            buffer = bytearray()
+            for chunk in response.iter_bytes():
+                buffer.extend(chunk)
+                if len(buffer) > MAX_BYTES + 65536:
+                    raise ValueError("SANDBOX_OUTPUT_SIZE")
+        stdout, _ = demultiplex(buffer)
+        state = self.request("GET", "/exec/" + exec_id + "/json").json()
+        if state["Running"] or state["ExitCode"] != 0:
+            if not state["Running"] and state["ExitCode"] == 44:
+                return None
+            raise ValueError("SANDBOX_EXPORT_NOT_REGULAR")
+        return stdout
+
+    def execute(self, body):
+        identity = body["identity"]
+        container_config(identity, os.environ["SEMIBRAIN_SANDBOX_IMAGE"])
+        if not isinstance(body.get("code"), str) or len(body["code"].encode()) > 32000:
+            raise ValueError("SANDBOX_CODE_SIZE")
+        exports = body.get("exports", [])
+        if len(exports) > 8 or len(set(exports)) != len(exports):
+            raise ValueError("SANDBOX_EXPORT_LIMIT")
+        for name in exports:
+            safe_name(name)
+        files = {
+            safe_name(name): base64.b64decode(raw, validate=True)
+            for name, raw in body.get("files", {}).items()
+        }
+        if len(files) > 16:
+            raise ValueError("SANDBOX_FILE_LIMIT")
+        with CREATION:
+            lock = LOCKS.setdefault(identity, threading.Lock())
+        if not lock.acquire(blocking=False):
+            raise ValueError("SANDBOX_BUSY")
+        if not ACTIVE.acquire(blocking=False):
+            lock.release()
+            raise ValueError("SANDBOX_CAPACITY")
+        try:
+            container, reused = self.acquire(identity)
+            TOUCHED[identity] = time.time()
+            # Every command starts without surviving child processes. Only validated
+            # file snapshots are rehydrated; interpreter memory is never promised.
+            self.request("POST", "/containers/" + container + "/start")
+            files["semibrain_command.py"] = body["code"].encode()
+            self.put(container, files)
+            exec_id = self.request(
+                "POST",
+                "/containers/" + container + "/exec",
+                json={
+                    "AttachStdout": False,
+                    "AttachStderr": False,
+                    "User": "10001:10001",
+                    "WorkingDir": "/workspace",
+                    "Cmd": [
+                        "/opt/runtime/bin/python",
+                        "-I",
+                        "-c",
+                        "import subprocess; f=open('/workspace/semibrain_stdout.txt','wb'); "
+                        "p=subprocess.run(['/opt/runtime/bin/python','semibrain_command.py'],"
+                        "stdout=f,stderr=subprocess.STDOUT); raise SystemExit(p.returncode)",
+                    ],
+                },
+            ).json()["Id"]
+            self.request("POST", "/exec/" + exec_id + "/start", json={"Detach": True, "Tty": False})
+            deadline = time.monotonic() + min(30, max(1, int(body.get("seconds", 30))))
+            while True:
+                state = self.request("GET", "/exec/" + exec_id + "/json").json()
+                if not state["Running"]:
+                    break
+                if time.monotonic() >= deadline:
+                    raise ValueError("SANDBOX_TIMEOUT")
+                time.sleep(0.1)
+            stdout = self.get(container, "semibrain_stdout.txt") or b""
+            output, total = [], 0
+            for name in exports:
+                raw = self.get(container, name)
+                if raw is None:
+                    continue
+                total += len(raw)
+                if total > MAX_BYTES:
+                    raise ValueError("SANDBOX_OUTPUT_SIZE")
+                output.append({"name": name, "base64": base64.b64encode(raw).decode()})
+            return {
+                "container_id": container,
+                "reused": reused,
+                "exit_code": state["ExitCode"],
+                "stdout": stdout[:16000].decode("utf-8", errors="replace"),
+                "stdout_truncated": len(stdout) > 16000,
+                "files": output,
+            }
+        finally:
+            try:
+                self.stop(identity)
+            finally:
+                TOUCHED[identity] = time.time()
+                ACTIVE.release()
+                lock.release()
+
+
+def sweep():
+    while True:
+        time.sleep(30)
+        try:
+            engine = Engine()
+            rows = engine.request(
+                "GET",
+                "/containers/json",
+                params={"all": True, "filters": json.dumps({"label": [LABEL]})},
+            ).json()
+            for row in rows:
+                identity = row["Labels"][LABEL]
+                created = float(row["Labels"].get(LABEL + ".created", 0))
+                if (
+                    time.time() - created > 3600
+                    or time.time() - TOUCHED.get(identity, created) > 900
+                ):
+                    lock = LOCKS.get(identity)
+                    if not lock or not lock.locked():
+                        engine.stop(identity, remove=True)
+        except Exception:
+            pass  # Next sweep retries; the execution path still has hard time/resource limits.
+        finally:
+            if "engine" in locals():
+                engine.client.close()
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def do_POST(self):
+        secret = os.environ["SEMIBRAIN_SANDBOX_SECRET"]
+        if not hmac.compare_digest(self.headers.get("Authorization", ""), "Bearer " + secret):
+            self.send_error(403)
+            return
+        try:
+            size = int(self.headers.get("Content-Length", "0"))
+            if size <= 0 or size > 24 * 1024**2:
+                raise ValueError("SANDBOX_REQUEST_SIZE")
+            body = json.loads(self.rfile.read(size))
+            identity = body["identity"]
+            if not re.fullmatch(r"[a-f0-9]{64}", identity):
+                raise ValueError("SANDBOX_BINDING_INVALID")
+            engine = Engine()
+            if self.path == "/execute":
+                result = engine.execute(body)
+            elif self.path in {"/stop", "/destroy"}:
+                engine.stop(identity, remove=self.path == "/destroy")
+                result = {"stopped": True}
+            else:
+                self.send_error(404)
+                return
+            status = 200
+        except Exception as exc:
+            status = 409
+            code = str(exc)
+            result = {"error": code if re.fullmatch(r"SANDBOX_[A-Z_]+", code) else "SANDBOX_FAILED"}
+        finally:
+            if "engine" in locals():
+                engine.client.close()
+        raw = json.dumps(result).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+
+def main():
+    from socketserver import UnixStreamServer
+
+    class Server(ThreadingMixIn, UnixStreamServer):
+        daemon_threads = True
+
+    path = "/control/broker.sock"
+    if os.path.exists(path):
+        os.unlink(path)
+    with Server(path, Handler) as server:
+        os.chmod(path, 0o660)
+        os.chown(path, 0, 10001)
+        threading.Thread(target=sweep, daemon=True).start()
+        server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

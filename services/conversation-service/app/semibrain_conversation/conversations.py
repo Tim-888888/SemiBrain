@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pymongo import ReturnDocument
 from semibrain_common.runtime import (
     call,
@@ -77,6 +77,7 @@ def list_conversations(after: str = "", user=Depends(current_user)):
                 "title": r["title"],
                 "revision": r["revision"],
                 "updated_at": r["updated_at"],
+                "last_investigation_strategy": r.get("last_investigation_strategy", "single_agent"),
             }
             for r in rows[:30]
         ],
@@ -94,6 +95,38 @@ class MessageInput(BaseModel):
     attachment_refs: list[UUID] = Field(default_factory=list, max_length=10)
     allow_web: bool = False
     continuation_of: UUID | None = None
+    investigation_strategy: Literal["single_agent", "multi_agent"] | None = None
+
+    @model_validator(mode="after")
+    def strategy_matches_mode(self):
+        if self.mode == "quick_qa" and self.investigation_strategy is not None:
+            raise ValueError("STRATEGY_REQUIRES_INVESTIGATION")
+        return self
+
+
+@router.get("/v1/capabilities")
+def capabilities(user=Depends(current_user)):
+    return call("agent", "GET", "/internal/v1/capabilities").json()
+
+
+def submission_response(row):
+    return {
+        "run_id": row["_id"], "turn_id": row["input"]["turn_id"],
+        "input_revision": row["input"]["input_revision"], "status": row["status"],
+        "status_url": "/v1/runs/" + row["_id"],
+        "events_url": "/v1/runs/" + row["_id"] + "/events",
+        "continuation": row.get("continuation"),
+    }
+
+
+def submission_matches(row, form):
+    payload = form.model_dump(mode="json")
+    if row["payload_hash"] == digest(canonical(payload)):
+        return True
+    if "investigation_strategy" not in row["input"] and form.investigation_strategy is None:
+        payload.pop("investigation_strategy", None)
+        return row["payload_hash"] == digest(canonical(payload))
+    return False
 
 
 @router.post("/v1/conversations/{conversation_id}/messages", status_code=202)
@@ -103,7 +136,20 @@ def submit(conversation_id: str, form: MessageInput, request: Request, user=Depe
         failure("EMPTY_MESSAGE")
     key = digest(user["_id"] + ":" + conversation_id + ":" + str(form.request_id))
     payload_hash = digest(canonical(form.model_dump(mode="json")))
+    existing = db().gateway_runs.find_one({"request_key": key})
+    if existing:
+        if not submission_matches(existing, form):
+            failure("IDEMPOTENCY_CONFLICT", 409)
+        # Admission flags and current run state cannot invalidate an accepted replay.
+        return submission_response(existing)
     run_id, turn_id, task_id = uid(), uid(), uid()
+    strategy = (
+        (form.investigation_strategy or "single_agent") if form.mode == "investigation" else None
+    )
+    if strategy == "multi_agent":
+        available = call("agent", "GET", "/internal/v1/capabilities").json()
+        if not available.get("multi_agent"):
+            failure("MULTI_AGENT_UNAVAILABLE", 409)
     continuation = None
     if form.continuation_of:
         prior = db().gateway_runs.find_one(
@@ -124,6 +170,10 @@ def submit(conversation_id: str, form: MessageInput, request: Request, user=Depe
                 "attachment_refs": [str(x) for x in form.attachment_refs],
             }.items()
         )
+        same_scope = same_scope and (
+            (prior["input"].get("investigation_strategy") or "single_agent")
+            == (strategy or "single_agent")
+        )
         continuation = {
             "from_run_id": prior["_id"],
             "kind": "clarification" if same_scope else "scope_change",
@@ -131,15 +181,52 @@ def submit(conversation_id: str, form: MessageInput, request: Request, user=Depe
         if same_scope:
             task_id = prior["task_id"]
 
+    # Network calls stay outside the transaction; revision CAS below protects the gap.
+    confirmed_terminal = set()
+    for active in (
+        db()
+        .gateway_runs.find(
+            {
+                "input.conversation_id": conversation_id,
+                "owner_id": user["_id"],
+                "status": {"$in": ["dispatching", "queued", "running", "retrying", "cancelling"]},
+            }
+        )
+        .limit(10)
+    ):
+        if active.get("request_key") == key:
+            continue
+        state = call("agent", "GET", "/internal/v1/runs/" + active["_id"]).json()
+        if state["status"] not in {"succeeded", "partial", "failed", "cancelled", "waiting_input"}:
+            failure("CONVERSATION_RUN_ACTIVE", 409)
+        confirmed_terminal.add(active["_id"])
+
     def accept(session):
         existing = db().gateway_runs.find_one({"request_key": key}, session=session)
         if existing:
-            if existing["payload_hash"] != payload_hash:
+            if not submission_matches(existing, form):
                 failure("IDEMPOTENCY_CONFLICT", 409)
             return existing
+        active = db().gateway_runs.find_one(
+            {
+                "input.conversation_id": conversation_id,
+                "owner_id": user["_id"],
+                "status": {"$in": ["dispatching", "queued", "running", "retrying", "cancelling"]},
+                "_id": {"$nin": list(confirmed_terminal)},
+            },
+            session=session,
+        )
+        if active:
+            failure("CONVERSATION_RUN_ACTIVE", 409)
         conv = db().conversations.find_one_and_update(
             {"_id": conversation_id, "owner_id": user["_id"], "revision": form.expected_revision},
-            {"$inc": {"revision": 1}, "$set": {"updated_at": now()}},
+            {
+                "$inc": {"revision": 1},
+                "$set": {
+                    "updated_at": now(),
+                    **({"last_investigation_strategy": strategy} if strategy else {}),
+                },
+            },
             return_document=ReturnDocument.AFTER,
             session=session,
         )
@@ -152,6 +239,7 @@ def submit(conversation_id: str, form: MessageInput, request: Request, user=Depe
             question=form.text,
             mode=form.mode,
             allow_web=form.allow_web,
+            investigation_strategy=strategy,
             resource_restrictions=[str(x) for x in form.resource_restrictions],
             attachment_refs=form.attachment_refs,
         )
@@ -218,15 +306,7 @@ def submit(conversation_id: str, form: MessageInput, request: Request, user=Depe
                 {"_id": row["_id"]}, {"$set": {"trace_root_id": span.span.id}}
             )
         span.end(status=row["status"])
-    return {
-        "run_id": row["_id"],
-        "turn_id": row["input"]["turn_id"],
-        "input_revision": row["input"]["input_revision"],
-        "status": row["status"],
-        "status_url": "/v1/runs/" + row["_id"],
-        "events_url": "/v1/runs/" + row["_id"] + "/events",
-        "continuation": row.get("continuation"),
-    }
+    return submission_response(row)
 
 
 @router.get("/v1/conversations/{conversation_id}/messages")

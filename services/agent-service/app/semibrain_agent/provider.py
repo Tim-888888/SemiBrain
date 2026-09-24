@@ -30,8 +30,11 @@ class ModelProfile:
     parallel_tool_calls: bool = True
     reasoning_effort: str | None = "none"
     encrypted_reasoning: bool = False
-    version: str = "api-profiles-v4"
-    model_origin: str = "api_simulated"
+    version: str = "api-profiles-v6"
+    model_origin: str = "remote_api"
+    role_implementation: str = "prompt_role"
+    context_window_tokens: int = 128000
+    context_headroom_tokens: int = 8192
 
     def snapshot(self):
         return {key: value for key, value in asdict(self).items() if key != "credential_prefix"}
@@ -49,7 +52,8 @@ def profile_for(role="investigator"):
             image_input=True,
             reasoning_effort=None,
         )
-    if role not in {"understanding", "investigator", "reviewer", "rca"}:
+    if role not in {"understanding", "investigator", "reviewer", "rca",
+                    "supervisor", "sqlbot", "rag", "tool"}:
         raise ModelError("UNKNOWN_MODEL_ROLE")
     default = os.getenv("SEMIBRAIN_LLM_DEFAULT_MODEL", "deepseek-flash")
     model = os.getenv("SEMIBRAIN_LLM_" + role.upper() + "_MODEL", default)
@@ -61,6 +65,8 @@ def profile_for(role="investigator"):
         reasoning_effort=os.getenv("SEMIBRAIN_LLM_REASONING_EFFORT", "none"),
         encrypted_reasoning=os.getenv("SEMIBRAIN_LLM_ENCRYPTED_REASONING", "false").lower()
         == "true",
+        context_window_tokens=int(os.getenv("SEMIBRAIN_LLM_CONTEXT_WINDOW_TOKENS", "128000")),
+        context_headroom_tokens=int(os.getenv("SEMIBRAIN_LLM_CONTEXT_HEADROOM_TOKENS", "8192")),
     )
 
 
@@ -90,6 +96,9 @@ def normalized_usage(raw):
             not isinstance(value, int) or isinstance(value, bool) or value < 0
         ):
             result[key] = None
+    cached = (raw.get("input_tokens_details") or raw.get("prompt_tokens_details") or {}).get("cached_tokens", raw.get("prompt_cache_hit_tokens"))
+    if isinstance(cached, int) and not isinstance(cached, bool) and 0 <= cached <= (result["input_tokens"] or 0):
+        result["cached_input_tokens"] = cached
     return result
 
 
@@ -158,8 +167,10 @@ class ProviderAdapter:
         if time.monotonic() >= self.deadline:
             raise ModelError("MODEL_DEADLINE")
 
-    def turn(self, system, inputs, *, tools=None, max_tokens=2048, on_text=None):
+    def turn(self, system, inputs, *, tools=None, max_tokens=2048, on_text=None, tool_choice=None):
         self.check()
+        if tool_choice not in {None, "auto", "none"}:
+            raise ModelError("MODEL_TOOL_CHOICE_INVALID")
         if self.profile.protocol != "responses":
             raise ModelError("MODEL_PROTOCOL_UNAVAILABLE")
         if tools and not self.profile.tool_calling:
@@ -187,7 +198,7 @@ class ProviderAdapter:
             payload.update(
                 tools=tools,
                 parallel_tool_calls=self.profile.parallel_tool_calls,
-                tool_choice="auto",
+                tool_choice=tool_choice or "auto",
             )
         else:
             payload["tool_choice"] = "none"
@@ -262,13 +273,16 @@ class ProviderAdapter:
         try:
             error = json.loads(raw).get("error", {})
             code = error.get("code") if isinstance(error, dict) else None
-            return code if code in {"insufficient_balance", "insufficient_quota"} else None
+            return code if code in {"insufficient_balance", "insufficient_quota",
+                                   "context_length_exceeded", "context_window_exceeded"} else None
         except (ValueError, AttributeError, TypeError):
             return None
 
     @staticmethod
     def _check_http(status, error_code=None):
         if status >= 400:
+            if error_code in {"context_length_exceeded", "context_window_exceeded"}:
+                raise ModelError("MODEL_CONTEXT_OVERFLOW")
             if error_code in {"insufficient_balance", "insufficient_quota"}:
                 raise ModelError("MODEL_PAYMENT_REQUIRED")
             code = {

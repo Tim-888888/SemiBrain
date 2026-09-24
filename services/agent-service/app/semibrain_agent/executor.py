@@ -6,9 +6,13 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from semibrain_common.runtime import canonical, digest, now
+from semibrain_common.text_window import read_window
+from semibrain_common.tool_errors import SANDBOX_ARGUMENT_ERRORS
 from semibrain_contracts.models import EvidenceRef, SourceRef, assert_no_credentials
 
 from semibrain_agent.harness import BudgetExhausted, RunStopped
+from semibrain_agent.query_contract import QueryScopeError, bind_query
+from semibrain_agent.web_composition import compose_search, state_for, tool_seconds
 
 
 class Search(BaseModel):
@@ -28,6 +32,9 @@ class Read(BaseModel):
 class EvidenceRead(BaseModel):
     model_config = ConfigDict(extra="forbid")
     evidence_id: UUID
+    offset: int = Field(default=0, ge=0, le=1000000)
+    length: int | None = Field(default=None, ge=200, le=12000)
+    query: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 LOCAL_TOOLS = {
@@ -41,7 +48,7 @@ LOCAL_TOOLS = {
     ),
     "evidence.read": (
         EvidenceRead,
-        "重新读取本运行已经保存的证据，适用于上下文压缩后的原内容核验。",
+        "读取本运行已保存证据，可用offset/length取原文区段或query在留存原文中精确定位。网页未抓取部分无法恢复，请用web.read续读快照。",
     ),
 }
 
@@ -77,10 +84,11 @@ class ToolExecutor:
     def __init__(self, harness, client):
         self.harness, self.client = harness, client
         self.db, self.run_id = harness.db, harness.run_id
+        self.web = state_for(harness)
 
     def evidence(self):
         records = list(
-            self.db.evidence.find({"run_id": self.run_id, "marker": {"$exists": True}}).sort(
+            self.db.evidence.find({"run_id": self.run_id, "marker": {"$exists": True}, "body_expired_at": {"$exists": False}}).sort(
                 "ordinal", 1
             )
         )
@@ -90,7 +98,11 @@ class ToolExecutor:
         self.client.request("POST", "/internal/v1/lineage/check", json={"refs": refs})
         return records
 
-    def register(
+    def register(self, **kwargs):
+        with self.web.registration:
+            return self._register(**kwargs)
+
+    def _register(
         self,
         *,
         source,
@@ -101,6 +113,8 @@ class ToolExecutor:
         job_id=None,
         location=None,
         limitations=None,
+        image_refs=None,
+        context_header=None,
     ):
         identity = str(
             uuid5(
@@ -145,6 +159,8 @@ class ToolExecutor:
             "asset_id": asset_id,
             "job_id": job_id,
             "location": location or {},
+            "image_refs": image_refs or [],
+            "context_header": context_header or "",
         }
         self.harness.save_record("evidence", identity, record)
         return {"_id": identity, **record}
@@ -162,6 +178,8 @@ class ToolExecutor:
                 "source",
                 "limitations",
                 "job_id",
+                "image_refs",
+                "context_header",
             )
         }
 
@@ -173,7 +191,7 @@ class ToolExecutor:
                 source_version=chunk["version"],
                 content_hash=chunk["content_hash"],
                 scope_ref="demo",
-                kind="document",
+                kind="image" if chunk.get("media_type", "").startswith("image/") else "document",
                 data_origin=chunk["data_origin"],
                 observed_at=now(),
                 locator=chunk["location"],
@@ -185,6 +203,8 @@ class ToolExecutor:
                 refs=[chunk["lineage_ref"]],
                 asset_id=chunk["asset_id"],
                 location=chunk["location"],
+                image_refs=chunk.get("image_refs", []),
+                context_header=chunk.get("context_header", ""),
                 limitations=["PARTIAL_DOCUMENT"] if chunk.get("truncated") else [],
             )
             evidence.append(
@@ -198,17 +218,92 @@ class ToolExecutor:
         return evidence
 
     def execute(self, name, raw_arguments, logical_id):
+        if name == "web.search":
+            try:
+                arguments = json.loads(raw_arguments)
+                query, provider = arguments["query"], arguments.get("provider", "auto")
+            except (ValueError, TypeError, KeyError):
+                return self._execute(name, raw_arguments, logical_id)
+            lock = self.web.url_lock("search:" + canonical([provider, query]))
+            if not lock.acquire(timeout=tool_seconds(self, 55)):
+                raise TimeoutError("WEB_SEARCH_WAIT_TIMEOUT")
+            try:
+                previous = self.db.observations.find_one({"run_id": self.run_id,
+                    "observation.tool": name, "observation.arguments.query": query,
+                    "observation.arguments.provider": provider,
+                    "observation.status": "succeeded"})
+                if previous and previous["_id"] != logical_id:
+                    self.tool_guard()
+                    self.client.request("GET", "/internal/v1/tools")
+                    self.evidence()
+                    value = {**previous["observation"], "call_ref": logical_id,
+                             "arguments": arguments, "reused_from": previous["_id"]}
+                    if arguments.get("content") and not value.get("data", {}).get("content_requested"):
+                        value = compose_search(self, value, arguments, logical_id)
+                    self.harness.save_record("observations", logical_id, {"observation": value})
+                    return value
+                return self._execute(name, raw_arguments, logical_id)
+            finally:
+                lock.release()
+        if name == "web.fetch":
+            # Serialize only the same URL, not different pages or whole tool executions.
+            try:
+                url = json.loads(raw_arguments).get("url")
+            except (ValueError, AttributeError):
+                url = None
+            if url:
+                lock = self.web.url_lock(url)
+                if not lock.acquire(timeout=tool_seconds(self, 55)):
+                    raise TimeoutError("WEB_FETCH_WAIT_TIMEOUT")
+                try:
+                    previous = self.db.observations.find_one({"run_id": self.run_id,
+                        "observation.tool": name, "observation.arguments.url": url,
+                        "observation.status": "succeeded"})
+                    if previous and previous["_id"] != logical_id:
+                        self.harness.check()
+                        self.evidence()
+                        value = {**previous["observation"], "call_ref": logical_id,
+                                 "reused_from": previous["_id"]}
+                        self.harness.save_record("observations", logical_id, {"observation": value})
+                        return value
+                    return self._execute(name, raw_arguments, logical_id)
+                finally:
+                    lock.release()
+        return self._execute(name, raw_arguments, logical_id)
+
+    def _execute(self, name, raw_arguments, logical_id):
         self.harness.check()
         saved = self.db.observations.find_one({"_id": logical_id, "run_id": self.run_id})
         if saved and saved.get("observation"):
             self.evidence()
             return saved["observation"]
-        self.harness.reserve_tool(logical_id, name)
+        args = {}
         try:
             args = json.loads(raw_arguments)
             if not isinstance(args, dict):
                 raise ValueError("TOOL_OBJECT_REQUIRED")
             assert_no_credentials(args)
+            if name == "web.search":
+                from semibrain_common.web_contract import WebSearch
+                args = WebSearch.model_validate(args).model_dump(mode="json")
+            args = bind_query(name, args, getattr(self, "intent", {}))
+            reusable = {"business.search_lots", "business.get_yield_summary",
+                        "business.get_lot_context", "business.get_process_history",
+                        "business.get_fdc_alerts", "business.statistics"}
+            if name in reusable:
+                previous = self.db.observations.find_one({
+                    "run_id": self.run_id, "observation.tool": name,
+                    "observation.arguments": args, "observation.status": "succeeded",
+                    "observation.reused_from": {"$exists": False},
+                })
+                if previous:
+                    self.evidence()  # Reauthorize sources before reusing within this immutable run.
+                    observation = {**previous["observation"], "call_ref": logical_id,
+                                   "reused_from": previous["_id"],
+                                   "notice": "复用本运行相同范围的成功查询，未再次访问业务数据。"}
+                    self.harness.save_record("observations", logical_id, {"observation": observation})
+                    return observation
+            self.harness.reserve_tool(logical_id, name)
             if name in LOCAL_TOOLS:
                 args = LOCAL_TOOLS[name][0].model_validate(args).model_dump(mode="json")
             if name == "knowledge.search":
@@ -230,17 +325,28 @@ class ToolExecutor:
                 records = {item["evidence_id"]: item for item in self.evidence()}
                 if args["evidence_id"] not in records:
                     raise ValueError("EVIDENCE_NOT_IN_RUN")
+                record = self.observation(records[args["evidence_id"]])
+                value = record.get("content")
+                field = next((k for k in ("text", "stdout") if isinstance(value, dict) and isinstance(value.get(k), str)), None)
+                if (args.get("length") or args.get("query") or args.get("offset")) and (isinstance(value, str) or field):
+                    window = read_window(value[field] if field else value, args["offset"], args.get("length") or 7000, args.get("query"))
+                    record["content"] = {**value, field: window["text"]} if field else window["text"]
+                    record["projection"] = {k: v for k, v in window.items() if k != "text"}
+                    if field == "text":
+                        start = value.get("offset", 0)
+                        record["content"].update(offset=start + window["offset"],
+                            next_offset=start + window["next_offset"] if window["next_offset"] is not None else value.get("next_offset"))
                 observation = {
                     "status": "succeeded",
-                    "evidence": [self.observation(records[args["evidence_id"]])],
+                    "evidence": [record],
                 }
             else:
                 result = self.client.tool(
                     name,
                     args,
                     logical_id=logical_id,
-                    guard=self.harness.check,
-                    timeout=65 if name.startswith("web.") else 30,
+                    guard=self.tool_guard,
+                    timeout=tool_seconds(self, 65 if name.startswith(("web.", "sandbox.", "vision.")) else 30),
                 )
                 observation = {
                     "status": result["status"],
@@ -248,13 +354,14 @@ class ToolExecutor:
                     "warnings": result.get("warnings", []),
                     "error": result.get("error"),
                 }
-                if name == "web.search":
+                if name in {"web.search", "web.fetch", "vision.inspect"}:
                     self.harness.settle_external_tool(
                         logical_id, (result.get("data") or {}).get("usage")
                     )
                 if result["status"] in {"succeeded", "partial"}:
                     if name == "web.search":
                         observation["data"] = result["data"]
+                        observation = compose_search(self, observation, args, logical_id)
                         observation.update(call_ref=logical_id, tool=name, arguments=args)
                         self.harness.save_record(
                             "observations", logical_id, {"observation": observation}
@@ -269,6 +376,8 @@ class ToolExecutor:
                             result["data"].get("title") or result["data"].get("url") or "公开网页"
                         )
                         if name.startswith("web.")
+                        else "图片观察" if name == "vision.inspect"
+                        else "沙箱分析 · " + name if name.startswith("sandbox.")
                         else "合成演示数据 · " + name,
                         refs=refs,
                         job_id=result["job_id"],
@@ -285,13 +394,18 @@ class ToolExecutor:
                         + (["PARTIAL_RESULT"] if result["status"] == "partial" else []),
                     )
                     observation["evidence"] = [self.observation(saved)]
+                elif name == "web.search":
+                    observation = compose_search(self, observation, args, logical_id)
             observation.update(call_ref=logical_id, tool=name, arguments=args)
         except (RunStopped, BudgetExhausted):
             raise
         except (ValueError, HTTPException, TimeoutError) as exc:
-            if name == "web.search":
+            if name in {"web.search", "web.fetch", "vision.inspect"}:
                 self.harness.settle_external_tool(logical_id, None)
             code = (
+                "QUERY_SCOPE_MISMATCH"
+                if isinstance(exc, QueryScopeError)
+                else
                 exc.detail.get("code", "TOOL_REQUEST_FAILED")
                 if isinstance(exc, HTTPException) and isinstance(exc.detail, dict)
                 else "TOOL_DEADLINE"
@@ -300,14 +414,23 @@ class ToolExecutor:
             )
             observation = {
                 "status": "failed",
-                "error": {"code": code},
+                "error": {"code": code, **({"message": str(exc)} if isinstance(exc, QueryScopeError)
+                          else {"message": SANDBOX_ARGUMENT_ERRORS[code]}
+                          if code in SANDBOX_ARGUMENT_ERRORS else {})},
                 "tool": name,
                 "call_ref": logical_id,
                 "evidence": [],
             }
+            if name == "web.search" and isinstance(args, dict):
+                observation = compose_search(self, observation, args, logical_id)
         self.harness.check()
         self.harness.save_record("observations", logical_id, {"observation": observation})
         # Terminal observation journal is immutable and can be replayed after a checkpoint gap.
         return self.db.observations.find_one({"_id": logical_id, "run_id": self.run_id})[
             "observation"
         ]
+
+    def tool_guard(self):
+        self.harness.check()
+        if hasattr(self.harness, "investigation_gate"):
+            self.harness.investigation_gate()

@@ -264,6 +264,37 @@ def call(service: str, method: str, path: str, *, delegation=None, timeout=30, *
     url = os.environ[f"SEMIBRAIN_{service.upper()}_URL"] + path
     response = httpx.request(method, url, headers=headers, timeout=timeout, **kwargs)
     if response.status_code >= 400:
+        if (service == "business" and method == "POST"
+                and path.startswith("/internal/v1/knowledge/documents/")
+                and path.endswith(("/republish", "/reprocess", "/publish"))):
+            # Only fixed, public lifecycle codes may cross the service boundary.
+            try:
+                code = response.json().get("detail", {}).get("code")
+            except (ValueError, AttributeError):
+                code = None
+            allowed = {
+                409: {"REPROCESS_SOURCE_UNAVAILABLE", "REPROCESS_PENDING", "CONTEXT_DATA_INCOMPLETE",
+                      "REPUBLISH_DATA_INCOMPLETE", "REPUBLISH_NEW_VERSION_PENDING",
+                      "NO_PUBLISHED_VERSION", "DOCUMENT_ALREADY_PUBLISHED",
+                      "REVISION_CONFLICT", "IDEMPOTENCY_CONFLICT"},
+                503: {"REPUBLISH_CHECK_UNAVAILABLE"},
+            }
+            if isinstance(code, str) and code in allowed.get(response.status_code, set()):
+                failure(code, response.status_code)
+        if (service == "business" and response.status_code == 410 and method == "GET"
+                and path.startswith("/internal/v1/assets/") and path.endswith("/content")):
+            failure("WEB_SNAPSHOT_EXPIRED", 410)
+        if (service == "business" and method == "POST"
+                and path == "/internal/v1/tool-jobs" and response.status_code == 400):
+            from semibrain_common.tool_errors import SANDBOX_ARGUMENT_ERRORS
+            try:
+                body = response.json()
+                detail = body.get("detail", {}) if isinstance(body, dict) else {}
+                code = detail.get("code") if isinstance(detail, dict) else None
+            except ValueError:
+                code = None
+            if isinstance(code, str) and code in SANDBOX_ARGUMENT_ERRORS:
+                failure(code, 400)
         if response.status_code in (400, 409, 413, 422, 429):
             # Preserve public command semantics without forwarding arbitrary upstream messages.
             code = {

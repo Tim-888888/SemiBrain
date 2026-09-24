@@ -2,6 +2,12 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { renderMarkdown } from '../src/markdown.mjs'
 
+test('numeric reference typography remains readable without rewriting the answer', () => {
+  for (const reference of ['[12]', '［12］', '［１２］', '【１２】']) {
+    assert.ok(renderMarkdown(`Observed result ${reference}.`).includes(reference))
+  }
+})
+
 test('multiline display formulas cannot become setext headings', () => {
   for (const source of [String.raw`\[
 X

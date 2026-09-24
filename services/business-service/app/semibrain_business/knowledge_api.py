@@ -1,4 +1,5 @@
 import hashlib
+import json
 from pathlib import Path
 from typing import Literal
 from uuid import UUID
@@ -9,6 +10,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from semibrain_common.runtime import canonical, digest, failure, now, transaction, uid
 
 from semibrain_business.knowledge import read_asset, store_asset, validate_path
+from semibrain_business.publication import (
+    last_published_version,
+    restore_target,
+    verify_context_version,
+    verify_restore,
+)
 from semibrain_business.retrieval import search
 from semibrain_business.security import (
     authorize_request,
@@ -20,6 +27,62 @@ from semibrain_business.security import (
 )
 
 router = APIRouter()
+
+
+@router.get("/internal/v1/knowledge/snapshot")
+def knowledge_snapshot(request: Request):
+    claim = authorize_request(request, "knowledge.search")
+    rows = list(db().documents.find({"active_version": {"$ne": None}, "revoked": {"$ne": True},
+        "$or": [{"visibility": "demo"}, {"owner_id": claim["subject_id"]}]}).limit(2001))
+    if len(rows) > 2000:
+        return {"cacheable": False}
+    restrictions = claim.get("document_ids", [])
+    versions = sorted((r["_id"], r.get("active_version"), r.get("revision")) for r in rows
+                      if can_read(r, claim) and (not restrictions or r["_id"] in restrictions))
+    return {"cacheable": True, "snapshot": digest(canonical([
+        claim["subject_id"], claim["role"], sorted(claim["resource_ids"]),
+        sorted(restrictions), versions, "hybrid-mmr-section-v2"]))}
+
+
+@router.post("/internal/v1/attachments/images", status_code=201)
+def upload_image(request: Request, file: UploadFile = File(...),
+                 allow_external: bool = Form(False),
+                 data_origin: Literal["synthetic", "public", "authorized_business"] = Form("authorized_business")):
+    import io
+
+    from PIL import Image
+
+    claim = authorize_request(request, "attachment.upload")
+    if not allow_external:
+        failure("IMAGE_EXTERNAL_USE_NOT_AUTHORIZED", 403)
+    raw = file.file.read(3 * 1024**2 + 1)
+    if not raw or len(raw) > 3 * 1024**2:
+        failure("IMAGE_SIZE_INVALID", 413)
+    try:
+        with Image.open(io.BytesIO(raw)) as image:
+            if image.format not in {"PNG", "JPEG", "WEBP"} or image.width * image.height > 16_000_000:
+                raise ValueError("IMAGE_FORMAT_INVALID")
+            format_name, size = image.format, image.size
+            image.verify()
+    except Exception:
+        failure("IMAGE_FORMAT_INVALID", 400)
+    asset = store_asset(raw, Image.MIME[format_name], claim["subject_id"],
+                        "image." + {"PNG": "png", "JPEG": "jpg", "WEBP": "webp"}[format_name])
+    db().assets.update_one({"_id": asset["_id"]}, {"$set": {
+        "chat_upload": True, "allow_external": True, "data_origin": data_origin,
+        "width": size[0], "height": size[1],
+    }})
+    return {"asset_id": asset["_id"], "name": asset["filename"], "width": size[0], "height": size[1]}
+
+
+@router.post("/internal/v1/attachments/{asset_id}/revoke")
+def revoke_attachment(asset_id: UUID, request: Request):
+    claim = authorize_request(request, "attachment.upload")
+    changed = db().assets.update_one({"_id": str(asset_id), "owner_id": claim["subject_id"], "chat_upload": True},
+                                    {"$set": {"revoked": True}})
+    if not changed.matched_count:
+        failure("ASSET_UNAVAILABLE", 403)
+    return {"revoked": True}
 
 
 def document_view(row):
@@ -60,6 +123,8 @@ def documents(request: Request):
         ):
             continue
         view = document_view(row)
+        if claim["role"] == "admin" and not row.get("active_version") and not row.get("revoked"):
+            view["restore_version"] = last_published_version(row)
         if claim["role"] == "admin" or row["owner_id"] == claim["subject_id"]:
             latest = db().ingestion_jobs.find_one(
                 {"document_id": row["_id"]}, sort=[("created_at", -1)]
@@ -74,9 +139,13 @@ def documents(request: Request):
                         "chunk_count",
                         "error",
                         "quality_findings",
+                        "operation",
                     )
                 }
                 view["ingestion"]["id"] = latest["_id"]
+                view["reprocess_source_version"] = row.get("active_version") or latest["version"]
+                view["reprocess_pending"] = (latest.get("generation") == row["revision"]
+                    and latest["status"] in {"receiving", "queued", "running", "staged"})
         items.append(view)
     return {"items": items}
 
@@ -92,6 +161,8 @@ def upload(
     allow_external: bool = Form(False),
     document_id: str = Form(""),
     expected_revision: int = Form(0),
+    images: list[UploadFile] = File(default=[]),
+    image_paths: str = Form("[]"),
 ):
     claim = authorize_request(request, "knowledge.manage")
     require_manager(claim)
@@ -104,6 +175,24 @@ def upload(
     content = file.file.read(32 * 1024**2 + 1)
     if not content or len(content) > 32 * 1024**2:
         failure("UPLOAD_SIZE_INVALID", 413)
+    from semibrain_business.document_images import BUNDLE_LIMIT, IMAGE_LIMIT, safe_image
+    try:
+        paths = json.loads(image_paths)
+        if not isinstance(paths, list) or len(paths) != len(images) or len(paths) > IMAGE_LIMIT:
+            raise ValueError("DOCUMENT_IMAGE_PATHS_INVALID")
+        attachments, total = [], len(content)
+        for image_file, image_path in zip(images, paths, strict=True):
+            image_path = validate_path(image_path)
+            raw = image_file.file.read(16 * 1024**2 + 1)
+            total += len(raw)
+            if total > BUNDLE_LIMIT:
+                raise ValueError("DOCUMENT_BUNDLE_TOO_LARGE")
+            safe, media = safe_image(raw, image_path)
+            attachments.append((image_path, safe, media))
+        if len({p for p, _, _ in attachments}) != len(attachments):
+            raise ValueError("DUPLICATE_IMAGE_PATH")
+    except (ValueError, TypeError):
+        failure("DOCUMENT_IMAGES_INVALID")
     raw_hash = hashlib.sha256(content).hexdigest()
     key = digest(claim["subject_id"] + ":" + str(request_id))
     payload_hash = digest(
@@ -111,6 +200,7 @@ def upload(
             {
                 "path": path,
                 "hash": raw_hash,
+                "images": [(p, digest(raw.hex())) for p, raw, _ in attachments],
                 "visibility": visibility,
                 "origin": data_origin,
                 "external": allow_external,
@@ -179,6 +269,10 @@ def upload(
 
     job = transaction(accept)
     if job["status"] == "receiving":
+        image_assets = []
+        for image_path, raw, media in attachments:
+            stored = store_asset(raw, media, claim["subject_id"], Path(image_path).name, document_id=job["document_id"])
+            image_assets.append({"path": image_path, "asset_id": stored["_id"]})
         asset = store_asset(
             content,
             file.content_type or "application/octet-stream",
@@ -194,6 +288,7 @@ def upload(
                     "step": "queued",
                     "asset_id": asset["_id"],
                     "source_hash": raw_hash,
+                    "image_attachments": image_assets,
                 }
             },
         )
@@ -241,6 +336,7 @@ def preview(document_id: str, version: str, request: Request):
     content = read_asset(asset).decode("utf-8")
     return {
         "body_markdown": content[:100000],
+        "image_refs": [{**r, "display_url": r["url"] + "?preview_version=" + version} for r in row.get("image_refs", [])],
         "truncated": len(content) > 100000,
         "manifest": row["manifest"],
         "chunk_count": len(row.get("chunk_ids", [])),
@@ -280,11 +376,13 @@ def activate(document_id: str, form: PublishInput, request: Request):
         )
         if not version or version["manifest"]["status"] != "staged":
             failure("VERSION_NOT_READY", 409)
+        verify_context_version(version)
         changed = db().documents.update_one(
             {"_id": document_id, "revision": form.expected_revision, "revoked": False},
             {
                 "$set": {
                     "active_version": str(form.version),
+                    "last_published_version": str(form.version),
                     "raw_asset_id": version["raw_asset_id"],
                 },
                 "$inc": {"revision": 1},
@@ -318,6 +416,76 @@ class UnpublishInput(BaseModel):
     expected_revision: int
 
 
+class ReprocessInput(UnpublishInput):
+    source_version: UUID
+
+
+@router.post("/internal/v1/knowledge/documents/{document_id}/reprocess", status_code=202)
+def reprocess_document(document_id: str, form: ReprocessInput, request: Request):
+    from semibrain_business.reprocessing import reprocess
+    return reprocess(document_id, form, authorize_request(request, "knowledge.manage"))
+
+
+@router.post("/internal/v1/knowledge/documents/{document_id}/republish")
+def republish(document_id: str, form: UnpublishInput, request: Request):
+    claim = authorize_request(request, "knowledge.manage")
+    require_manager(claim)
+    document = authorized_document(document_id, claim)
+    key = str(form.request_id)
+    payload_hash = digest(canonical({"action": "republish", "document_id": document_id,
+                                     **form.model_dump(mode="json")}))
+
+    def replay(session=None):
+        previous = db().publication_commands.find_one({"_id": key}, session=session)
+        if previous:
+            if previous["payload_hash"] != payload_hash:
+                failure("IDEMPOTENCY_CONFLICT", 409)
+            return previous["result"]
+
+    previous = replay()
+    if previous:
+        return previous
+    if document["revision"] != form.expected_revision:
+        failure("REVISION_CONFLICT", 409)
+    version = restore_target(document)
+    verify_restore(document, version)
+
+    def commit(session):
+        previous = replay(session)
+        if previous:
+            return previous
+        current = db().documents.find_one(
+            {"_id": document_id, "revision": form.expected_revision, "revoked": False},
+            session=session,
+        )
+        if not current:
+            failure("REVISION_CONFLICT", 409)
+        if restore_target(current, session=session)["_id"] != version["_id"]:
+            failure("REVISION_CONFLICT", 409)
+        changed = db().documents.update_one(
+            {"_id": document_id, "revision": form.expected_revision, "active_version": None,
+             "revoked": False},
+            {"$set": {"active_version": version["_id"], "last_published_version": version["_id"],
+                      "raw_asset_id": version["raw_asset_id"]}, "$inc": {"revision": 1}},
+            session=session,
+        )
+        if not changed.modified_count:
+            failure("REVISION_CONFLICT", 409)
+        db().ingestion_jobs.update_one(
+            {"document_id": document_id, "version": version["_id"]},
+            {"$set": {"status": "published", "step": "published"}}, session=session,
+        )
+        result = {"document_id": document_id, "active_version": version["_id"],
+                  "revision": form.expected_revision + 1}
+        db().publication_commands.insert_one(
+            {"_id": key, "payload_hash": payload_hash, "result": result, "at": now(),
+             "action": "republish", "actor_id": claim["subject_id"]}, session=session,
+        )
+        return result
+
+    return transaction(commit)
+
+
 @router.post("/internal/v1/knowledge/documents/{document_id}/unpublish")
 def unpublish(document_id: str, form: UnpublishInput, request: Request):
     claim = authorize_request(request, "knowledge.manage")
@@ -336,9 +504,16 @@ def unpublish(document_id: str, form: UnpublishInput, request: Request):
             if previous["payload_hash"] != payload_hash:
                 failure("IDEMPOTENCY_CONFLICT", 409)
             return previous["result"]
+        current = db().documents.find_one(
+            {"_id": document_id, "revision": form.expected_revision}, session=session)
+        if not current:
+            failure("REVISION_CONFLICT", 409)
+        updates = {"active_version": None}
+        if current.get("active_version"):
+            updates["last_published_version"] = current["active_version"]
         changed = db().documents.update_one(
             {"_id": document_id, "revision": form.expected_revision},
-            {"$set": {"active_version": None}, "$inc": {"revision": 1}},
+            {"$set": updates, "$inc": {"revision": 1}},
             session=session,
         )
         if not changed.modified_count:
@@ -376,6 +551,15 @@ class ReadDocumentInput(BaseModel):
     length: int = Field(default=6000, ge=500, le=8000)
 
 
+@router.post("/internal/v1/knowledge/read-scope")
+def read_scope(form: ReadDocumentInput, request: Request):
+    claim = authorize_request(request, "knowledge.read")
+    document = authorized_document(str(form.document_id), claim, active=True, version=str(form.version))
+    return {"scope": digest(canonical([claim["subject_id"], claim["role"],
+        sorted(claim["resource_ids"]), sorted(claim.get("document_ids", [])),
+        document["_id"], document["active_version"], document["revision"]]))}
+
+
 @router.post("/internal/v1/knowledge/read")
 def read_document(form: ReadDocumentInput, request: Request):
     claim = authorize_request(request, "knowledge.read")
@@ -392,7 +576,9 @@ def read_document(form: ReadDocumentInput, request: Request):
     if form.offset > len(content):
         failure("READ_OFFSET_INVALID")
     end = min(len(content), form.offset + form.length)
-    text = content[form.offset : end]
+    from semibrain_business.document_images import slice_markdown
+    start, end, image_refs = slice_markdown(content, form.offset, end, version.get("image_refs", []))
+    text = content[start : end]
     return {
         "evidence": [
             {
@@ -401,13 +587,14 @@ def read_document(form: ReadDocumentInput, request: Request):
                 "version": version["_id"],
                 "title": document["title"],
                 "text": text,
+                "image_refs": image_refs,
                 "truncated": form.offset > 0 or end < len(content),
                 "next_offset": end if end < len(content) else None,
                 "content_hash": digest(text),
                 "data_origin": document["data_origin"],
                 "location": {
                     "representation": "parsed_markdown",
-                    "character_start": form.offset,
+                    "character_start": start,
                     "character_end": end,
                 },
                 "lineage_ref": "document:" + document["_id"] + ":" + version["_id"],
@@ -423,6 +610,15 @@ def attachment_context(request: Request):
     remaining = 24000
     for asset_id in claim.get("attachment_refs", []):
         asset = db().assets.find_one({"_id": asset_id})
+        if asset and asset.get("chat_upload") and asset["owner_id"] == claim["subject_id"] and not asset.get("revoked"):
+            items.append({
+                "asset_id": asset_id, "document_id": asset_id, "version": asset_id,
+                "title": asset["filename"], "text": "用户提供的图片，视觉内容尚待核验。",
+                "media_type": asset["ref"]["media_type"], "content_hash": asset["ref"]["content_hash"],
+                "data_origin": asset["data_origin"], "location": {"width": asset["width"], "height": asset["height"]},
+                "lineage_ref": "asset:" + asset_id + ":" + asset["ref"]["content_hash"],
+            })
+            continue
         if not asset or not asset.get("document_id"):
             failure("ATTACHMENT_UNAVAILABLE", 403)
         document = authorized_document(asset["document_id"], claim, active=True)
@@ -431,7 +627,9 @@ def attachment_context(request: Request):
             failure("ATTACHMENT_VERSION_UNAVAILABLE", 403)
         parsed = db().assets.find_one({"_id": version["parsed_asset_id"]})
         content = read_asset(parsed).decode("utf-8")
-        taken = content[: min(12000, remaining)]
+        from semibrain_business.document_images import slice_markdown
+        _, end, image_refs = slice_markdown(content, 0, min(12000, remaining), version.get("image_refs", []))
+        taken = content[:end]
         remaining -= len(taken)
         items.append(
             {
@@ -440,6 +638,7 @@ def attachment_context(request: Request):
                 "version": version["_id"],
                 "title": document["title"],
                 "text": taken,
+                "image_refs": image_refs,
                 "truncated": len(taken) < len(content),
                 "content_hash": digest(taken),
                 "data_origin": document["data_origin"],
@@ -465,33 +664,50 @@ class LineageInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     # A run may hold 50 evidence items with both a query and a web snapshot reference.
     refs: list[str] = Field(max_length=120)
+    protect_for_publication: bool = False
 
 
 @router.post("/internal/v1/lineage/check")
 def check(form: LineageInput, request: Request):
     claim = authorize_request(request, "lineage.check")
-    lineage_check(form.refs, claim)
+    lineage_check(form.refs, claim, protect_for_publication=form.protect_for_publication)
     return {"valid": True}
 
 
 @router.get("/internal/v1/assets/{asset_id}/content")
-def asset_content(asset_id: str, request: Request):
+def asset_content(asset_id: str, request: Request, preview_version: UUID | None = None):
     claim = authorize_request(request, "asset.read")
     asset = db().assets.find_one({"_id": asset_id})
     if not asset:
         failure("ASSET_NOT_FOUND", 404)
+    if asset.get("revoked"):
+        failure("ASSET_UNAVAILABLE", 403)
     if asset.get("document_id"):
-        document = authorized_document(asset["document_id"], claim, active=True)
-        version = db().document_versions.find_one({"_id": document["active_version"]})
+        document = authorized_document(asset["document_id"], claim, active=preview_version is None)
+        if preview_version is not None and claim["role"] != "admin" and document["owner_id"] != claim["subject_id"]:
+            failure("PREVIEW_DENIED", 403)
+        version = db().document_versions.find_one({"_id": str(preview_version) if preview_version else document["active_version"], "document_id": document["_id"]})
+        if not version:
+            failure("ASSET_VERSION_UNAVAILABLE", 403)
         valid = {version["raw_asset_id"], version["parsed_asset_id"], *version["image_asset_ids"]}
         if asset_id not in valid:
             failure("ASSET_VERSION_UNAVAILABLE", 403)
     elif asset.get("job_id"):
         job = db().tool_jobs.find_one({"_id": asset["job_id"], "subject_id": claim["subject_id"]})
-        if not job:
+        if not job or job["status"] not in {"succeeded", "partial"}:
             failure("ASSET_UNAVAILABLE", 403)
+        lineage_check((job.get("result", {}).get("data") or {}).get("lineage_refs", []), claim)
+    elif asset.get("chat_upload") and asset["owner_id"] == claim["subject_id"]:
+        lineage_check(asset.get("source_refs", []), claim)
     else:
         failure("ASSET_UNAVAILABLE", 403)
+    if asset.get("retention_version"):
+        from semibrain_business.retention import lease
+        from semibrain_business.safe_fetch import WebError
+        try:
+            lease(asset["job_id"])
+        except WebError:
+            failure("WEB_SNAPSHOT_EXPIRED", 410)
     content = read_asset(asset)
     # Proxy enforces live access on every request, including already-copied links.
     from urllib.parse import quote
@@ -501,7 +717,8 @@ def asset_content(asset_id: str, request: Request):
         media_type=asset["ref"]["media_type"],
         headers={
             "Cache-Control": "no-store",
-            "Content-Disposition": "attachment; filename*=UTF-8''" + quote(asset["filename"]),
+            "Content-Disposition": ("inline" if asset["ref"]["media_type"].startswith("image/") else "attachment") + "; filename*=UTF-8''" + quote(asset["filename"]),
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
             "X-Content-Type-Options": "nosniff",
         },
     )

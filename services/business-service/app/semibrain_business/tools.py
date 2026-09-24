@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError
 from pymongo import ReturnDocument
 from semibrain_common.runtime import (
     call,
@@ -22,11 +22,13 @@ from semibrain_common.runtime import (
     uid,
 )
 from semibrain_common.telemetry import Observation
+from semibrain_common.tool_errors import SANDBOX_ARGUMENT_ERRORS
 from semibrain_contracts.models import ErrorInfo, SourceRef, ToolResult, assert_no_credentials
 from sqlalchemy import func, select
 from sqlalchemy.exc import DBAPIError
 
 from semibrain_business import warehouse as w
+from semibrain_business.analysis_tools import ANALYSIS_TOOLS, sandbox_configured, vision_configured
 from semibrain_business.cancellation import CancellationScope, QueryCancelled, watch_engine
 from semibrain_business.safe_fetch import WebError
 from semibrain_business.security import authorize_request, db
@@ -44,7 +46,8 @@ class SearchLots(BaseModel):
         max_length=80,
         description="仅用于匹配用户明确给出的原始批次编号或编号片段；列出可用批次时留空。不是自然语言、产品或晶圆厂搜索。",
     )
-    limit: int = Field(default=20, ge=1, le=50)
+    limit: int = Field(default=20, ge=1, le=50,
+                       description="按lot_id升序返回前N条，用户明确条数时用该条数，不先读取更多再截取。")
 
 
 class LotInput(BaseModel):
@@ -83,12 +86,19 @@ def read_rows(statement):
 
 
 def search_lots(form):
-    return read_rows(
+    result = read_rows(
         select(w.lots)
         .where(w.lots.c.lot_id.contains(form.query, autoescape=True))
         .order_by(w.lots.c.lot_id)
         .limit(form.limit)
     )
+    result["query_scope"] = {
+        "table": "lots", "order_by": [{"field": "lot_id", "direction": "asc"}],
+        "limit": form.limit, "filter": {"lot_id_contains": form.query},
+        "limited_result": True,
+        "notice": "按lot_id升序的有限结果；row_count仅为返回行数，不是全库总量。",
+    }
+    return result
 
 
 def context(form):
@@ -126,7 +136,8 @@ def alerts(form):
     )
 
 
-register("business.search_lots", SearchLots, search_lots, "查找合成演示批次，保留源批次编号。")
+register("business.search_lots", SearchLots, search_lots,
+         "读取合成演示批次基础信息（lot_id、product_id、family_id），固定按lot_id升序取前limit条；query空表示不筛编号。仅查询lots，不查询测试明细；无需另写SQL排序。")
 register(
     "business.get_lot_context",
     LotInput,
@@ -151,10 +162,10 @@ register(
     "business.statistics",
     StatisticsInput,
     None,
-    "对本运行已成功查询的 job_ids 做均值、样本标准差、百分点差或分组比较。只能读已有授权结果，不接受自填数列、表达式或脚本；百分点比较必须同产品/阶段/程序/时间/口径。",
+    "对本运行成功查询的job_ids做均值、样本标准差、百分点差或分组比较。只读已有授权结果；同口径跨组百分点比较用same_metric；同队列首终测用first_vs_final，固定终测减首测，要求产品/阶段/程序/窗口/as_of/器件队列一致。",
 )
 
-for _name, (_schema, _function, _description) in WEB_TOOLS.items():
+for _name, (_schema, _function, _description) in {**WEB_TOOLS, **ANALYSIS_TOOLS}.items():
     register(_name, _schema, _function, _description)
 
 
@@ -163,7 +174,7 @@ def catalog(request: Request):
     claim = authorize_request(request, "business.catalog")
     business_authorized = "demo" in claim["resource_ids"]
     return {
-        "version": "p1-tools-v3",
+        "version": "p1-tools-v8",
         "data_origin": "synthetic",
         "business_access": {
             "resource_authorized": business_authorized,
@@ -178,6 +189,8 @@ def catalog(request: Request):
             for name, value in REGISTRY.items()
             if name in claim["allowed_ops"]
             and (not name.startswith("web.") or configured())
+            and (not name.startswith("sandbox.") or sandbox_configured())
+            and (not name.startswith("vision.") or vision_configured())
             and (not name.startswith("business.") or business_authorized)
         ],
         "web_available": configured(),
@@ -197,6 +210,7 @@ class ToolInput(BaseModel):
     logical_call_id: UUID
     tool: str = Field(max_length=120)
     arguments: dict[str, Any]
+    execution_deadline_at: AwareDatetime | None = None
 
 
 @router.post("/internal/v1/tool-jobs", status_code=202)
@@ -214,7 +228,12 @@ def submit(form: ToolInput, request: Request):
             from semibrain_business.sql_policy import compile_query
 
             compile_query(SQLInput.model_validate(args))
-    except ValueError:
+    except ValueError as exc:
+        if form.tool == "sandbox.python" and isinstance(exc, ValidationError):
+            for error in exc.errors(include_input=False, include_url=False):
+                code = str(error.get("ctx", {}).get("error", ""))
+                if error["loc"] == ("exports",) and code in SANDBOX_ARGUMENT_ERRORS:
+                    failure(code)
         failure("TOOL_ARGUMENT_OR_POLICY_DENIED")
     key = str(form.logical_call_id)
     payload_hash = digest(
@@ -234,7 +253,7 @@ def submit(form: ToolInput, request: Request):
         if saved:
             if saved["payload_hash"] != payload_hash:
                 failure("IDEMPOTENCY_CONFLICT", 409)
-            return saved
+            return saved, False
         row = {
             "_id": key,
             "logical_call_id": key,
@@ -249,12 +268,28 @@ def submit(form: ToolInput, request: Request):
             "status": "queued",
             "attempt": 0,
             "created_at": now(),
+            "execution_deadline_at": form.execution_deadline_at,
         }
         db().tool_jobs.insert_one(row, session=session)
-        return row
+        return row, True
 
-    saved = transaction(accept)
+    saved, created = transaction(accept)
+    if created:
+        wake_tool_worker()
     return {"job_id": key, "status": saved["status"]}
+
+
+def wake_tool_worker():
+    """One disposable wakeup per accepted job; MongoDB remains the work queue.
+
+    Periodic polling recovers a broker outage. Do not coalesce simultaneous page
+    submissions into one wakeup: each available worker can claim a different job.
+    """
+    try:
+        from semibrain_business.worker import app
+        app.send_task("business.query", expires=30, retry=False)
+    except Exception:
+        pass  # The durable job is accepted; the periodic tick will recover it.
 
 
 @router.get("/internal/v1/tool-jobs/{job_id}")
@@ -308,7 +343,16 @@ def cancel(job_id: str, request: Request):
         )
         return "cancelling"
 
-    return {"job_id": job_id, "status": transaction(stop)}
+    state = transaction(stop)
+    if state == "cancelling" and job["tool"] == "sandbox.python":
+        from semibrain_business.sandbox import provider
+
+        instance = db().sandbox_instances.find_one({"job_id": job_id})
+        if instance:
+            provider().stop(instance["_id"])
+            db().tool_jobs.update_one({"_id": job_id, "status": "cancelling"},
+                                      {"$set": {"query_stopped_at": now()}})
+    return {"job_id": job_id, "status": state}
 
 
 def execute_one():
@@ -319,7 +363,7 @@ def execute_one():
                 "lease_until": {"$lt": now()},
                 "$or": [
                     {"status": "cancelling"},
-                    {"status": "running", "tool": {"$regex": "^web\\."}},
+                    {"status": "running", "tool": {"$regex": "^(web|sandbox|vision)\\."}},
                 ],
             }
         )
@@ -391,7 +435,7 @@ def execute_one():
                 {
                     "status": "running",
                     "lease_until": {"$lt": now()},
-                    "tool": {"$not": {"$regex": "^web\\."}},
+                    "tool": {"$not": {"$regex": "^(web|sandbox|vision)\\."}},
                 },
             ],
             "attempt": {"$lt": 3},
@@ -400,6 +444,7 @@ def execute_one():
             "$set": {
                 "status": "running",
                 "fence": fence,
+                "started_at": now(),
                 "lease_until": now() + timedelta(seconds=90),
             },
             "$inc": {"attempt": 1},
@@ -431,6 +476,7 @@ def execute_one():
                 "auth_version": job["auth_version"],
                 "run_id": job["run_id"],
                 "operation": job["tool"],
+                "task_id": job.get("task_id"),
             },
         )
         tool = REGISTRY[job["tool"]]
@@ -440,13 +486,13 @@ def execute_one():
                 calculate(form, job)
                 if job["tool"] == "business.statistics"
                 else tool["function"](form, job)
-                if job["tool"].startswith("web.")
+                if job["tool"].startswith(("web.", "sandbox.", "vision."))
                 else tool["function"](form)
             )
         data = json.loads(canonical(data))
         assert_no_credentials(data)
         warnings = []
-        assets = []
+        assets = [item["ref"] for item in data.get("artifacts", [])]
         if len(canonical(data).encode()) > 50000:
             from semibrain_business.knowledge import store_asset
 
@@ -468,11 +514,13 @@ def execute_one():
         data["result_state"] = result_state(data)
         source = SourceRef(
             source_id=job["_id"],
-            source_version=w.METRIC_VERSION,
+            source_version="web-v2" if job["tool"].startswith("web.")
+            else "vision-v1" if job["tool"].startswith("vision.")
+            else "docker-v1" if job["tool"].startswith("sandbox.") else w.METRIC_VERSION,
             content_hash=digest(canonical(data)),
             scope_ref="demo",
-            kind="web" if job["tool"].startswith("web.") else "query",
-            data_origin="public" if job["tool"].startswith("web.") else "synthetic",
+            kind="web" if job["tool"].startswith("web.") else "image" if job["tool"].startswith("vision.") else "query",
+            data_origin=data.get("data_origin", "public" if job["tool"].startswith("web.") else "synthetic"),
             observed_at=now(),
             locator={"logical_call_id": job["logical_call_id"], "tool": job["tool"]},
         )
@@ -486,19 +534,30 @@ def execute_one():
             warnings=warnings,
         )
     except Exception as exc:
+        business_errors = {
+            "UNMATCHED_COHORTS": "比较范围不一致，请核对产品、阶段、程序、时间和器件队列。",
+            "YIELD_COMPARISON_MODE_REQUIRED": "首测与终测比较请指定comparison_mode=first_vs_final。",
+            "FIRST_AND_FINAL_REQUIRED": "首终测比较需要同队列的一份first和一份final结果。",
+            "PARTIAL_INPUT_NOT_COMPARABLE": "截断结果不能用于完整统计比较。",
+        }
         code = (
             str(exc)
-            if isinstance(exc, WebError)
+            if isinstance(exc, WebError) or (isinstance(exc, ValueError) and str(exc) in business_errors)
             else "QUERY_TIMEOUT"
             if isinstance(exc, DBAPIError) and getattr(exc.orig, "sqlstate", None) == "57014"
             else "TOOL_EXECUTION_FAILED"
         )
+        external_data = {}
+        if job["tool"] in {"web.search", "web.fetch"}:
+            attempt = db().web_attempts.find_one({"_id": job["_id"] + ":" + str(job["attempt"])})
+            external_data["usage"] = attempt.get("usage") if attempt else {"total_tokens": 0}
         result = ToolResult(
             job_id=job["_id"],
             logical_call_id=job["logical_call_id"],
             status="cancelled" if isinstance(exc, QueryCancelled) else "failed",
+            data=external_data,
             error=ErrorInfo(
-                code=code, message="工具未完成，请核对范围或稍后重试。", trace_id=job["_id"]
+                code=code, message=business_errors.get(code, "工具未完成，请核对范围或稍后重试。"), trace_id=job["_id"]
             ),
         )
     wire = result.model_dump(mode="json")

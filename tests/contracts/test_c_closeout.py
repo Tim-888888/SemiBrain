@@ -14,6 +14,8 @@ from semibrain_agent.provider import ModelError, parse_response
 def metric_record():
     return {
         "marker": "2",
+        "source": {"source_version": "1", "kind": "business", "data_origin": "synthetic"},
+        "lineage_refs": ["query:fixture:hash"],
         "title": "Actual query result",
         "content": {
             "unit": "fraction",
@@ -34,6 +36,7 @@ def metric_record():
 
 def fixture_agent(invoke):
     agent = Investigator.__new__(Investigator)
+    agent.harness = SimpleNamespace(request_closeout=lambda reason: reason)
     agent.state = {"phase": "model", "step": 4, "intent": {"action": "investigate"}}
     agent.executor = SimpleNamespace(evidence=lambda: [metric_record()], observation=lambda x: x)
     agent.graph = SimpleNamespace(invoke=invoke)
@@ -107,6 +110,29 @@ def test_hard_deadline_or_provider_failure_does_not_start_another_model(error):
     assert agent.finished["outcome"] == "partial"
 
 
+@pytest.mark.parametrize("error,reason", [
+    (BudgetExhausted("RUN_TIME_BUDGET"), "执行时间上限"),
+    (BudgetExhausted("MODEL_CALL_LIMIT"), "模型调用次数上限"),
+    (ModelError("MODEL_HTTP_503"), "模型服务暂时未完成响应"),
+    (ModelError("MODEL_PAYMENT_REQUIRED"), "模型服务额度不足"),
+])
+def test_retained_reviewed_answer_reports_the_actual_stop(error, reason):
+    calls = []
+
+    def invoke(value):
+        calls.append(value["payload"]["phase"])
+        raise error
+
+    agent = fixture_agent(invoke)
+    agent.state["reviewed_content"] = "The verified answer [2]."
+    agent.execute()
+    assert calls == ["model"]
+    assert agent.finished["draft"].startswith("The verified answer [2].")
+    assert reason in agent.finished["draft"]
+    assert "执行额度或模型响应" not in agent.finished["draft"]
+    assert agent.finished["stop_code"] == str(error)
+
+
 def test_finalize_uses_fresh_compact_evidence_and_final_budget_without_tools():
     agent = fixture_agent(None)
     agent.context = {"input": {"question": "Compare the requested scope."}}
@@ -163,7 +189,7 @@ def test_verified_fallback_keeps_actual_scope_raw_ratio_and_synthetic_label():
         "[2]",
     ):
         assert text in result
-    assert "77.78%" not in result  # No new numeric transformation by the fallback.
+    assert "77.78%" in result  # Display the validated fraction; preserve its raw counts above.
 
 
 def test_empty_denominator_is_not_a_zero_yield():
