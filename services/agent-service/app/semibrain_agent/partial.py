@@ -5,6 +5,22 @@ import math
 import re
 
 
+def execution_stop_reason(code):
+    """Expose the actual execution boundary instead of implying account credit loss."""
+    return {
+        "MODEL_BUDGET_EXHAUSTED": "本次任务的累计 Token 上限不足以预留下一步请求",
+        "MODEL_CALL_LIMIT": "已达到本次任务的模型调用次数上限",
+        "ROUND_LIMIT": "已达到本次调查的轮次上限",
+        "TOOL_BUDGET_EXHAUSTED": "已达到工具执行限制，无法继续调用工具",
+        "RUN_TIME_BUDGET": "已达到本次任务的执行时间上限",
+        "FINAL_TIME_RESERVED": "调查时间已到收尾边界",
+        "MODEL_CONTEXT_LIMIT": "本次请求超过模型上下文容量边界",
+        "CLOSEOUT_CONTEXT_LIMIT": "收尾请求超过上下文容量边界",
+        "NO_NEW_OBSERVATION": "继续调查未取得新的有效信息",
+        "REPEATED_EMPTY_RESPONSE": "模型连续返回空结果",
+    }.get(code, "本次调查已达到执行边界")
+
+
 def inline(value):
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
     text = " ".join(text.split())[:500]

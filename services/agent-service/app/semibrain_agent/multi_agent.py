@@ -211,11 +211,6 @@ class MultiAgent(Investigator):
     context_policy_enabled = True
     efficiency_policy_enabled = True
 
-    def project_evidence(self, records, **kwargs):
-        if self.context_policy_enabled:
-            return multi_evidence_views(records, **kwargs)
-        from semibrain_agent.evidence_view import evidence_views
-        return evidence_views(records, content_chars=kwargs.get("content_chars", 7000))
     strategy = "multi_agent"
     graph_version = MULTI_VERSION
     limits = MULTI_LIMITS

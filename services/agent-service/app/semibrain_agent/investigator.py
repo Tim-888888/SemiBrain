@@ -18,7 +18,7 @@ from semibrain_agent.budget_profile import investigation_limits
 from semibrain_agent.checkpoints import GRAPH_VERSION, STATE_VERSION, Checkpoints
 from semibrain_agent.citations import cited_markers
 from semibrain_agent.client import BusinessClient
-from semibrain_agent.evidence_view import evidence_views
+from semibrain_agent.context_policy import project_evidence
 from semibrain_agent.executor import ToolExecutor, extend_catalog, wire_tools
 from semibrain_agent.harness import (
     BudgetExhausted,
@@ -28,7 +28,7 @@ from semibrain_agent.harness import (
     remaining_tokens,
     token_basis,
 )
-from semibrain_agent.partial import partial_answer
+from semibrain_agent.partial import execution_stop_reason, partial_answer
 from semibrain_agent.prompts import (
     Intent,
     IntentSourceError,
@@ -55,7 +55,8 @@ class GraphState(TypedDict):
 
 
 class Investigator:
-    project_evidence = staticmethod(evidence_views)
+    # Synthesis, revision and review share the same source-preserving projection.
+    project_evidence = staticmethod(project_evidence)
     strategy = "single_agent"
     graph_version = GRAPH_VERSION
     state_version = STATE_VERSION
@@ -66,6 +67,7 @@ class Investigator:
 
     def __init__(self, run, fence, context, notify):
         self.run, self.context, self.notify = run, context, notify
+        self.context_policy_enabled = run.get("execution_policy", {}).get("context", True)
         self.compaction_snapshot = run.get("context_compaction")
         self.harness = Harness(run["_id"], fence)
         self.db = self.harness.db
@@ -727,13 +729,12 @@ class Investigator:
         ]
 
     def finalize(self, state):
-        self.notify({"progress": "正在用预留预算整理已有证据，不再追加工具调用"})
+        self.notify({"progress": "正在整理已有证据，不再追加工具调用"})
         evidence = self.executor.evidence()
-        selected = evidence if len(evidence) <= 8 else evidence[:4] + evidence[-4:]
         inputs = [
             {
                 "role": "user",
-                "content": "调查预算已到收尾边界。只基于以下已取得的观察回答原问题，不提出新工具调用。"
+                "content": "调查已到收尾边界。只基于以下已取得的观察回答原问题，不提出新工具调用。"
                 "逐项说明已完成和未完成目标，不猜缺失事实；未列出的来源不代表不存在。"
                 "execution_summary 记录真实工具执行状态，与可引用事实 evidence 用途不同；"
                 "没有登记成引用来源不等于工具没有执行或没有返回。"
@@ -744,9 +745,11 @@ class Investigator:
                         "question": self.context["input"]["question"],
                         "intent": state["intent"],
                         "stop_reason": state["stop_code"],
-                        "evidence": self.project_evidence(selected),
+                        "evidence": self.project_evidence(
+                            evidence, question=self.context["input"]["question"]
+                        ),
                         "execution_summary": self.execution_summary(),
-                        "omitted_sources": len(evidence) - len(selected),
+                        "omitted_sources": 0,
                     }
                 ),
             }
@@ -774,7 +777,9 @@ class Investigator:
                         "intent": state["intent"],
                         "capability_names": [item["name"] for item in self.catalog["tools"]],
                         "draft_blocks": draft_blocks(state["draft"]),
-                        "evidence": evidence_views(inspected),
+                        "evidence": self.project_evidence(
+                            inspected, question=self.context["input"]["question"]
+                        ),
                         "executed": self.execution_summary(),
                         "retrieval_available": not state.get("closing")
                         and not state.get("retrieval_repair_count"),
@@ -846,7 +851,9 @@ class Investigator:
                 "content": canonical({
                     "question": self.context["input"]["question"],
                     "intent": state["intent"],
-                    "evidence": self.project_evidence(self.executor.evidence()),
+                    "evidence": self.project_evidence(
+                        self.executor.evidence(), question=self.context["input"]["question"]
+                    ),
                     "execution_summary": self.execution_summary(),
                 }),
             },
@@ -907,7 +914,7 @@ class Investigator:
                     "outcome": "partial",
                     "stop_code": str(exc),
                     "draft": self.partial_body(
-                        "剩余执行额度不足以预留下一步请求"
+                        execution_stop_reason(str(exc))
                         if isinstance(exc, BudgetExhausted)
                         else (
                             "本轮任务理解结果未通过校验，请重试"

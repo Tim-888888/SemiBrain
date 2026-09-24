@@ -21,15 +21,17 @@ def accounting(limits=MULTI_LIMITS):
     return {"limits": dict(limits), "settled_tokens": 250000, "reserved_tokens": 30000}
 
 
-def test_default_unlimited_policy_preserves_finite_strategy_and_operator_policies(monkeypatch):
+def test_both_investigators_are_unlimited_but_explicit_and_quick_policies_remain(monkeypatch):
     monkeypatch.delenv("SEMIBRAIN_INVESTIGATION_LIMITS", raising=False)
     assert remaining_tokens(accounting(investigation_limits(MULTI_LIMITS))) is None
-    assert remaining_tokens(accounting(investigation_limits())) < 0
+    assert remaining_tokens(accounting(investigation_limits())) is None
+    assert investigation_limits()["final_token_reserve"] == 0
     assert remaining_tokens(accounting(QUICK_LIMITS)) < 0
     monkeypatch.setenv("SEMIBRAIN_INVESTIGATION_LIMITS", json.dumps(MULTI_LIMITS))
     assert investigation_limits(MULTI_LIMITS) == MULTI_LIMITS
-    monkeypatch.setenv("SEMIBRAIN_INVESTIGATION_LIMITS", json.dumps(DEFAULT_LIMITS))
-    assert investigation_limits(MULTI_LIMITS) == DEFAULT_LIMITS
+    finite = {**DEFAULT_LIMITS, "tokens": 80000, "final_token_reserve": 12000}
+    monkeypatch.setenv("SEMIBRAIN_INVESTIGATION_LIMITS", json.dumps(finite))
+    assert investigation_limits(MULTI_LIMITS) == investigation_limits() == finite
 
 
 @pytest.mark.parametrize("override", [

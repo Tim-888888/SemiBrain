@@ -18,11 +18,12 @@ class BudgetExhausted(RuntimeError):
 DEFAULT_LIMITS = {
     "rounds": 12,
     "tools": 20,
-    "tokens": 80000,
+    # Cumulative usage is accounted, but does not stop an investigation.
+    "tokens": None,
     "seconds": 180,
     "searches": 3,
     "pages": 5,
-    "final_token_reserve": 12000,
+    "final_token_reserve": 0,
     "final_seconds_reserve": 30,
 }
 
