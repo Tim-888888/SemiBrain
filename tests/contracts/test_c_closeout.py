@@ -14,6 +14,8 @@ from semibrain_agent.provider import ModelError, parse_response
 def metric_record():
     return {
         "marker": "2",
+        "source": {"source_version": "1", "kind": "business", "data_origin": "synthetic"},
+        "lineage_refs": ["query:fixture:hash"],
         "title": "Actual query result",
         "content": {
             "unit": "fraction",
@@ -34,6 +36,7 @@ def metric_record():
 
 def fixture_agent(invoke):
     agent = Investigator.__new__(Investigator)
+    agent.harness = SimpleNamespace(request_closeout=lambda reason: reason)
     agent.state = {"phase": "model", "step": 4, "intent": {"action": "investigate"}}
     agent.executor = SimpleNamespace(evidence=lambda: [metric_record()], observation=lambda x: x)
     agent.graph = SimpleNamespace(invoke=invoke)

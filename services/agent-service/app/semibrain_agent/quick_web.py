@@ -1,4 +1,4 @@
-"""Bounded quick answers: one search, two pages, then a native Markdown stream.
+"""Bounded quick answers: one search plus optional fallback, two pages, then Markdown.
 
 This is a fixed pipeline, not an Agent loop. The business service owns outbound
 authorization, provider calls, SSRF checks and immutable page snapshots.
@@ -29,7 +29,7 @@ QUICK_LIMITS = {
     "tools": 6,
     "tokens": 80000,
     "seconds": 210,
-    "searches": 1,
+    "searches": 2,
     "pages": 2,
     "final_token_reserve": 48000,
     "final_seconds_reserve": 45,

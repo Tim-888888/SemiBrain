@@ -11,18 +11,6 @@ from semibrain_common.runtime import canonical, now, transaction
 
 from semibrain_agent.citations import cited_markers
 from semibrain_agent.closeout import (
-    ANSWER_CEILING,
-    ANSWER_OUTPUT,
-    ANSWER_SYSTEM,
-    REVIEW_CEILING,
-    REVIEW_OUTPUT,
-    REVIEW_SYSTEM,
-    CloseoutReview,
-    answer_inputs,
-    closeout_blocks,
-    fits,
-    reviewed_body,
-    select_packet,
     stop_notice,
 )
 from semibrain_agent.context_policy import project_evidence, source_version
@@ -69,7 +57,7 @@ from semibrain_agent.task_outputs import (
     reusable_task,
 )
 
-MULTI_VERSION = "multi-supervisor-v21"
+MULTI_VERSION = "multi-supervisor-v22"
 ROLE_RULES = {
     "sqlbot": "你是 SQLBot。使用授权业务工具核验目标、阶段、程序、时间与分母。原问题已给出必要参数时直接查询，不为重复确认编号先列目录或读上下文；缺失且可自行补足时才查询目录。仅完成分配给自己的目标，不重复其他分支负责的计算。交回引用证据与缺口，不给无证据根因。",
     "rag": "你是 RAG Agent。检索并读取与分配目标相关的授权原文，保留版本、否定和限制。缺少内容明确记录，不用常识填成引用。",
@@ -281,55 +269,7 @@ class MultiAgent(Investigator):
             self.task_update(task["_id"], {"status": "partial", "error": state["stop_code"],
                                          "completed_at": now()})
         self.tree()
-        self.notify({"progress": "调查已停止，正在用预留额度整理已取得的信息"})
-        evidence = [r for r in self.executor.evidence() if not evidence_issues([r])]
-        if not evidence:
-            state.update(phase="done", outcome="partial",
-                         draft=self.partial_body("没有取得可核验的证据", []))
-            return state
-        jobs = {r["observation"].get("job_id") for r in self.db.observations.find({
-            "run_id": self.run["_id"], "observation.tool": "sandbox.python"})}
-        packet = select_packet(
-            self.context["input"]["question"], state["intent"], evidence,
-            multi_evidence_views, self.execution_summary(),
-            missing_files(state["intent"], evidence, jobs),
-        )
-        turn, _ = self.model_call(
-            state, role="rca", inputs=answer_inputs(packet), final=True, suffix="closeout",
-            max_tokens=ANSWER_OUTPUT, system_override=ANSWER_SYSTEM,
-            reservation_ceiling=ANSWER_CEILING,
-        )
-        state.update(draft=turn.text, phase="review", closeout_packet=packet,
-                     closeout_evidence_version=source_version(evidence))
-        return state
-
-    def review_closeout(self, state):
-        packet = {**state["closeout_packet"], "draft_blocks": closeout_blocks(state["draft"])}
-        if not fits(packet, REVIEW_SYSTEM, REVIEW_OUTPUT, REVIEW_CEILING):
-            raise BudgetExhausted("CLOSEOUT_CONTEXT_LIMIT")
-        turn, _ = self.model_call(
-            state, role="reviewer", inputs=answer_inputs(packet), final=True,
-            suffix="closeout-review", max_tokens=REVIEW_OUTPUT,
-            system_override=REVIEW_SYSTEM, reservation_ceiling=REVIEW_CEILING,
-        )
-        try:
-            verdict = parse_control(turn.text, CloseoutReview)
-            # Revalidate the original evidence; projected content is not a new source.
-            valid = {r["marker"] for r in self.executor.evidence() if not evidence_issues([r])}
-            valid &= {r["marker"] for r in packet["evidence"]}
-            body = reviewed_body(state["draft"], verdict, valid)
-        except ValueError as exc:
-            raise ModelError("CLOSEOUT_REVIEW_INVALID") from exc
-        state["closeout_verdict"] = verdict.model_dump()
-        state["review"] = {"approved": bool(body), "missing_goals": verdict.missing_goals,
-                           "issues": [b.reason for b in verdict.blocks if b.verdict == "unsupported"]}
-        if body:
-            state["reviewed_content"] = body
-            if any(b.verdict == "unsupported" for b in verdict.blocks):
-                body += "\n\n> 部分内容尚未通过证据核对，已省略。"
-        state.update(phase="done", outcome="partial", draft=body or self.partial_body(
-            "本轮资料尚不足以形成可核验的回答", self.executor.evidence()))
-        return state
+        return super().finalize(state)
 
     def finish(self, state):
         reason = state.get("closeout_reason") or state.get("stop_code")
@@ -655,6 +595,7 @@ class MultiAgent(Investigator):
         self.tree()
 
     def synthesize(self, state):
+        self.begin_answer(state)
         self.notify({"progress": "正在综合证据与不同解释"})
         evidence = self.executor.evidence()
         tasks = list(self.db.tasks.find({"run_id": self.run["_id"],
@@ -690,7 +631,8 @@ class MultiAgent(Investigator):
         return state
 
     def review(self, state):
-        if state.get("closeout_packet") is not None:
+        if state.get("closeout_packet") is not None or (state.get("closeout_reason") == "ANSWER_READY"
+                                                        and state["intent"]["action"] == "investigate"):
             return self.review_closeout(state)
         evidence = self.executor.evidence()
         cited = cited_markers(state["draft"])
@@ -760,7 +702,7 @@ class MultiAgent(Investigator):
             state.update(
                 phase="done",
                 outcome="partial"
-                if state.get("closing") or state.get("has_limitations") or verdict.missing_goals or verdict.presentation_issues
+                if (state.get("closing") and state.get("closeout_reason") != "ANSWER_READY") or state.get("has_limitations") or verdict.missing_goals or verdict.presentation_issues
                 else "succeeded",
             )
         elif state.get("revision_count", 0) < 1:

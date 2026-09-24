@@ -83,6 +83,7 @@ def test_model_dispatch_handles_unlimited_usage_with_optional_closeout_cap(monke
     agent.db.model_turns.find_one.return_value = None
     agent.db.model_turns.find.return_value.sort.return_value.limit.return_value = []
     agent.harness = Mock()
+    agent.harness.investigation_seconds.return_value = 150
     agent.harness.check.return_value = {"budget": accounting(),
                                        "deadline_at": now() + timedelta(seconds=200)}
     agent.notify = Mock()

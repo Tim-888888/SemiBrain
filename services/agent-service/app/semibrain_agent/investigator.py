@@ -178,6 +178,8 @@ class Investigator:
         return execute
 
     def model_call(self, state, **kwargs):
+        if state.get("closing"):
+            return self.model_call_once(state, **kwargs)
         for retry in range(2):
             try:
                 return self.model_call_once(state, **kwargs)
@@ -211,6 +213,8 @@ class Investigator:
         history_ranges=None,
         compaction_call=False,
     ):
+        if state.get("closing"):
+            final, tools = True, None
         identity = f"{self.run['_id']}:{state['step']}:{role}:{suffix}"
         cached = self.db.model_turns.find_one({"_id": identity, "run_id": self.run["_id"]})
         if cached:
@@ -284,10 +288,16 @@ class Investigator:
             amount, phase=state["phase"], final=final, task_id=self.context["task_id"]
         )
         row = self.harness.check()
+        seconds = max(0.1, (row["deadline_at"] - now()).total_seconds())
+        if not final:
+            seconds = min(seconds, self.harness.investigation_seconds())
+        elif state.get("closing") and role != "reviewer":
+            # Generation cannot consume the only time left for evidence review.
+            seconds = max(0.1, seconds - row["budget"]["limits"]["final_seconds_reserve"] * 0.4)
         adapter = ProviderAdapter(
             profile,
-            deadline=time.monotonic() + max(0.1, (row["deadline_at"] - now()).total_seconds()),
-            guard=self.harness.check,
+            deadline=time.monotonic() + seconds,
+            guard=self.harness.check if final else self.harness.investigation_gate,
         )
         start, turn = time.monotonic(), None
         span = Observation(
@@ -305,7 +315,9 @@ class Investigator:
         )
         try:
             turn = adapter.turn(system, inputs, tools=tools, max_tokens=max_tokens,
-                                **({"tool_choice": "none"} if compaction_call else {}))
+                                **({"tool_choice": "none"} if compaction_call or state.get("closing") else {}))
+            if state.get("closing") and turn.calls:
+                raise ModelError("CLOSEOUT_TOOL_CALL_REJECTED")
             self.harness.save_record(
                 "model_turns",
                 identity,
@@ -602,7 +614,7 @@ class Investigator:
         logical_id = self.call_id(self.run["_id"], "required-web-search")
         self.notify({"progress": "本轮尚未联网，正在补充一次公开资料搜索",
                      "active_tool": "web.search", "active_call_id": logical_id}, "tool.started")
-        args = {"query": query}
+        args = {"query": query, "content": True}
         observation = self.executor.execute("web.search", canonical(args), logical_id)
         state["call_fingerprints"] = [*state.get("call_fingerprints", []), {
             "fingerprint": self.tool_fingerprint("web.search", args), "logical_id": logical_id,
@@ -629,6 +641,8 @@ class Investigator:
                 state["phase"] = "model"
             else:
                 state.update(draft=turn.text, phase="review")
+                if state["intent"]["action"] == "investigate":
+                    self.begin_answer(state)
         else:
             state["empty_rounds"] = state.get("empty_rounds", 0) + 1
             if state["empty_rounds"] >= 2:
@@ -728,39 +742,22 @@ class Investigator:
             for row in self.db.observations.find({"run_id": self.run["_id"]})
         ]
 
-    def finalize(self, state):
-        self.notify({"progress": "正在整理已有证据，不再追加工具调用"})
-        evidence = self.executor.evidence()
-        inputs = [
-            {
-                "role": "user",
-                "content": "调查已到收尾边界。只基于以下已取得的观察回答原问题，不提出新工具调用。"
-                "逐项说明已完成和未完成目标，不猜缺失事实；未列出的来源不代表不存在。"
-                "execution_summary 记录真实工具执行状态，与可引用事实 evidence 用途不同；"
-                "没有登记成引用来源不等于工具没有执行或没有返回。"
-                "遵守用户的篇幅要求，简洁回答核心问题，避免无关展开和重复限制说明。"
-                "只输出自然 Markdown 和已登记引用。\n"
-                + canonical(
-                    {
-                        "question": self.context["input"]["question"],
-                        "intent": state["intent"],
-                        "stop_reason": state["stop_code"],
-                        "evidence": self.project_evidence(
-                            evidence, question=self.context["input"]["question"]
-                        ),
-                        "execution_summary": self.execution_summary(),
-                        "omitted_sources": 0,
-                    }
-                ),
-            }
-        ]
-        turn, _ = self.model_call(
-            state, inputs=inputs, final=True, suffix="closeout", max_tokens=1800
-        )
-        state.update(draft=turn.text, phase="review")
+    def begin_answer(self, state):
+        reason = self.harness.request_closeout("ANSWER_READY")
+        state.update(closing=True, closeout_reason=reason)
         return state
 
+    def finalize(self, state):
+        from semibrain_agent.closeout import final_answer
+        return final_answer(self, state)
+
+    def review_closeout(self, state):
+        from semibrain_agent.closeout import review_answer
+        return review_answer(self, state)
+
     def review(self, state):
+        if state.get("closing") and (state.get("closeout_packet") is not None or state.get("closeout_reason") == "ANSWER_READY"):
+            return self.review_closeout(state)
         if self.ensure_web_search(state):
             state["phase"] = "model"
             return state
@@ -882,6 +879,10 @@ class Investigator:
                 state = self.graph.invoke({"payload": state})["payload"]
                 self.checkpoints.save(state)
             except (BudgetExhausted, ModelError) as exc:
+                # At the hard deadline, only fenced authorization/publication reads
+                # may finish. Model/tool admission still goes through Harness.
+                if hasattr(self, "client") and str(exc) == "RUN_TIME_BUDGET":
+                    self.client.closing = True
                 evidence = self.executor.evidence()
                 reason = (
                     execution_stop_reason(str(exc))
@@ -1030,4 +1031,8 @@ class Investigator:
         transaction(commit)
 
     def publication_body(self, state, body):
+        reason = state.get("closeout_reason") or state.get("stop_code")
+        if reason and reason != "ANSWER_READY" and state.get("closing"):
+            from semibrain_agent.closeout import stop_notice
+            return "> " + stop_notice(reason) + "\n\n" + body
         return body

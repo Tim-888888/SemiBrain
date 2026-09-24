@@ -9,6 +9,7 @@ from semibrain_agent.multi_agent import MultiAgent, multi_evidence_views
 
 def reviewer(verdict):
     agent = MultiAgent.__new__(MultiAgent)
+    agent.harness = SimpleNamespace(request_closeout=lambda reason: reason)
     agent.context = {"input": {"question": "Explain the authorized sources."}}
     agent.run = {"_id": "review-closeout"}
     agent.executor = SimpleNamespace(evidence=lambda: [])

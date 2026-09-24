@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError
 from pymongo import ReturnDocument
 from semibrain_common.runtime import (
     call,
@@ -174,7 +174,7 @@ def catalog(request: Request):
     claim = authorize_request(request, "business.catalog")
     business_authorized = "demo" in claim["resource_ids"]
     return {
-        "version": "p1-tools-v7",
+        "version": "p1-tools-v8",
         "data_origin": "synthetic",
         "business_access": {
             "resource_authorized": business_authorized,
@@ -210,6 +210,7 @@ class ToolInput(BaseModel):
     logical_call_id: UUID
     tool: str = Field(max_length=120)
     arguments: dict[str, Any]
+    execution_deadline_at: AwareDatetime | None = None
 
 
 @router.post("/internal/v1/tool-jobs", status_code=202)
@@ -267,6 +268,7 @@ def submit(form: ToolInput, request: Request):
             "status": "queued",
             "attempt": 0,
             "created_at": now(),
+            "execution_deadline_at": form.execution_deadline_at,
         }
         db().tool_jobs.insert_one(row, session=session)
         return row

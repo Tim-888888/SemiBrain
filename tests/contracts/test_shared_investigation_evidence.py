@@ -10,6 +10,7 @@ from semibrain_agent.context_policy import history_observation
 from semibrain_agent.investigator import Investigator
 from semibrain_agent.multi_agent import MultiAgent
 from semibrain_agent.partial import execution_stop_reason
+from semibrain_common.runtime import canonical, digest
 
 
 def sources(position):
@@ -28,6 +29,9 @@ def sources(position):
         "usage": {f"provider_field_{i}": "transport metadata" * 100 for i in range(40)},
         "lineage_refs": ["transport-only" * 1000],
     }
+    for record in records:
+        record["source"].update(source_version="fixture-1", content_hash=digest(canonical(record["content"])))
+        record["lineage_refs"] = ["fixture:" + record["evidence_id"]]
     return records, page
 
 
@@ -37,6 +41,9 @@ def test_single_agent_stage_preserves_original_page_and_middle_sources(phase, po
     records, page = sources(position)
     frozen = deepcopy(records)
     agent = Investigator.__new__(Investigator)
+    agent.harness = SimpleNamespace(request_closeout=lambda reason: reason)
+    agent.run = {"_id": "test-run"}
+    agent.db = SimpleNamespace(observations=SimpleNamespace(find=lambda _: []))
     agent.context = {"input": {"question": "What does the measurement show?"}}
     agent.executor = SimpleNamespace(evidence=lambda: records)
     agent.execution_summary = lambda: [{"tool": "web.fetch", "status": "succeeded"}]

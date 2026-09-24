@@ -7,15 +7,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, TypeAdapter
 from semibrain_common.runtime import canonical, digest, now, transaction
+from semibrain_common.web_contract import WebSearch
 from semibrain_contracts.models import assert_no_credentials
 
 from semibrain_agent.executor import LOCAL_TOOLS
 from semibrain_agent.harness import RunStopped
-
-
-class WebSearch(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    query: str = Field(min_length=3, max_length=240)
 
 
 class WebFetch(BaseModel):

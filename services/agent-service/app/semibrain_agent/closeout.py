@@ -1,4 +1,4 @@
-"""Bounded multi-agent closeout: one answer, one block review, no new tools."""
+"""Shared single/multi Agent closeout: one answer, one block review, no tools."""
 
 import re
 from typing import Literal
@@ -67,7 +67,7 @@ def select_packet(question, intent, evidence, project, executed, missing_files):
         "constraints": intent.get("constraints", []),
         "source_scope": intent.get("source_scope"),
         "delivery": intent.get("delivery", {}),
-        "executed": [{k: row.get(k) for k in ("tool", "status", "error")}
+        "executed": [{k: row.get(k) for k in ("tool", "status", "error", "job_id", "warnings")}
                      for row in executed[-12:]],
         "missing_file_formats": missing_files,
     }
@@ -82,6 +82,75 @@ def select_packet(question, intent, evidence, project, executed, missing_files):
                 and fits(review_probe, REVIEW_SYSTEM, REVIEW_OUTPUT, REVIEW_CEILING)):
             return packet
     raise BudgetExhausted("CLOSEOUT_CONTEXT_LIMIT")
+
+
+def final_answer(runner, state):
+    from semibrain_agent.delivery import missing_files
+    from semibrain_agent.multi_review import evidence_issues
+
+    state.update(closing=True, closeout_reason=state["stop_code"])
+    runner.harness.request_closeout(state["stop_code"])
+    runner.notify({"progress": "调查已停止，正在整理已取得的信息，不再调用工具"})
+    evidence = [r for r in runner.executor.evidence() if not evidence_issues([r])]
+    if not evidence:
+        state.update(phase="done", outcome="partial", draft=runner.partial_body("没有取得可核验的证据", []))
+        return state
+    jobs = {r["observation"].get("job_id") for r in runner.db.observations.find({
+        "run_id": runner.run["_id"], "observation.tool": "sandbox.python"})}
+    packet = select_packet(runner.context["input"]["question"], state["intent"], evidence,
+                           project_evidence, runner.execution_summary(),
+                           missing_files(state["intent"], evidence, jobs))
+    turn, _ = runner.model_call(state, role="rca" if runner.strategy == "multi_agent" else "investigator",
+        inputs=answer_inputs(packet), final=True, suffix="closeout", max_tokens=ANSWER_OUTPUT,
+        system_override=ANSWER_SYSTEM, reservation_ceiling=ANSWER_CEILING)
+    state.update(draft=turn.text, phase="review", closeout_packet=packet,
+                 closeout_evidence_version=source_version(evidence))
+    return state
+
+
+def review_answer(runner, state):
+    from semibrain_agent.delivery import missing_files
+    from semibrain_agent.multi_review import evidence_issues
+    from semibrain_agent.prompts import parse_control
+    from semibrain_agent.provider import ModelError
+
+    evidence = [r for r in runner.executor.evidence() if not evidence_issues([r])]
+    normal = state.get("closeout_reason") == "ANSWER_READY"
+    packet = state.get("closeout_packet")
+    ceiling = 48000 if normal else REVIEW_CEILING
+    if packet is None:
+        jobs = {r["observation"].get("job_id") for r in runner.db.observations.find({
+            "run_id": runner.run["_id"], "observation.tool": "sandbox.python"})}
+        packet = {"question": runner.context["input"]["question"], "intent": state["intent"],
+                  "evidence": project_evidence(evidence, token_budget=12000,
+                                                question=runner.context["input"]["question"]),
+                  "missing_file_formats": missing_files(state["intent"], evidence, jobs)}
+    packet = {**packet, "draft_blocks": closeout_blocks(state["draft"])}
+    if not fits(packet, REVIEW_SYSTEM, REVIEW_OUTPUT, ceiling):
+        raise BudgetExhausted("CLOSEOUT_CONTEXT_LIMIT")
+    turn, _ = runner.model_call(state, role="reviewer", inputs=answer_inputs(packet), final=True,
+        suffix="closeout-review", max_tokens=REVIEW_OUTPUT, system_override=REVIEW_SYSTEM,
+        reservation_ceiling=ceiling)
+    try:
+        verdict = parse_control(turn.text, CloseoutReview)
+        valid = {r["marker"] for r in runner.executor.evidence() if not evidence_issues([r])}
+        valid &= {r["marker"] for r in packet["evidence"]}
+        body = reviewed_body(state["draft"], verdict, valid)
+    except ValueError as exc:
+        raise ModelError("CLOSEOUT_REVIEW_INVALID") from exc
+    missing = list(verdict.missing_goals)
+    if packet.get("missing_file_formats"):
+        missing.append("尚未生成所需文件：" + "、".join(packet["missing_file_formats"]))
+    issues = [b.reason for b in verdict.blocks if b.verdict == "unsupported"]
+    state["closeout_verdict"] = verdict.model_dump()
+    state["review"] = {"approved": bool(body), "missing_goals": missing, "issues": issues}
+    if body:
+        state["reviewed_content"] = body
+        if issues:
+            body += "\n\n> 部分内容尚未通过证据核对，已省略。"
+    state.update(phase="done", outcome="succeeded" if normal and body and not missing and not issues else "partial",
+                 draft=body or runner.partial_body("本轮资料尚不足以形成可核验的回答", evidence))
+    return state
 
 
 def reviewed_body(draft, verdict, available_markers):

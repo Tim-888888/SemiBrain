@@ -30,6 +30,7 @@ def evidence():
 
 def agent_fixture(monkeypatch, *, records=None, error=None, review=None):
     agent = MultiAgent.__new__(MultiAgent)
+    agent.harness = SimpleNamespace(request_closeout=lambda reason: reason)
     agent.run = {"_id": "closeout-test"}
     agent.context = {"input": {"question": "Explain CP and FT."}}
     agent.state = {"phase": "dispatch", "step": 3, "review_count": 0,
@@ -207,12 +208,13 @@ def test_closing_model_call_has_no_retry_loop(monkeypatch):
     assert agent.model_call_once.call_count == 1
 
 
-def test_shared_stop_blocks_new_investigation_but_not_single_agent():
+def test_shared_stop_blocks_new_investigation_in_both_agent_modes():
     harness = Harness.__new__(Harness)
     row = {"strategy": "multi_agent", "closeout_reason": "MODEL_BUDGET_EXHAUSTED"}
     with pytest.raises(BudgetExhausted):
         harness.investigation_gate(row)
-    harness.investigation_gate({**row, "strategy": "single_agent"})
+    with pytest.raises(BudgetExhausted, match="MODEL_BUDGET_EXHAUSTED"):
+        harness.investigation_gate({**row, "strategy": "single_agent"})
 
 
 def test_invalid_closeout_review_is_not_a_free_pass(monkeypatch):
