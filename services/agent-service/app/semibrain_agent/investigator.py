@@ -883,7 +883,18 @@ class Investigator:
                 self.checkpoints.save(state)
             except (BudgetExhausted, ModelError) as exc:
                 evidence = self.executor.evidence()
-                preserved = reviewed_partial(state, "执行额度或模型响应未支持继续修订")
+                reason = (
+                    execution_stop_reason(str(exc))
+                    if isinstance(exc, BudgetExhausted)
+                    else (
+                        "本轮任务理解结果未通过校验，请重试"
+                        if str(exc) == "INTENT_CONTROL_INVALID"
+                        else "模型服务额度不足，请联系管理员补充额度后继续"
+                        if str(exc) == "MODEL_PAYMENT_REQUIRED"
+                        else "模型服务暂时未完成响应"
+                    )
+                )
+                preserved = reviewed_partial(state, reason)
                 if (preserved and getattr(self, "context_policy_enabled", False)
                         and isinstance(exc, BudgetExhausted) and not state.get("closing")
                         and str(exc) != "RUN_TIME_BUDGET"):
@@ -913,18 +924,7 @@ class Investigator:
                     "phase": "done",
                     "outcome": "partial",
                     "stop_code": str(exc),
-                    "draft": self.partial_body(
-                        execution_stop_reason(str(exc))
-                        if isinstance(exc, BudgetExhausted)
-                        else (
-                            "本轮任务理解结果未通过校验，请重试"
-                            if str(exc) == "INTENT_CONTROL_INVALID"
-                            else "模型服务额度不足，请联系管理员补充额度后继续"
-                            if str(exc) == "MODEL_PAYMENT_REQUIRED"
-                            else "模型服务暂时未完成响应"
-                        ),
-                        evidence,
-                    ),
+                    "draft": self.partial_body(reason, evidence),
                 }
         self.finish(state)
 

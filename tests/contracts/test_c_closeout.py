@@ -107,6 +107,29 @@ def test_hard_deadline_or_provider_failure_does_not_start_another_model(error):
     assert agent.finished["outcome"] == "partial"
 
 
+@pytest.mark.parametrize("error,reason", [
+    (BudgetExhausted("RUN_TIME_BUDGET"), "执行时间上限"),
+    (BudgetExhausted("MODEL_CALL_LIMIT"), "模型调用次数上限"),
+    (ModelError("MODEL_HTTP_503"), "模型服务暂时未完成响应"),
+    (ModelError("MODEL_PAYMENT_REQUIRED"), "模型服务额度不足"),
+])
+def test_retained_reviewed_answer_reports_the_actual_stop(error, reason):
+    calls = []
+
+    def invoke(value):
+        calls.append(value["payload"]["phase"])
+        raise error
+
+    agent = fixture_agent(invoke)
+    agent.state["reviewed_content"] = "The verified answer [2]."
+    agent.execute()
+    assert calls == ["model"]
+    assert agent.finished["draft"].startswith("The verified answer [2].")
+    assert reason in agent.finished["draft"]
+    assert "执行额度或模型响应" not in agent.finished["draft"]
+    assert agent.finished["stop_code"] == str(error)
+
+
 def test_finalize_uses_fresh_compact_evidence_and_final_budget_without_tools():
     agent = fixture_agent(None)
     agent.context = {"input": {"question": "Compare the requested scope."}}
