@@ -23,7 +23,7 @@ const count = (value?: number | null) => typeof value === 'number' ? value.toLoc
           <dt>实际缓存命中输入</dt><dd>{{ count(item.usage?.cached_input_tokens) }}</dd>
         </dl>
       </section>
-      <p class="small muted">已记录 {{ value.request_count }} 次模型请求；已核验输入 {{ count(value.usage.input_tokens) }}、输出 {{ count(value.usage.output_tokens) }} Token<span v-if="value.cache_reported_requests">，{{ value.cache_reported_requests }} 次返回了缓存用量，共命中 {{ count(value.usage.cached_input_tokens) }} Token</span><span v-else>；缓存用量未返回</span><span v-if="value.unknown_usage_requests">；{{ value.unknown_usage_requests }} 次用量待核验</span>。累计用量不代表单次上下文占用。</p>
+      <p class="small muted">已记录 {{ value.request_count }} 次模型请求；已核验输入 {{ count(value.usage.input_tokens) }}、输出 {{ count(value.usage.output_tokens) }} Token<span v-if="value.cache_reported_requests">，{{ value.cache_reported_requests }} 次返回了缓存用量，共命中 {{ count(value.usage.cached_input_tokens) }} Token</span><span v-else>；缓存用量未返回</span><span v-if="value.unknown_usage_requests">；{{ value.unknown_usage_requests }} 次用量待核验</span>。这里仅统计 Agent 直接模型请求；已登记的搜索、读页等外部工具用量计入上方执行累计。累计用量不代表单次上下文占用。</p>
     </details>
   </div>
 </template>

@@ -25,7 +25,7 @@ function searchLabel(run: Partial<Run>) {
       <ul><li v-for="constraint in run.scope_summary.constraints" :key="constraint">{{ constraint }}</li></ul>
       <p>{{ run.scope_summary.allow_web && !run.web_disabled ? '本轮允许搜索公开网络资料' : '本轮联网关闭' }}</p>
     </div>
-    <p v-if="run.budget" class="small muted">已发起 {{ run.budget.model_calls }} 次模型请求、{{ run.budget.tools }} 次工具调用；本轮累计已核验用量 {{ run.budget.settled_tokens }} Token<span v-if="run.budget.unreconciled_calls">，{{ run.budget.unreconciled_calls }} 次请求用量待对账</span>。</p>
+    <p v-if="run.budget" class="small muted">已发起 {{ run.budget.model_calls }} 次模型请求、{{ run.budget.tools }} 次工具调用；本轮模型与已登记外部工具累计用量 {{ run.budget.settled_tokens }} Token<span v-if="run.budget.unreconciled_calls">，{{ run.budget.unreconciled_calls }} 笔执行用量待对账</span>。</p>
     <ContextDetails v-if="run.context_usage" :value="run.context_usage" />
     <template v-if="run.web_activity">
       <p class="small muted">{{ run.web_activity.reason }} · 网络搜索：{{ searchLabel(run) }}<span v-if="run.web_activity.results !== undefined">（{{ run.web_activity.results }} 个候选来源）</span>。</p>
