@@ -21,12 +21,12 @@ def accounting(limits=MULTI_LIMITS):
     return {"limits": dict(limits), "settled_tokens": 250000, "reserved_tokens": 30000}
 
 
-def test_both_investigators_are_unlimited_but_explicit_and_quick_policies_remain(monkeypatch):
+def test_all_context_consumers_are_unlimited_but_explicit_policies_remain(monkeypatch):
     monkeypatch.delenv("SEMIBRAIN_INVESTIGATION_LIMITS", raising=False)
     assert remaining_tokens(accounting(investigation_limits(MULTI_LIMITS))) is None
     assert remaining_tokens(accounting(investigation_limits())) is None
     assert investigation_limits()["final_token_reserve"] == 0
-    assert remaining_tokens(accounting(QUICK_LIMITS)) < 0
+    assert remaining_tokens(accounting(QUICK_LIMITS)) is None
     monkeypatch.setenv("SEMIBRAIN_INVESTIGATION_LIMITS", json.dumps(MULTI_LIMITS))
     assert investigation_limits(MULTI_LIMITS) == MULTI_LIMITS
     finite = {**DEFAULT_LIMITS, "tokens": 80000, "final_token_reserve": 12000}
@@ -78,7 +78,9 @@ def test_model_dispatch_handles_unlimited_usage_with_optional_closeout_cap(monke
     profile = ModelProfile("investigator", "fixture", "responses", "UNUSED",
                            context_window_tokens=1048576)
     agent.bundle = {"models": {"investigator": profile.snapshot()}}
-    agent.prompts = SimpleNamespace(system=lambda _: "Preserve facts and sources.")
+    agent.prompts = SimpleNamespace(system=lambda _: "Preserve facts and sources.",
+                                    runtime_message=lambda _: {"role": "user", "content": "Trusted runtime"})
+    monkeypatch.setattr("semibrain_agent.request_context.transaction", lambda fn: fn(None))
     agent.db = Mock()
     agent.db.model_turns.find_one.return_value = None
     agent.db.model_turns.find.return_value.sort.return_value.limit.return_value = []
@@ -97,10 +99,10 @@ def test_model_dispatch_handles_unlimited_usage_with_optional_closeout_cap(monke
     result, _ = agent.model_call_once({"step": 1, "phase": "model"}, inputs=inputs,
                                      reservation_ceiling=ceiling)
     assert result is turn
-    assert adapter.turn.call_args.args[1] is inputs
+    assert adapter.turn.call_args.args[1][-1] == inputs[0]
     agent.notify.assert_not_called()
     assert agent.harness.settle.call_args.args[1] == turn.usage
-    agent.harness.save_record.assert_called_once()
+    assert [c.args[0] for c in agent.harness.save_record.call_args_list] == ["model_contexts", "model_turns"]
 
 
 def test_no_task_token_cap_does_not_allow_provider_context_overflow():

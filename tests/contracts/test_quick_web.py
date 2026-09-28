@@ -147,6 +147,9 @@ def runner(
         def __init__(self, *args):
             pass
 
+        def bind_context(self, harness, context, snapshot):
+            assert context is r.context and harness is r.harness
+
         def understand(self, *args):
             return understanding or intent()
 

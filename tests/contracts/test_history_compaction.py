@@ -23,7 +23,7 @@ from semibrain_agent.retention import purge_replicas
 from semibrain_common.runtime import canonical, digest
 
 SOURCE = "bb19d827-e4c8-4850-b3b2-598dfdc90a6c"
-POLICY = {"version": VERSION, "default": {"headroom_tokens": 512, "summary_tokens": 500},
+POLICY = {"version": VERSION, "default": {"headroom_tokens": 512, "summary_tokens": 500, "threshold_ratio": .7},
           "models": {}}
 PROFILE = ModelProfile("rag", "test", "responses", "KEY", context_window_tokens=10000)
 

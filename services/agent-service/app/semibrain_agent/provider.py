@@ -12,6 +12,8 @@ from typing import Callable
 
 import httpx
 
+from semibrain_agent.request_context import stable_tools, wire_inputs
+
 
 class ModelError(RuntimeError):
     def __init__(self, code: str, *, retryable=False):
@@ -169,6 +171,7 @@ class ProviderAdapter:
 
     def turn(self, system, inputs, *, tools=None, max_tokens=2048, on_text=None, tool_choice=None):
         self.check()
+        tools, inputs = stable_tools(tools), wire_inputs(inputs)
         if tool_choice not in {None, "auto", "none"}:
             raise ModelError("MODEL_TOOL_CHOICE_INVALID")
         if self.profile.protocol != "responses":

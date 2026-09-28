@@ -203,20 +203,21 @@ def project_evidence(records, *, token_budget=None, question=""):
 
 
 def fit_messages(inputs, system, tools, profile, *, output, question="", available=None,
-                 force=False):
+                 force=False, headroom=None, ratio=.8):
     """One pressure check across all evidence packets, retaining protocol pairs."""
-    window = profile.context_window_tokens
-    threshold = min(int(window * .8), window - output - profile.context_headroom_tokens)
+    from semibrain_agent.request_context import input_estimate, measure
+    threshold = measure(system, inputs, tools, profile, output,
+                        headroom=headroom, ratio=ratio)["threshold_tokens"]
     cap = threshold
     reason = "MODEL_CONTEXT_LIMIT"
     if available is not None and available - output - 1024 < cap:
         cap, reason = available - output - 1024, "MODEL_BUDGET_EXHAUSTED"
     if force:
         cap = min(cap, max(0, estimate_text(canonical(inputs)) // 2))
-    overhead = estimate_text(canonical({"system": system, "tools": tools or []})) + 128
+    overhead = input_estimate(system, [], tools)
     if overhead >= cap:
         raise BudgetExhausted(reason)
-    total = estimate_text(canonical(inputs)) + overhead
+    total = input_estimate(system, inputs, tools)
     if total <= cap:
         return inputs, False
     result = copy.deepcopy(inputs)
@@ -243,7 +244,7 @@ def fit_messages(inputs, system, tools, profile, *, output, question="", availab
     # Fixed user goals and non-evidence protocol text are never silently truncated.
     for item, key, value in payloads:
         item[key] = canonical(value)
-    fixed = estimate_text(canonical(result)) + overhead
+    fixed = input_estimate(system, result, tools)
     remaining = cap - fixed - 128
     if remaining < 400 or not groups:
         raise BudgetExhausted(reason)
@@ -257,7 +258,7 @@ def fit_messages(inputs, system, tools, profile, *, output, question="", availab
             parent[key].append(candidate)
             for item, payload_key, value in payloads:
                 item[payload_key] = canonical(value)
-            size = estimate_text(canonical(result)) + overhead
+            size = input_estimate(system, result, tools)
             parent[key].pop()
             return size
 
@@ -273,6 +274,6 @@ def fit_messages(inputs, system, tools, profile, *, output, question="", availab
             "notice": "上下文仅展示所选原文；其余已存证据可按引用读取。"}
     for item, key, value in payloads:
         item[key] = canonical(value)
-    if estimate_text(canonical(result)) + overhead > cap:
+    if input_estimate(system, result, tools) > cap:
         raise BudgetExhausted(reason)
     return result, True

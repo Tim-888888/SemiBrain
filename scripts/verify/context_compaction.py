@@ -13,7 +13,7 @@ from semibrain_agent.retention import purge_replicas
 from semibrain_common.runtime import canonical, database, now, uid
 
 PROFILE = ModelProfile("rag", "probe", "responses", "KEY", context_window_tokens=10000)
-POLICY = {"version": VERSION, "default": {"headroom_tokens": 512, "summary_tokens": 500}, "models": {}}
+POLICY = {"version": VERSION, "default": {"threshold_ratio": .7, "headroom_tokens": 512, "summary_tokens": 500}, "models": {}}
 
 
 @contextmanager

@@ -63,7 +63,7 @@ def extend_catalog(catalog):
 
 def wire_tools(catalog):
     names, tools = {}, []
-    for item in catalog["tools"]:
+    for item in sorted(catalog["tools"], key=lambda item: item["name"]):
         name = item["name"].replace(".", "__")
         if name in names:
             raise ValueError("TOOL_NAME_COLLISION")

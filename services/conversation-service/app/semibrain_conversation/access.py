@@ -251,58 +251,16 @@ def run_snapshot(user, run_id):
 
 
 @router.get("/internal/v1/runs/{run_id}/context")
-def run_context(run_id: str, request: Request):
+def run_context(run_id: str, request: Request, include_history: bool = True):
     internal_identity(request, {"agent"})
     run, user = trusted_run(run_id)
-    messages = list(
-        db()
-        .messages.find(
-            {
-                "conversation_id": run["input"]["conversation_id"],
-                "input_revision": {"$lt": run["input"]["input_revision"]},
-                "role": "user",
-            }
-        )
-        .sort([("input_revision", -1), ("position", -1)])
-        .limit(5)
-    )
-    history = []
-    for message in reversed(messages):
-        history.append({"role": "user", "content": message["text"]})
-        # User messages and their run IDs are committed together. Assistant message
-        # projections may still lag after the client has received a final snapshot.
-        # Resolve each prior answer from its owning service, independent of that lag.
-        if message.get("run_id"):
-            try:
-                prior = run_snapshot(user, message["run_id"])
-                if prior.get("lineage_refs"):
-                    business(
-                        user,
-                        "POST",
-                        "/internal/v1/lineage/check",
-                        operation="lineage.check",
-                        run=run,
-                        json={"refs": prior["lineage_refs"]},
-                    )
-                if prior.get("report_id") and prior.get("body_markdown"):
-                    history.append(
-                        {
-                            "role": "assistant",
-                            "content": prior["body_markdown"],
-                            "run_id": message["run_id"],
-                            "lineage_refs": prior.get("lineage_refs", []),
-                            "citations": prior.get("citations", []),
-                            "image_refs": prior.get("image_refs", []),
-                        }
-                    )
-            except Exception:
-                # Revoked or unavailable history is omitted; never reuse its cached text.
-                history.append({"role": "assistant", "content": "[历史来源当前不可访问]"})
+    from semibrain_conversation.history import page
+    historical = page(run, user) if include_history else {"history": [], "history_cursor": None}
     return {
         "input": run["input"],
         "task_id": run["task_id"],
         "trace_root_id": run.get("trace_root_id"),
-        "history": history,
+        **historical,
         "subject_ref": user["_id"],
         "policy_version": POLICY,
         "auth_version": user["auth_version"],

@@ -7,31 +7,29 @@ authorization, provider calls, SSRF checks and immutable page snapshots.
 import re
 import threading
 import time
-from dataclasses import asdict
 from queue import Empty, Queue
 from typing import Literal
 from uuid import NAMESPACE_URL, uuid5
 
 from pydantic import Field
 from semibrain_common.runtime import call, canonical, digest, now, publish, transaction, uid
-from semibrain_common.telemetry import Observation
 from semibrain_contracts.models import CitationBinding, Report
 
 from semibrain_agent.client import BusinessClient
 from semibrain_agent.evidence_view import evidence_views
 from semibrain_agent.executor import ToolExecutor
-from semibrain_agent.harness import BudgetExhausted, Harness, RunStopped, estimate_reservation
+from semibrain_agent.harness import BudgetExhausted, Harness, RunStopped
 from semibrain_agent.model import ModelAdapter, Understanding
-from semibrain_agent.provider import ModelError, ModelTurn, ProviderAdapter
+from semibrain_agent.provider import ModelError
 
 QUICK_LIMITS = {
     "rounds": 6,
     "tools": 6,
-    "tokens": 80000,
+    "tokens": None,
     "seconds": 210,
     "searches": 2,
     "pages": 2,
-    "final_token_reserve": 48000,
+    "final_token_reserve": 0,
     "final_seconds_reserve": 45,
 }
 
@@ -143,66 +141,8 @@ class QuickModel(ModelAdapter):
         )
 
     def turn(self, system, user, *, max_tokens, on_text, guard):
-        phase = "quick_answer" if self.final else "quick_understand"
-        identity = str(
-            uuid5(
-                NAMESPACE_URL,
-                self.harness.run_id
-                + phase
-                + digest(system + user + canonical(self.profile.snapshot())),
-            )
-        )
         self.authorize()
-        cached = self.harness.db.model_turns.find_one(
-            {"_id": identity, "run_id": self.harness.run_id}
-        )
-        if cached:
-            turn = ModelTurn(**cached["turn"])
-            on_text(turn.text)
-            return turn
-        inputs = [{"role": "user", "content": user}]
-        amount = estimate_reservation(system, inputs, None, max_tokens)
-        reservation = self.harness.model_reserve(amount, phase=phase, final=self.final)
-        started = time.monotonic()
-        span = Observation(
-            self.harness.run_id,
-            phase,
-            kind="generation",
-            model=self.profile.model,
-            service="agent",
-            phase=phase,
-            model_origin=self.profile.model_origin,
-        )
-
-        def check():
-            guard()
-            self.harness.check()
-            self.authorize()
-
-        try:
-            turn = ProviderAdapter(self.profile, deadline=self.deadline, guard=check).turn(
-                system, inputs, max_tokens=max_tokens, on_text=on_text
-            )
-        except Exception:
-            span.end(status="failed", usage_known=False)
-            self.harness.settle(
-                reservation,
-                None,
-                status="unknown",
-                profile=self.profile.snapshot(),
-                elapsed_ms=round((time.monotonic() - started) * 1000),
-            )
-            raise
-        self.harness.settle(
-            reservation,
-            turn.usage,
-            status="completed",
-            profile=self.profile.snapshot(),
-            elapsed_ms=round((time.monotonic() - started) * 1000),
-        )
-        span.end(status="completed", usage=turn.usage, usage_known=bool(turn.usage))
-        self.harness.save_record("model_turns", identity, {"phase": phase, "turn": asdict(turn)})
-        return turn
+        return super().turn(system, user, max_tokens=max_tokens, on_text=on_text, guard=guard)
 
 
 class QuickWebRunner:
@@ -350,6 +290,7 @@ class QuickWebRunner:
     def execute(self):
         self.harness.initialize(QUICK_LIMITS)
         model = QuickModel(self.harness, self.authorize)
+        model.bind_context(self.harness, self.context, self.run.get("context_compaction"))
         self.notify(
             {
                 "strategy": "quick_web",

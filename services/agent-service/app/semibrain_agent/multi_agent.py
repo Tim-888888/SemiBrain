@@ -76,7 +76,6 @@ def multi_evidence_views(records, *, content_chars=None, token_budget=None, ques
 class MultiPrompts(PromptAssembler):
     def system(self, role="investigator"):
         if role in ROLE_RULES:
-            runtime = next(s["text"] for s in self.sections(role) if s["name"] == "trusted_runtime")
             return (CONTROL_SAFETY_RULES + "\n" + ROLE_RULES[role]
                     + "\n你只负责原目标中属于本角色的工作，其他分支负责的工作不属于你的能力缺失。"
                     "交回简短证据摘要供协调器汇总，不代替协调器写完整报告。"
@@ -100,7 +99,7 @@ class MultiPrompts(PromptAssembler):
                     "answer_input给出历史回答的真实文件路径；sandbox.python会自动装入，直接用pathlib读取UTF-8内容。"
                     "纯文件封装可复制原文，无需重新取证；有整理要求则基于文件内容处理，不能只写摘要或占位文字。"
                     "执行成功后用已返回artifacts确认导出，再task__complete。"
-                    "仅可经授权sandbox.python执行代码，不可在宿主执行。\ntrusted_runtime:\n" + runtime)
+                    "仅可经授权sandbox.python执行代码，不可在宿主执行。")
         if role == "supervisor":
             return (
                 CONTROL_SAFETY_RULES + "\n你是任务协调器，只返回计划控制对象，不输出用户答案。"
@@ -607,9 +606,6 @@ class MultiAgent(Investigator):
                     {
                         "question": self.context["input"]["question"],
                         "intent": state["intent"],
-                        "history": self.context["history"][-6:]
-                        if state["intent"]["action"] != "investigate"
-                        else [],
                         "evidence": self.project_evidence(evidence, question=self.context["input"]["question"]),
                         "branches": [
                             {k: t.get(k) for k in ("role", "goals", "status", "summary", "error",

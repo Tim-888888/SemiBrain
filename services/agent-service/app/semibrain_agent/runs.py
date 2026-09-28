@@ -169,6 +169,10 @@ def snapshot(run_id: str, request: Request):
     images = [image for item in db().evidence.find({"run_id": run_id}, {"image_refs": 1}) for image in item.get("image_refs", [])]
     images += [image for citation in result.get("citations", []) for image in citation.get("image_refs", [])]
     result["image_refs"] = list({image["asset_id"]: image for image in images}.values())
+    from semibrain_agent.request_context import public_metrics
+    metrics = public_metrics(db(), run_id, terminal=row["status"] in {"succeeded", "partial", "failed", "cancelled"})
+    if metrics:
+        result["context_usage"] = metrics
     if row.get("started_at"):
         result["elapsed_ms"] = max(0, round(((row.get("completed_at") or now()) - row["started_at"]).total_seconds() * 1000))
     return result
@@ -242,6 +246,8 @@ def execute_one():
         return False
     try:
         context = call("conversation", "GET", "/internal/v1/runs/" + run["_id"] + "/context").json()
+        from semibrain_agent.conversation_history import load_history
+        context = load_history(run["_id"], context)
         client = BusinessClient(run["_id"], context["task_id"], context["input"]["input_revision"])
         if context["input"]["mode"] == "investigation":
             from semibrain_agent.investigator import Investigator
@@ -264,7 +270,14 @@ def execute_one():
                 lambda values, event="task.started": update(run, fence, values, event),
             ).execute()
             return True
+        from semibrain_agent.harness import Harness
+        from semibrain_agent.quick_web import QUICK_LIMITS
+        harness = Harness(run["_id"], fence)
+        harness.initialize(QUICK_LIMITS)
         model = ModelAdapter()
+        model.bind_context(harness, context, run.get("context_compaction"))
+        model.authorize = lambda: client.request("POST", "/internal/v1/lineage/check", json={"refs": []})
+        update(run, fence, {"strategy": "quick_qa", "model_origin": model.profile.model_origin})
         catalog = client.request("GET", "/internal/v1/tools")
         documents = client.request("GET", "/internal/v1/knowledge/documents")["items"]
         sources = {
@@ -426,7 +439,7 @@ def execute_one():
             {
                 "question": context["input"]["question"],
                 "understanding": understanding.model_dump(),
-                "history": context["history"][-6:],
+                "history": context["history"],
                 "evidence": evidence,
             }
         )
@@ -438,6 +451,7 @@ def execute_one():
 解释/改写只能处理已提供且重新核验的历史内容；不要引入新事实。不可展示模型内部思维过程，只给用户所需回答。"""
         body = ""
         last = time.monotonic()
+        model.final = True
         for delta in model.stream(system, prompt):
             body += delta
             if len(body) > 64000:

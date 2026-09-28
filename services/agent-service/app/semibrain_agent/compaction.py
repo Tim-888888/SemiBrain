@@ -15,6 +15,7 @@ from semibrain_common.runtime import canonical, digest, now, transaction
 
 from semibrain_agent.harness import BudgetExhausted, RunStopped, estimate_reservation, estimate_text
 from semibrain_agent.provider import ModelError
+from semibrain_agent.request_context import measure
 
 VERSION = "history-compaction-v2"
 SUMMARY_MODE = ("本次服务端调用用途为历史归档，不是业务推理回合。上述业务角色的计划JSON、"
@@ -234,7 +235,9 @@ class HistoryCompactor:
             result[start:end] = surface
             refs[label] = active["_id"] if active else None
             current_end = start + len(surface)
-            pressure = estimate_reservation(system, result, tools, 0) > threshold
+            pressure = measure(system, result, tools, profile, output,
+                               headroom=policy.headroom_tokens,
+                               ratio=policy.threshold_ratio)["estimated_input_tokens"] > threshold
             if not (pressure or force) or attempts >= 2:
                 continue
             cut = select_end(surface, retain, force=force)

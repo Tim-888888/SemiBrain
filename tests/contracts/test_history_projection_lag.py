@@ -66,7 +66,8 @@ def test_history_resolves_committed_turns_and_revalidates_sources(
     result = access.run_context("current", Request({"type": "http"}))
 
     assert fetched == ["previous"]
-    assert result["history"][0] == {"role": "user", "content": "Known question"}
+    assert result["history"][0] == {"role": "user", "content": "Known question",
+                                    "input_revision": 1, "message_id": "1:user"}
     if answer_state == "published":
         assert len(result["history"]) == 2
         assert result["history"][1]["content"] == "Verified value [1]."

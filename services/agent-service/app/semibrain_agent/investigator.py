@@ -152,7 +152,7 @@ class Investigator:
         def execute(value):
             self.harness.check()
             current = service_call(
-                "conversation", "GET", "/internal/v1/runs/" + self.run["_id"] + "/context"
+                "conversation", "GET", "/internal/v1/runs/" + self.run["_id"] + "/context", params={"include_history": "false"}
             ).json()
             if current.get("cancel_requested"):
                 from semibrain_agent.control import request_cancel
@@ -222,33 +222,58 @@ class Investigator:
         profile = ModelProfile(**self.bundle["models"][role], credential_prefix="SEMIBRAIN_LLM")
         default_history = inputs is None
         inputs = self.messages(state) if default_history else inputs
+        from semibrain_agent.request_context import (
+            ARCHIVE_RULE,
+            ContextRecorder,
+            measure,
+            stable_tools,
+        )
         system = system_override if system_override is not None else self.prompts.system(role)
+        if ARCHIVE_RULE not in system:
+            system += "\n\n" + ARCHIVE_RULE
+        tools = stable_tools(tools)
         snapshot = getattr(self, "compaction_snapshot", None)
         compaction_refs = {}
+        conversation_changed = False
+        history_ranges = list(history_ranges if history_ranges is not None else
+                              state.get("history_ranges", []) if default_history else [])
+        if not compaction_call:
+            if not any(m.get("_context", {}).get("runtime") for m in inputs):
+                inputs = [self.prompts.runtime_message(role), *inputs]
+                history_ranges = [(label, start + 1, end + 1) for label, start, end in history_ranges]
+            if not hasattr(self, "parent") and snapshot and self.context.get("history"):
+                from semibrain_agent.conversation_history import ConversationHistory
+                if not hasattr(self, "conversation_history"):
+                    self.conversation_history = ConversationHistory(self.harness, self.context, snapshot)
+                def summarize_conversation(key, messages, output):
+                    return Investigator.model_call_once(self, {"step": key, "phase": "context.compact"},
+                        role=role, inputs=messages, tools=tools, system_override=system,
+                        max_tokens=output, compaction_call=True)
+                previous_summary = self.conversation_history.checkpoint
+                inputs, conversation_refs, shift = self.conversation_history.prepare(
+                    inputs, system, tools, profile, max_tokens, summarize_conversation,
+                    force=context_retry)
+                conversation_changed = previous_summary != self.conversation_history.checkpoint
+                compaction_refs.update(conversation_refs)
+                history_ranges = [(label, start + shift, end + shift) for label, start, end in history_ranges]
         if snapshot and not compaction_call and not final:
-            from semibrain_agent.compaction import SUMMARY_MODE, HistoryCompactor
-
-            history_ranges = list(history_ranges if history_ranges is not None else
-                                  state.get("history_ranges", []) if default_history else [])
-            prior = [{"role": m["role"], "content": m["content"]}
-                     for m in self.context.get("history", [])[-8:]]
-            if prior and inputs[:len(prior)] == prior:
-                history_ranges.append(("conversation", 0, len(prior)))
+            from semibrain_agent.compaction import HistoryCompactor
 
             def summarize(key, messages, output):
                 # Direct, accounted model request. Never enter the Agent loop or
                 # recursively compact the summarizer's own input.
                 return Investigator.model_call_once(
                     self, {"step": key, "phase": "context.compact"}, role=role,
-                    inputs=messages, tools=tools, system_override=system + "\n\n" + SUMMARY_MODE,
+                    inputs=messages, tools=tools, system_override=system,
                     max_tokens=output, compaction_call=True,
                 )
 
-            inputs, compaction_refs, compressed = HistoryCompactor(
+            inputs, work_refs, compressed = HistoryCompactor(
                 self.harness, self.context["task_id"], role, snapshot,
                 invoke=summarize, authorize=self.executor.evidence,
             ).prepare(inputs, history_ranges, system, tools, profile, max_tokens,
-                      force=context_retry)
+                      force=context_retry and not conversation_changed)
+            compaction_refs.update(work_refs)
             state.setdefault("context_compaction_refs", {}).update(
                 {role + ":" + label: ref for label, ref in compaction_refs.items() if ref})
         elif compaction_call:
@@ -256,6 +281,7 @@ class Investigator:
             if estimate_reservation(system, inputs, tools, max_tokens) > profile.context_window_tokens:
                 raise BudgetExhausted("MODEL_CONTEXT_LIMIT")
         elif getattr(self, "context_policy_enabled", False):
+            from semibrain_agent.compaction import resolve_policy
             from semibrain_agent.context_policy import fit_messages
 
             budget = self.harness.check()["budget"]
@@ -266,6 +292,8 @@ class Investigator:
             inputs, compressed = fit_messages(
                 inputs, system, tools, profile, output=max_tokens,
                 question=self.context["input"]["question"], available=available, force=context_retry,
+                **({"headroom": resolve_policy(snapshot, profile.model).headroom_tokens,
+                    "ratio": resolve_policy(snapshot, profile.model).threshold_ratio} if snapshot else {}),
             )
         else:
             inputs, compressed = compact_messages(inputs)
@@ -287,6 +315,14 @@ class Investigator:
         reservation = self.harness.model_reserve(
             amount, phase=state["phase"], final=final, task_id=self.context["task_id"]
         )
+        measurement = measure(system, inputs, tools, profile, max_tokens)
+        if snapshot:
+            from semibrain_agent.compaction import resolve_policy
+            policy = resolve_policy(snapshot, profile.model)
+            measurement = measure(system, inputs, tools, profile, max_tokens,
+                                  headroom=policy.headroom_tokens, ratio=policy.threshold_ratio)
+        recorder = ContextRecorder(self.harness, self.context["task_id"], state["phase"],
+                                   measurement, compaction_refs=compaction_refs)
         row = self.harness.check()
         seconds = max(0.1, (row["deadline_at"] - now()).total_seconds())
         if not final:
@@ -341,6 +377,7 @@ class Investigator:
             )
             return turn, identity
         finally:
+            recorder.finish(turn.usage if turn else None, status="completed" if turn else "unknown")
             span.end(
                 usage=turn.usage if turn else None,
                 status="completed" if turn else "unknown",

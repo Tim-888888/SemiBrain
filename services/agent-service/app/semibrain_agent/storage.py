@@ -4,6 +4,9 @@ from semibrain_agent.runs import db
 
 
 def initialize():
+    migrate(db(), "model-context-001", [
+        ("model_contexts", [("run_id", 1), ("created_at", 1)], {}),
+    ])
     migrate(db(), "context-compaction-001", [
         ("context_compactions", [("run_id", 1), ("scope", 1), ("created_at", 1)], {}),
     ])
