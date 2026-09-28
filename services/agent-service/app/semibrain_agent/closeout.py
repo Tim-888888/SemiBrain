@@ -34,7 +34,7 @@ supported：实际展示的证据支持该单元的全部事实，source_markers
 unsupported：存在具体的无依据事实、引用冲突、范围/否定错误、或不实的成功声明；reason必须描述实际缺陷，与verdict保持一致。
 context：纯标题、过渡、来源标签或明确的资料缺口，没有新的事实或执行成功声明，source_markers留空。
 不因没列举所有细节、没复述来源的全部内容而否定正确概括。来源有产品或场景范围，不将其泛化成行业唯一标准。
-对goals输入的每个index恰好返回一次判断：covered仅在保留supported单元之后，正文仍完整回答该目标时为true；block_ids列出共同回答该目标所必需的supported单元，不能用标题、缺口说明或unsupported单元凑数。
+对goals输入的每个index恰好返回一次判断：covered仅在保留supported单元之后，正文仍完整回答该目标时为true；block_ids只列共同回答该目标的最小必要supported单元，不列重复或可选补充内容，不能用标题、缺口说明或unsupported单元凑数。
 目标仅部分有据则covered=false，保留已有正确内容。missing_goals说明实质缺口，不要求额外调查。
 合成数据必须标明；projection未展示部分不用于背书。文件成功以登记artifacts为准。reason简短，最终自然语言正文不在此输出。"""
 
@@ -232,7 +232,7 @@ def evaluate_answer(draft, verdict, available_markers, goals=()):
     if len(ids) != len(set(ids)) or set(ids) != {b["id"] for b in units}:
         raise ValueError("CLOSEOUT_REVIEW_COVERAGE")
     decisions = {b.id: b for b in verdict.blocks}
-    kept, facts, issues, shared = [], [], [], {}
+    kept, facts, issues, shared, supported = [], [], [], {}, {}
     for unit in units:
         decision = decisions[unit["id"]]
         markers = cited_markers(unit["text"])
@@ -252,9 +252,13 @@ def evaluate_answer(draft, verdict, available_markers, goals=()):
             if not markers and not inherited:
                 issues.append("有据内容缺少就近引用，需补齐后核对")
                 continue
-            if bound and markers - bound:
+            if bound and markers and not markers & bound:
                 issues.append("正文引用与审核支持证据不一致")
                 continue
+            if bound and markers - bound:
+                # The entire fact was supported by a subset of its registered
+                # citations. Retain those references; do not discard the fact.
+                supported[unit["id"]] = markers & bound
             if inherited:
                 shared[unit["id"]] = sorted(inherited)
             facts.append(unit["id"])
@@ -262,7 +266,7 @@ def evaluate_answer(draft, verdict, available_markers, goals=()):
             # Pure source labels are represented by per-row citations instead.
             continue
         kept.append(unit["id"])
-    body = render_units(units, set(kept), shared) if facts else ""
+    body = render_units(units, set(kept), shared, supported) if facts else ""
     goal_ids = [g.index for g in verdict.goals]
     if len(goal_ids) != len(set(goal_ids)) or set(goal_ids) - set(range(len(goals))):
         raise ValueError("CLOSEOUT_GOAL_COVERAGE")

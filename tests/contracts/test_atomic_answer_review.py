@@ -89,6 +89,30 @@ def test_a_source_binding_does_not_silently_authorize_an_uncited_paragraph():
     assert not result["body"] and result["missing"] == ["Fact"] and result["issues"]
 
 
+def test_supported_subset_of_citations_keeps_fact_and_only_reviewed_references():
+    result = evaluate_answer("Measured fact [1][2].", verdict(["supported"], goals=[covered(0, 0)]),
+                             {"1", "2"}, ["Fact"])
+    assert result["body"] == "Measured fact [1]." and not result["missing"] and not result["issues"]
+
+
+def test_disjoint_citation_binding_requires_repair_instead_of_silent_replacement():
+    result = evaluate_answer("Measured fact [2].", verdict(["supported"]), {"1", "2"})
+    assert not result["body"] and result["issues"]
+
+
+def test_image_can_retain_a_reviewed_adjacent_caption_reference():
+    draft = "![Process diagram](/v1/assets/registered-image/content)\n\n> A process diagram [1]."
+    body = reviewed_body(draft, verdict(["supported", "supported"]), {"1"})
+    assert "![Process diagram](/v1/assets/registered-image/content) [1]" in body
+    assert "> A process diagram [1]." in body
+
+
+def test_surplus_reference_filter_preserves_markdown_links_and_unicode_refs():
+    from semibrain_agent.citations import retain_markers
+    assert retain_markers("Fact ［１］[2]. Link [2](https://example.org/2).", {"1"}) == (
+        "Fact ［１］. Link [2](https://example.org/2).")
+
+
 @pytest.mark.parametrize("goals", [[covered(0, 0), covered(0, 0)], [covered(4, 0)]])
 def test_invalid_goal_mapping_is_not_accepted(goals):
     with pytest.raises(ValueError, match="GOAL_COVERAGE"):

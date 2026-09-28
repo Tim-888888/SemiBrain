@@ -2,7 +2,7 @@
 
 import re
 
-from semibrain_agent.citations import cited_markers
+from semibrain_agent.citations import cited_markers, retain_markers
 from semibrain_agent.review_delivery import draft_blocks
 
 
@@ -55,15 +55,22 @@ def review_units(draft):
             units.extend({"text": item, "kind": "list_item", "group": group,
                           "adjacent_citations": shared} for item in items)
         else:
-            units.append({"text": text, "kind": "prose", "group": group})
+            image = bool(re.fullmatch(r"!\[[^\n]*\]\([^\n]+\)", text.strip()))
+            units.append({"text": text, "kind": "image" if image else "prose", "group": group,
+                          **({"adjacent_citations": shared} if image else {})})
     return [{"id": i, **unit} for i, unit in enumerate(units)]
 
 
-def render_units(units, accepted, shared_citations=None):
+def render_units(units, accepted, shared_citations=None, supported_citations=None):
     groups = []
     for unit in units:
         if unit["id"] not in accepted:
             continue
+        unit = dict(unit)
+        if unit["id"] in (supported_citations or {}):
+            for key in ("text", "row", "header"):
+                if key in unit:
+                    unit[key] = retain_markers(unit[key], supported_citations[unit["id"]])
         if unit["kind"] == "table_row":
             row = unit["row"]
             inherited = (shared_citations or {}).get(unit["id"], [])
