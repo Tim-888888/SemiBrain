@@ -1,0 +1,30 @@
+# Optional business execution agent. Only this broker receives the Docker Engine socket.
+services:
+  agent:
+    environment:
+      SEMIBRAIN_MULTI_AGENT_ENABLED: ${MULTI_AGENT_ENABLED:-false}
+  agent-worker:
+    environment:
+      SEMIBRAIN_MULTI_AGENT_ENABLED: ${MULTI_AGENT_ENABLED:-false}
+  business:
+    volumes: ["${DATA_DIR}/sandbox-control:/control:ro"]
+  business-worker:
+    volumes: ["${DATA_DIR}/sandbox-control:/control:ro"]
+  sandbox-broker:
+    image: ${BACKEND_IMAGE:?Pin backend image}
+    user: '0:0'
+    command: [python, -m, semibrain_business.sandbox_broker]
+    env_file: ["${SECRET_DIR}/sandbox.env"]
+    network_mode: none
+    read_only: true
+    tmpfs: ['/tmp:size=32m,mode=1777']
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DATA_DIR}/sandbox-control:/control
+    mem_limit: 256m
+    pids_limit: 64
+    cpus: 0.5
+    restart: unless-stopped

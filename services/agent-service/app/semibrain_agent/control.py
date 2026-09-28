@@ -122,6 +122,16 @@ def reconcile_cancellations():
                 stopped = stopped and confirmed
             except Exception:
                 stopped = False
+        if run.get("strategy") == "multi_agent":
+            try:
+                context = call("conversation", "GET",
+                               "/internal/v1/runs/" + run["_id"] + "/context").json()
+                client = BusinessClient(run["_id"], context["task_id"], context["input"]["input_revision"])
+                for active in db.active_tools.find({"run_id": run["_id"]}):
+                    if not db.stopped_tools.find_one({"_id": active["_id"], "run_id": run["_id"]}):
+                        stopped = tool_stop_confirmed(client, active["_id"]) and stopped
+            except Exception:
+                stopped = False
         timed_out = now() - run["cancel_requested_at"] > timedelta(seconds=125)
         if not stopped and not timed_out:
             continue
@@ -130,6 +140,12 @@ def reconcile_cancellations():
             if not db.runs.find_one({"_id": run["_id"], "status": "cancelling"}, session=session):
                 return
             pending = close_pending_usage(db, run["_id"], session)
+            if run.get("strategy") == "multi_agent":
+                db.tasks.update_many(
+                    {"run_id": run["_id"], "status": {"$in": ["queued", "running"]}},
+                    {"$set": {"status": "cancelled" if stopped else "failed", "completed_at": now()}},
+                    session=session,
+                )
             status = "cancelled" if stopped else "failed"
             updated = db.runs.find_one_and_update(
                 {"_id": run["_id"], "status": "cancelling"},

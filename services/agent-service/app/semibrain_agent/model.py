@@ -49,7 +49,14 @@ class ModelAdapter:
         self.usage = None
         self.deadline = time.monotonic() + 210
 
+    def bind_context(self, harness, context, snapshot):
+        self.harness, self.context, self.compaction_snapshot = harness, context, snapshot
+        self.final, self.phase = False, "quick_understand"
+
     def turn(self, system, user, *, max_tokens, on_text, guard):
+        if hasattr(self, "harness") and hasattr(self, "context"):
+            from semibrain_agent.quick_requests import request
+            return request(self, system, user, max_tokens=max_tokens, on_text=on_text, guard=guard)
         return ProviderAdapter(self.profile, deadline=self.deadline, guard=guard).turn(
             system, [{"role": "user", "content": user}], max_tokens=max_tokens, on_text=on_text
         )
@@ -102,7 +109,7 @@ sources 是服务端已核验的本轮资料范围及可访问文档目录；exp
         prompt = json.dumps(
             {
                 "question": question,
-                "history": history[-8:],
+                "history": history,
                 "tools": tools,
                 "attachments": attachments,
                 "sources": sources or {},
@@ -129,10 +136,9 @@ sources 是服务端已核验的本轮资料范围及可访问文档目录；exp
                         if isinstance(exc, ValidationError)
                         else [{"type": "invalid_json"}]
                     )
-                    prompt += (
-                        "\n上次控制对象无法校验，请修正字段类型；不猜测缺失条件："
-                        + json.dumps(errors)
-                    )
+                    data = json.loads(prompt)
+                    data["control_validation_errors"] = errors
+                    prompt = json.dumps(data, ensure_ascii=False)
         raise ModelError("INTENT_CONTROL_INVALID")
 
     def check_business_plan(self, question, history, catalog, candidate):
@@ -149,7 +155,7 @@ sources 是服务端已核验的本轮资料范围及可访问文档目录；exp
             payload = json.dumps(
                 {
                     "question": question,
-                    "history": history[-8:],
+                    "history": history,
                     "tool": selected,
                     "candidate": candidate.model_dump(),
                 },

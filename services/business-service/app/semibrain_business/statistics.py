@@ -18,6 +18,8 @@ class StatisticsInput(BaseModel):
     operation: Literal["mean", "sample_stddev", "percentage_point_difference", "group_compare"]
     column: str = Field(default="value", pattern=r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
     group_column: str | None = Field(default=None, pattern=r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
+    comparison_mode: Literal["same_metric", "first_vs_final"] = Field(
+        default="same_metric", description="百分点比较：同口径跨组用same_metric；同一队列首测与终测用first_vs_final，固定计算终测减首测。")
 
 
 def calculate(form: StatisticsInput, job):
@@ -52,9 +54,12 @@ def compute(form: StatisticsInput, inputs):
     if form.operation == "percentage_point_difference":
         if len(inputs) != 2 or any(item.get("unit") != "fraction" for item in inputs):
             raise ValueError("TWO_FRACTION_RESULTS_REQUIRED")
+        comparison = compare_yields(*inputs, mode=form.comparison_mode)
+        if form.comparison_mode == "first_vs_final" and inputs[0]["metric"] == "first":
+            inputs = list(reversed(inputs))
         return {
             "operation": form.operation,
-            **compare_yields(*inputs),
+            **comparison,
             "unit": "percentage_points",
             "target": inputs[0],
             "control": inputs[1],

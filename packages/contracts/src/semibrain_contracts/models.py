@@ -73,8 +73,15 @@ class InputSnapshot(Contract):
     question: str = Field(min_length=1, max_length=32000)
     mode: Literal["quick_qa", "investigation"]
     allow_web: bool = False
+    investigation_strategy: Literal["single_agent", "multi_agent"] | None = None
     resource_restrictions: list[str] = Field(default_factory=list)
     attachment_refs: list[UUID] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def mode_strategy(self):
+        if self.mode == "quick_qa" and self.investigation_strategy is not None:
+            raise ValueError("STRATEGY_REQUIRES_INVESTIGATION")
+        return self
 
 
 class RunRequest(Command):

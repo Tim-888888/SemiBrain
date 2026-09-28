@@ -1,5 +1,6 @@
 """Authenticated gateway routes; knowledge and query records stay in the business service."""
 
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
@@ -7,10 +8,44 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
 from semibrain_common.runtime import failure
 
-from semibrain_conversation.access import business
-from semibrain_conversation.auth import admin, current_user
+from semibrain_conversation.access import business, run_snapshot
+from semibrain_conversation.auth import admin, current_user, db
 
 router = APIRouter()
+
+
+@router.get("/admin/v1/runs/comparison")
+def compare_recent(user=Depends(admin)):
+    rows = db().gateway_runs.find({"owner_id": user["_id"], "input.mode": "investigation"}).sort("created_at", -1).limit(12)
+    items = []
+    for row in rows:
+        try:
+            run = run_snapshot(user, row["_id"])
+        except Exception:
+            continue  # Revoked sources are not exposed through a management shortcut.
+        items.append({"run_id": row["_id"], "question": row["input"]["question"][:160],
+                      "strategy": run.get("strategy", "single_agent"), "status": run["status"],
+                      "budget": run.get("budget"), "elapsed_ms": run.get("elapsed_ms"),
+                      "professional_count": len(run.get("task_tree", []))})
+    return {"items": items, "scope": "own_authorized_runs", "currency_cost": None}
+
+
+@router.post("/v1/attachments/images", status_code=201)
+def upload_image(file: UploadFile = File(...), allow_external: bool = Form(False),
+                 data_origin: Literal["synthetic", "public", "authorized_business"] = Form("authorized_business"),
+                 user=Depends(current_user)):
+    raw = file.file.read(3 * 1024**2 + 1)
+    if not raw or len(raw) > 3 * 1024**2:
+        failure("IMAGE_SIZE_INVALID", 413)
+    return business(user, "POST", "/internal/v1/attachments/images", operation="attachment.upload",
+                    files={"file": (file.filename, raw, file.content_type)},
+                    data={"allow_external": str(allow_external).lower(), "data_origin": data_origin}).json()
+
+
+@router.post("/v1/attachments/{asset_id}/revoke")
+def revoke_attachment(asset_id: UUID, user=Depends(current_user)):
+    return business(user, "POST", f"/internal/v1/attachments/{asset_id}/revoke",
+                    operation="attachment.upload").json()
 
 
 @router.get("/v1/knowledge/documents")
@@ -31,10 +66,20 @@ def upload(
     allow_external: bool = Form(False),
     document_id: str = Form(""),
     expected_revision: int = Form(0),
+    images: list[UploadFile] = File(default=[]),
+    image_paths: str = Form("[]"),
     user=Depends(admin),
 ):
     raw = file.file.read(32 * 1024**2 + 1)
-    if len(raw) > 32 * 1024**2:
+    parts = [("file", (file.filename, raw, file.content_type))]
+    total = len(raw)
+    if len(images) > 50:
+        failure("DOCUMENT_IMAGES_INVALID")
+    for image_file in images:
+        content = image_file.file.read(16 * 1024**2 + 1)
+        total += len(content)
+        parts.append(("images", (image_file.filename, content, image_file.content_type)))
+    if total > 32 * 1024**2:
         failure("UPLOAD_TOO_LARGE", 413)
     return business(
         user,
@@ -42,7 +87,7 @@ def upload(
         "/internal/v1/knowledge/uploads",
         operation="knowledge.manage",
         timeout=120,
-        files={"file": (file.filename, raw, file.content_type)},
+        files=parts,
         data={
             "request_id": str(request_id),
             "document_path": document_path,
@@ -51,6 +96,7 @@ def upload(
             "allow_external": str(allow_external).lower(),
             "document_id": document_id,
             "expected_revision": str(expected_revision),
+            "image_paths": image_paths,
         },
     ).json()
 
@@ -97,6 +143,24 @@ class Revision(BaseModel):
     expected_revision: int
 
 
+class Reprocess(Revision):
+    source_version: UUID
+
+
+@router.post("/admin/v1/knowledge/documents/{document_id}/reprocess", status_code=202)
+def reprocess(document_id: UUID, form: Reprocess, user=Depends(admin)):
+    return business(user, "POST", f"/internal/v1/knowledge/documents/{document_id}/reprocess",
+                    operation="knowledge.manage", json=form.model_dump(mode="json")).json()
+
+
+@router.post("/admin/v1/knowledge/documents/{document_id}/republish")
+def republish(document_id: UUID, form: Revision, user=Depends(admin)):
+    return business(
+        user, "POST", "/internal/v1/knowledge/documents/" + str(document_id) + "/republish",
+        operation="knowledge.manage", json=form.model_dump(mode="json"), timeout=120,
+    ).json()
+
+
 @router.post("/admin/v1/knowledge/documents/{document_id}/unpublish")
 def unpublish(document_id: UUID, form: Revision, user=Depends(admin)):
     return business(
@@ -109,12 +173,13 @@ def unpublish(document_id: UUID, form: Revision, user=Depends(admin)):
 
 
 @router.get("/v1/assets/{asset_id}/content")
-def download(asset_id: UUID, user=Depends(current_user)):
+def download(asset_id: UUID, preview_version: UUID | None = None, user=Depends(current_user)):
     response = business(
         user,
         "GET",
         "/internal/v1/assets/" + str(asset_id) + "/content",
         operation="asset.read",
+        params={"preview_version": str(preview_version)} if preview_version else {},
         timeout=60,
     )
     return Response(
@@ -126,6 +191,7 @@ def download(asset_id: UUID, user=Depends(current_user)):
                 "content-disposition",
                 "cache-control",
                 "x-content-type-options",
+                "content-security-policy",
             )
             if name in response.headers
         },

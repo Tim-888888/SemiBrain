@@ -17,7 +17,7 @@ def test_failure_category_is_safe_and_replayed_without_reexecution(error, code):
     records = {}
     calls = []
     db = SimpleNamespace(
-        observations=SimpleNamespace(find_one=lambda query: records.get(query["_id"]))
+        observations=SimpleNamespace(find_one=lambda query: records.get(query.get("_id")))
     )
 
     def tool(*_, **__):

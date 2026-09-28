@@ -20,6 +20,15 @@ def test_small_evidence_is_exact_and_does_not_alias_original():
     assert source == before
 
 
+def test_dependency_handles_survive_even_when_content_is_omitted():
+    source = record({"field_" + str(i): i for i in range(1000)})
+    source.update(evidence_id="e1", job_id="j1", asset_id="a1")
+    view = evidence_views([source], content_chars=400)[0]
+    assert view["content"] is None
+    assert {k: view[k] for k in ("evidence_id", "job_id", "asset_id")} == {
+        "evidence_id": "e1", "job_id": "j1", "asset_id": "a1"}
+
+
 def test_long_result_samples_rows_without_changing_total_or_claiming_completeness():
     source = record({"row_count": 500, "rows": [{"id": i, "value": i % 11} for i in range(500)],
                      "truncated": False, "window": {"start": "2026-02-02", "end": "2026-03-03"}})

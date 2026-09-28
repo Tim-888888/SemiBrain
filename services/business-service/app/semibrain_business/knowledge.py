@@ -1,9 +1,7 @@
 """Ingestion saga: immutable assets -> parser -> Mongo chunks -> vector staging -> CAS publish."""
 
-import base64
 import hashlib
 import io
-import mimetypes
 import os
 import tempfile
 from datetime import timedelta
@@ -42,11 +40,10 @@ def bucket():
     return os.getenv("SEMIBRAIN_MINIO_BUCKET", "knowledge-assets")
 
 
-def store_asset(content, media_type, owner_id, filename, *, document_id=None, job_id=None):
+def store_asset(content, media_type, owner_id, filename, *, document_id=None, job_id=None, retention_version=None):
     asset_id = uid()
     content_hash = hashlib.sha256(content).hexdigest()
     key = owner_id + "/" + asset_id + "/" + content_hash
-    objects().put_object(bucket(), key, io.BytesIO(content), len(content), content_type=media_type)
     ref = AssetRef(
         asset_id=asset_id, content_hash=content_hash, media_type=media_type, size_bytes=len(content)
     ).model_dump(mode="json")
@@ -59,12 +56,21 @@ def store_asset(content, media_type, owner_id, filename, *, document_id=None, jo
         "document_id": document_id,
         "job_id": job_id,
         "created_at": now(),
+        **({"retention_version": retention_version} if retention_version else {}),
     }
-    db().assets.insert_one(row)
+    # Track managed object intent before upload so failed uploads remain reclaimable.
+    if retention_version:
+        db().assets.insert_one(row)
+    objects().put_object(bucket(), key, io.BytesIO(content), len(content), content_type=media_type)
+    if not retention_version:
+        db().assets.insert_one(row)
     return row
 
 
 def read_asset(asset):
+    if asset.get("retention_version"):
+        from semibrain_business.retention import lease
+        lease(asset["job_id"])
     response = objects().get_object(bucket(), asset["object_key"])
     try:
         content = response.read(33 * 1024**2)
@@ -92,46 +98,8 @@ def validate_path(path):
 
 
 def chunk_blocks(parsed, document_id, version):
-    from markdown_it import MarkdownIt
-
-    blocks = [b.model_dump() for b in parsed.blocks]
-    if not blocks:
-        # Some upstream engines expose only Markdown. Preserve real line locations, not guessed pages.
-        lines = parsed.markdown.splitlines()
-        tokens = MarkdownIt("commonmark").enable("table").parse(parsed.markdown)
-        blocks = [
-            {
-                "text": "\n".join(lines[t.map[0] : t.map[1]]),
-                "kind": t.type,
-                "location": {"line_start": t.map[0] + 1, "line_end": t.map[1]},
-            }
-            for t in tokens
-            if t.map and t.level == 0 and t.type != "inline"
-        ]
-    chunks = []
-    for block in blocks:
-        text = block["text"].strip()
-        if not text:
-            continue
-        # Split only overlong structural blocks. Original block locator remains attached.
-        for start in range(0, len(text), 2400):
-            fragment = text[start : start + 2600]
-            identity = digest(document_id + ":" + version + ":" + str(len(chunks)))
-            chunks.append(
-                {
-                    "_id": identity,
-                    "document_id": document_id,
-                    "version": version,
-                    "text": fragment,
-                    "content_hash": digest(fragment),
-                    "location": {**block["location"], "block_offset": start},
-                    "kind": block["kind"],
-                    "embedding_version": EMBEDDING_VERSION,
-                }
-            )
-    if not chunks or len(chunks) > 1500:
-        raise ValueError("CHUNK_COUNT_INVALID")
-    return chunks
+    from semibrain_business.chunk_tree import build_chunk_tree
+    return build_chunk_tree(parsed, document_id, version, EMBEDDING_VERSION)[0]
 
 
 def process_one():
@@ -181,26 +149,13 @@ def process_one():
                 profile=ParseProfile(allow_external=job["allow_external"], timeout_seconds=180),
             )
         version = job["version"]
-        manifest = parsed.model_dump(exclude={"images", "markdown", "blocks"})
-        text_asset = store_asset(
-            parsed.markdown.encode(),
-            "text/markdown",
-            document["owner_id"],
-            "parsed.md",
-            document_id=document["_id"],
-        )
-        image_refs = []
-        for image_name, encoded in parsed.images.items():
-            # Images are immutable assets, never large base64 blobs in queues or model state.
-            raw = encoded.split(",", 1)[-1] if encoded.startswith("data:") else encoded
-            image = store_asset(
-                base64.b64decode(raw),
-                mimetypes.guess_type(image_name)[0] or "application/octet-stream",
-                document["owner_id"],
-                PurePosixPath(image_name).name,
-                document_id=document["_id"],
-            )
-            image_refs.append(image["_id"])
+        from semibrain_business.chunking import CHUNKER_VERSION
+        from semibrain_business.document_images import bind_images
+        image_refs = bind_images(parsed, document, job, store_asset, read_asset, db().assets)
+        parsed.parser_manifest["chunker_version"] = CHUNKER_VERSION
+        manifest = parsed.model_dump(exclude={"images", "markdown", "blocks", "image_refs"})
+        text_asset = store_asset(parsed.markdown.encode(), "text/markdown", document["owner_id"],
+                                 "parsed.md", document_id=document["_id"])
         snapshot = store_asset(
             parsed.model_dump_json(exclude={"images"}).encode(),
             "application/json",
@@ -231,6 +186,7 @@ def process_one():
                         "parsed_asset_id": text_asset["_id"],
                         "snapshot_asset_id": snapshot["_id"],
                         "image_asset_ids": image_refs,
+                        "image_refs": parsed.image_refs,
                         "manifest": manifest,
                         "created_at": now(),
                         "generation": job["generation"],
@@ -267,9 +223,14 @@ def process_one():
                 },
             )
             return True
-        chunks = chunk_blocks(parsed, document["_id"], version)
+        from semibrain_business.chunk_tree import CONTEXT_VERSION, build_chunk_tree, tree_manifest
+        if parsed.parser_manifest.get("chunker_version") != CHUNKER_VERSION:
+            raise ValueError("CHUNKER_VERSION_CHANGED_REBUILD_REQUIRED")
+        chunks, parents = build_chunk_tree(parsed, document["_id"], version, EMBEDDING_VERSION)
         for chunk in chunks:
             db().chunks.update_one({"_id": chunk["_id"]}, {"$setOnInsert": chunk}, upsert=True)
+        for parent in parents:
+            db().knowledge_parents.update_one({"_id": parent["_id"]}, {"$setOnInsert": parent}, upsert=True)
         db().ingestion_jobs.update_one(
             {"_id": job["_id"], "fence": fence}, {"$set": {"step": "indexing"}}
         )
@@ -287,6 +248,9 @@ def process_one():
                     "$set": {
                         "projection_verified": True,
                         "chunk_ids": [c["_id"] for c in chunks],
+                        "context_version": CONTEXT_VERSION,
+                        "parent_ids": [p["_id"] for p in parents],
+                        "parent_manifest_hash": tree_manifest(parents),
                         "chunk_manifest_hash": digest(
                             canonical([c["content_hash"] for c in chunks])
                         ),

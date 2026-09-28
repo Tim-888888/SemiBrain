@@ -56,7 +56,7 @@ def fixture_agent(status="succeeded"):
         return observation
 
     agent.executor = SimpleNamespace(execute=execute, evidence=lambda: [])
-    agent.harness = SimpleNamespace(save_record=lambda collection, identity, value:
+    agent.harness = SimpleNamespace(request_closeout=lambda reason: reason, save_record=lambda collection, identity, value:
         agent.db.observations.rows.append({"_id": identity, "run_id": "current", **value}))
     agent.model_call = lambda *args, **kwargs: (SimpleNamespace(text="Draft", calls=[]), "turn")
     state = {"phase": "model", "round": 0, "step": 1, "review_count": 0,
@@ -185,7 +185,7 @@ def test_model_repeating_fallback_query_reuses_same_observation():
     state["current_turn"] = "turn"
     agent.db.model_turns.rows.append({"_id": "turn", "run_id": "current", "turn": {"calls": [{
         "name": "web__search", "call_id": "duplicate",
-        "arguments": json.dumps({"query": state["intent"]["public_search_query"]}),
+        "arguments": json.dumps({"query": state["intent"]["public_search_query"], "content": True}),
     }]}})
     agent.tools(state)
     assert len(agent.executed) == 1 and state["repeated_calls"] == 1

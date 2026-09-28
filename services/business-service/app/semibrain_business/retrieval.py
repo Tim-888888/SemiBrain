@@ -77,7 +77,7 @@ def index_chunks(document, version, chunks):
     client = vectors()
     for start in range(0, len(chunks), 8):
         batch = chunks[start : start + 8]
-        dense = embeddings([row["text"] for row in batch])
+        dense = embeddings([row.get("embedding_text", row["text"]) for row in batch])
         client.upsert(
             COLLECTION,
             [
@@ -88,7 +88,7 @@ def index_chunks(document, version, chunks):
                     "scope": "demo"
                     if document["visibility"] == "demo"
                     else "owner:" + document["owner_id"],
-                    "text": row["text"],
+                    "text": row.get("embedding_text", row["text"]),
                     "dense": vector,
                 }
                 for row, vector in zip(batch, dense, strict=True)
@@ -115,7 +115,7 @@ def rerank(query, chunks, top_k):
         headers={"Authorization": "Bearer " + os.environ["SEMIBRAIN_RERANK_API_KEY"]},
         json={
             "model": os.getenv("SEMIBRAIN_RERANK_MODEL", "qwen3.7-text-rerank"),
-            "input": {"query": query, "documents": [c["text"] for c in chunks]},
+            "input": {"query": query, "documents": [(c.get("context_header", "") + "\n" + c["text"]).strip() for c in chunks]},
             "parameters": {"top_n": top_k, "return_documents": False},
         },
         timeout=45,
@@ -125,6 +125,22 @@ def rerank(query, chunks, top_k):
     if any(not 0 <= row["index"] < len(chunks) for row in ranked):
         raise ValueError("RERANK_INDEX_INVALID")
     return [{**chunks[row["index"]], "rerank_score": row["relevance_score"]} for row in ranked]
+
+
+def rank_candidates(query, chunks, top_k):
+    """An optional provider cannot erase already authorized hybrid results."""
+    if not chunks:
+        return [], {"status": "skipped_empty"}
+    try:
+        return rerank(query, chunks, top_k), {"status": "succeeded"}
+    except httpx.HTTPError as exc:
+        code = ("RERANK_HTTP_" + str(exc.response.status_code)
+                if isinstance(exc, httpx.HTTPStatusError) else "RERANK_TRANSPORT_ERROR")
+        # Keep RRF order and do not fabricate reranker scores. Resource authorization
+        # failures are deliberately outside this catch, and checked again by search.
+        return chunks[:top_k], {"status": "degraded", "reason": code,
+                               "fallback": "authorized_hybrid_rrf",
+                               "notice": "外部重排不可用，按已授权混合检索顺序返回；未生成重排分数。"}
 
 
 def search(query, claim, top_k=5):
@@ -201,6 +217,11 @@ def search(query, claim, top_k=5):
             chunks.append(
                 {
                     "chunk_id": chunk["_id"],
+                    "parent_id": chunk.get("parent_id"),
+                    "source_unit": chunk.get("source_unit"),
+                    "context_version": chunk.get("context_version"),
+                    "context_header": chunk.get("context_header", ""),
+                    "image_refs": chunk.get("image_refs", []),
                     "document_id": document["_id"],
                     "version": chunk["version"],
                     "text": chunk["text"],
@@ -221,9 +242,13 @@ def search(query, claim, top_k=5):
         chunks = authorized_chunks(hits)
         refilled = True
     # Authorization and current version checks above precede external reranking.
-    ranked = rerank(query, chunks, top_k)
+    from semibrain_business.diversity import select_mmr
+    from semibrain_business.retrieval_context import RETRIEVAL_VERSION, expand_context
+    ranked, ranking = rank_candidates(query, chunks, min(len(chunks), max(top_k * 3, top_k)))
+    selected, diversity = select_mmr(ranked, top_k)
+    assembled, context_trace = expand_context(selected, db())
     final = []
-    for row in ranked:
+    for row in assembled:
         authorized_document(row["document_id"], claim, active=True, version=row["version"])
         final.append(row)
     return final, {
@@ -235,4 +260,8 @@ def search(query, claim, top_k=5):
         "fusion": "RRF",
         "sparse": "BM25",
         "embedding_version": EMBEDDING_VERSION,
+        "rerank": ranking,
+        "diversity": diversity,
+        "context": context_trace,
+        "retrieval_version": RETRIEVAL_VERSION,
     }

@@ -164,10 +164,11 @@ class YieldQuery(BaseModel):
     lot_ids: list[str] = Field(min_length=1, max_length=100)
     stage: str = Field(pattern="^(CP|FT)$")
     program_version: str = Field(min_length=1)
-    start: AwareDatetime
-    end: AwareDatetime
-    as_of: AwareDatetime
-    metric: str = Field(default="final", pattern="^(first|final)$")
+    start: AwareDatetime = Field(description="队列纳入窗口起点（含）：器件首个有效测试的事件时间，与选择首测/终测指标无关。")
+    end: AwareDatetime = Field(description="队列纳入窗口终点（不含）；终测可取窗口之后、as_of之前的有效复测。")
+    as_of: AwareDatetime = Field(description="事件时间和入库时间均不得晚于该查询截至时间。")
+    metric: str = Field(default="final", pattern="^(first|final)$",
+                        description="first=队列器件的首个有效结果；final=截至as_of的最后有效结果。CP/FT是阶段，不决定该指标。")
 
     @model_validator(mode="after")
     def valid_window(self):
@@ -444,6 +445,10 @@ WITH eligible AS (
 SELECT COUNT(*) AS denominator,
        COUNT(*) FILTER (WHERE pass_flag) AS numerator,
        MAX(ingested_at) AS watermark,
+       (SELECT MD5(COALESCE(STRING_AGG(
+           JSONB_BUILD_ARRAY(source_system,lot_id,unit_id,stage,program_version)::text,
+           ',' ORDER BY source_system,lot_id,unit_id,stage,program_version), ''))
+        FROM cohort) AS cohort_signature,
        ARRAY(SELECT DISTINCT l.product_id FROM chosen c JOIN lots l USING(lot_id)
              ORDER BY l.product_id) AS product_ids
 FROM chosen
@@ -472,19 +477,27 @@ def query_yield(engine, query: YieldQuery) -> dict:
         "cohort_end": query.end.isoformat(),
         "as_of": query.as_of.isoformat(),
         "watermark": row["watermark"].isoformat() if row["watermark"] else None,
+        "cohort_signature": row["cohort_signature"],
+        "semantics": {
+            "cohort_window": "按首个有效测试时间纳入器件，窗口左闭右开；不是首测指标选择条件。",
+            "metric": "首个有效结果" if query.metric == "first" else "截至as_of的最后有效结果（含有效复测）",
+            "as_of": "本次查询的事件时间及入库时间上限。",
+            "watermark": "本次选中结果中的最大入库时间；不是查询截至时间，也不证明全库数据完整性。",
+        },
         "data_origin": "synthetic",
         "warnings": ["EMPTY_COHORT"] if not d else [],
     }
 
 
-def compare_yields(target: dict, control: dict) -> dict:
+def compare_yields(target: dict, control: dict, mode: str = "same_metric") -> dict:
+    if mode not in {"same_metric", "first_vs_final"}:
+        raise ValueError("YIELD_COMPARISON_MODE_INVALID")
     if len(target.get("product_ids", [])) != 1 or len(control.get("product_ids", [])) != 1:
         raise ValueError("UNMATCHED_COHORTS")
     for field in [
         "metric_version",
         "stage",
         "program_version",
-        "metric",
         "as_of",
         "product_ids",
         "cohort_start",
@@ -492,7 +505,24 @@ def compare_yields(target: dict, control: dict) -> dict:
     ]:
         if target[field] != control[field]:
             raise ValueError("UNMATCHED_COHORTS")
+    if mode == "same_metric":
+        if target["metric"] != control["metric"]:
+            raise ValueError("YIELD_COMPARISON_MODE_REQUIRED")
+    else:
+        if {target["metric"], control["metric"]} != {"first", "final"}:
+            raise ValueError("FIRST_AND_FINAL_REQUIRED")
+        if (not target.get("cohort_signature")
+                or target["cohort_signature"] != control.get("cohort_signature")
+                or target["denominator"] != control["denominator"]
+                or not target.get("query_scope", {}).get("lot_ids")
+                or set(target["query_scope"]["lot_ids"])
+                != set(control.get("query_scope", {}).get("lot_ids", []))):
+            raise ValueError("UNMATCHED_COHORTS")
+        if target["metric"] == "first":
+            target, control = control, target
     return {
+        "comparison_mode": mode,
+        "difference_definition": "final_minus_first" if mode == "first_vs_final" else "target_minus_control",
         "difference_percentage_points": 100 * (target["value"] - control["value"])
         if target["value"] is not None and control["value"] is not None
         else None,
