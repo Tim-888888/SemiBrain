@@ -53,6 +53,8 @@ def agent_fixture(monkeypatch, *, records=None, error=None, review=None):
             text = json.dumps(review or {"blocks": [
                 {"id": 0, "verdict": "supported"},
                 {"id": 1, "verdict": "unsupported", "reason": "No measured FT rate."}],
+                "goals": [{"index": 0, "covered": True, "block_ids": [0]},
+                          {"index": 1, "covered": False, "block_ids": []}],
                 "missing_goals": ["FT"]})
         return SimpleNamespace(text=text), "fixture"
 
@@ -241,14 +243,17 @@ def test_notice_survives_file_delivery_fallback():
 @pytest.mark.parametrize("container", ["| Item | Value |\n|---|---|\n| A | 3 |",
                                       "- First measured item\n- Second measured item"])
 @pytest.mark.parametrize("position", ["before", "after"])
-def test_adjacent_citation_table_and_list_are_reviewed_as_one_unit(container, position):
+def test_adjacent_citations_require_explicit_support_for_each_item(container, position):
     paragraph = "The measured items are shown below [1]."
     draft = "\n\n".join([paragraph, container] if position == "before" else [container, paragraph])
     blocks = closeout_blocks(draft)
-    assert blocks == [{"id": 0, "text": draft}]
-    verdict = CloseoutReview(blocks=[{"id": 0, "verdict": "supported"}])
-    assert reviewed_body(draft, verdict, {"1"}) == draft
-    verdict.blocks[0].verdict = "unsupported"
+    assert len(blocks) == (2 if container.startswith("|") else 3)
+    verdict = CloseoutReview(blocks=[{"id": b["id"], "verdict": "supported",
+                                     "source_markers": ["1"]} for b in blocks])
+    body = reviewed_body(draft, verdict, {"1"})
+    assert paragraph in body and "[1]" in body
+    for decision in verdict.blocks:
+        decision.verdict = "unsupported"
     assert reviewed_body(draft, verdict, {"1"}) == ""
 
 
