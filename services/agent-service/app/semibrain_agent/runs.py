@@ -157,15 +157,13 @@ def snapshot(run_id: str, request: Request):
                        "tool_attempts", "tool_reuses")
         result["task_tree"] = [{"task_id": task["_id"], **{k: task.get(k) for k in task_fields}}
                                for task in db().tasks.find({"run_id": run_id}).sort("created_at", 1)]
-        # Artifacts are server-registered references, never URLs parsed from model prose.
-        result["artifacts"] = []
-        if row.get("report_id"):
-            for evidence in db().evidence.find({"run_id": run_id}):
-                content = evidence.get("content")
-                if isinstance(content, dict):
-                    result["artifacts"].extend({"name": a["name"], "asset_id": a["asset_id"],
-                                                "media_type": a["ref"]["media_type"]}
-                                               for a in content.get("artifacts", []))
+    # Single and multi Agent files share the same trusted export registry.
+    from semibrain_agent.delivery import FILE_TOOLS, registered_artifacts
+    result["artifacts"] = []
+    if row.get("report_id"):
+        jobs = {item["observation"].get("job_id") for item in db().observations.find({
+            "run_id": run_id, "observation.tool": {"$in": sorted(FILE_TOOLS)}})} - {None}
+        result["artifacts"] = registered_artifacts(db().evidence.find({"run_id": run_id}), jobs)
     # Image references are registered with evidence; model-supplied URLs are not a registry.
     images = [image for item in db().evidence.find({"run_id": run_id}, {"image_refs": 1}) for image in item.get("image_refs", [])]
     images += [image for citation in result.get("citations", []) for image in citation.get("image_refs", [])]

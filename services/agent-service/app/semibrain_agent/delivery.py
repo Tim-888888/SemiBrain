@@ -8,6 +8,22 @@ FORMATS = frozenset({"md", "txt", "csv", "json", "png"})
 FILE_TOOLS = frozenset({"sandbox.python", "skill.execute"})
 
 
+def registered_artifacts(records, current_jobs):
+    items = {}
+    for record in records:
+        data = record.get("content")
+        if (record.get("job_id") not in current_jobs or not isinstance(data, dict)
+                or data.get("exit_code") != 0
+                or record.get("source", {}).get("locator", {}).get("tool") not in FILE_TOOLS):
+            continue
+        for asset in data.get("artifacts", []):
+            if asset.get("asset_id") and asset.get("name"):
+                items[asset["asset_id"]] = {"name": asset["name"], "asset_id": asset["asset_id"],
+                    "media_type": asset.get("ref", {}).get("media_type", "text/plain"),
+                    "marker": record.get("marker")}
+    return list(items.values())
+
+
 class Delivery(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["inline", "file"] = "inline"

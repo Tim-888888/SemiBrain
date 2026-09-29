@@ -20,7 +20,9 @@ NOTICE = "技能是管理员审核的方法说明，不是事实证据，也不�
 def permitted(definition, claim):
     return (claim["role"] in definition["user_roles"]
             and (claim.get("agent_role") or "single_agent") in definition["agent_roles"]
-            and set(definition["required_tools"]) <= set(claim.get("allowed_ops", [])))
+            and set(definition["required_tools"]) <= set(claim.get("allowed_ops", []))
+            and ("demo" in claim.get("resource_ids", []) or not any(
+                name.startswith("business.") and name != "business.catalog" for name in definition["required_tools"])))
 
 
 def pin_key(claim):

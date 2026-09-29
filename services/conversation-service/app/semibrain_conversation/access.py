@@ -194,10 +194,15 @@ def execution_authorization(form: ExecutionAuthorization, request: Request):
     agent_role = "single_agent"
     run = None
     strategy, conversation_id = None, None
+    allowed = set(RUN_OPS)
     if form.run_id:
         run, _ = trusted_run(form.run_id)
         mode = run["input"]["mode"]
         strategy = run["input"].get("investigation_strategy") or "single_agent"
+        if strategy == "multi_agent":
+            allowed |= MULTI_OPS
+        if web_allowed(run):
+            allowed |= WEB_OPS
         conversation_id = run["input"]["conversation_id"]
         if run["owner_id"] != form.subject_id:
             failure("EXECUTION_BINDING_MISMATCH", 403)
@@ -212,6 +217,7 @@ def execution_authorization(form: ExecutionAuthorization, request: Request):
                 "agent", "GET", f"/internal/v1/runs/{run['_id']}/tasks/{form.task_id}/authorization"
             ).json()
             agent_role = child["role"]
+            allowed &= set(child["allowed_ops"])
             if not child["active"] or form.operation not in child["allowed_ops"]:
                 failure("CHILD_EXECUTION_DENIED", 403)
         if (
@@ -220,8 +226,11 @@ def execution_authorization(form: ExecutionAuthorization, request: Request):
             and "demo" not in user.get("resource_ids", ["demo"])
         ):
             failure("RESOURCE_SCOPE_DENIED", 403)
+    if "demo" not in user.get("resource_ids", ["demo"]):
+        allowed = {name for name in allowed if not name.startswith("business.") or name == "business.catalog"}
     return {
         "active": True,
+        "allowed_ops": sorted(allowed),
         "policy_version": POLICY,
         "mode": mode,
         "investigation_strategy": strategy,

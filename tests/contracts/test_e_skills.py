@@ -191,3 +191,21 @@ def test_skill_exports_count_only_with_success_and_current_provenance():
     assert outputs["artifacts"] and not issues
     record["content"]["exit_code"] = 1
     assert missing_files(intent, [record], {"current"}) == ["md"]
+
+
+def test_single_agent_snapshot_publishes_registered_files(monkeypatch):
+    from semibrain_agent import request_context, runs
+    row = {"status": "partial", "sequence": 1, "progress": "done", "strategy": "single_agent", "report_id": "report"}
+    report = {"report_id": "report", "body_markdown": "File ready [1]", "content_hash": "h", "revision": 1}
+    evidence = {"evidence_id": "ev", "job_id": "job", "marker": "1", "source": {"locator": {"tool": "skill.execute"}},
+                "content": {"exit_code": 0, "artifacts": [{"name": "结果.md", "asset_id": "a"}]}}
+    store = SimpleNamespace(runs=Mock(), reports=Mock(), observations=Mock(), evidence=Mock())
+    store.runs.find_one.return_value = row
+    store.reports.find_one.return_value = report
+    store.observations.find.return_value = [{"observation": {"job_id": "job"}}]
+    store.evidence.find.side_effect = lambda q, *args: [] if "body_expired_at" in q else [evidence]
+    monkeypatch.setattr(runs, "db", lambda: store)
+    monkeypatch.setattr(runs, "internal_identity", lambda *a: None)
+    monkeypatch.setattr(request_context, "public_metrics", lambda *a, **k: None)
+    result = runs.snapshot("run", None)
+    assert result["artifacts"] == [{"name": "结果.md", "asset_id": "a", "media_type": "text/plain", "marker": "1"}]
