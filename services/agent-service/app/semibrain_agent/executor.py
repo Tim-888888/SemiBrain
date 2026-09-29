@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from semibrain_common.runtime import canonical, digest, now
 from semibrain_common.text_window import read_window
 from semibrain_common.tool_errors import SANDBOX_ARGUMENT_ERRORS
+from semibrain_contracts.graph import GraphQuery
 from semibrain_contracts.models import EvidenceRef, SourceRef, assert_no_credentials
 
 from semibrain_agent.harness import BudgetExhausted, RunStopped
@@ -38,6 +39,10 @@ class EvidenceRead(BaseModel):
 
 
 LOCAL_TOOLS = {
+    "knowledge.graph": (
+        GraphQuery,
+        "沿授权工程实体关系定位文档原文。用于工序、设备、缺陷等关联查询；无图匹配时降级文本检索。共现不表示因果。",
+    ),
     "knowledge.search": (
         Search,
         "检索当前授权知识范围。结果包含有版本的原文片段与引用；不是网络搜索。",
@@ -306,14 +311,15 @@ class ToolExecutor:
             self.harness.reserve_tool(logical_id, name)
             if name in LOCAL_TOOLS:
                 args = LOCAL_TOOLS[name][0].model_validate(args).model_dump(mode="json")
-            if name == "knowledge.search":
+            if name in {"knowledge.search", "knowledge.graph"}:
                 result = self.client.request(
-                    "POST", "/internal/v1/retrieval/search", json=args, timeout=70
+                    "POST", "/internal/v1/graph/search" if name == "knowledge.graph" else "/internal/v1/retrieval/search", json=args, timeout=70
                 )
                 observation = {
                     "status": "succeeded",
                     "evidence": self.documents(result["evidence"]),
                     "retrieval": result["retrieval"],
+                    **({"relationships": result.get("relationships", []), "notice": result.get("notice", "")} if name == "knowledge.graph" else {}),
                 }
             elif name == "knowledge.read":
                 result = self.client.request("POST", "/internal/v1/knowledge/read", json=args)
@@ -346,7 +352,7 @@ class ToolExecutor:
                     args,
                     logical_id=logical_id,
                     guard=self.tool_guard,
-                    timeout=tool_seconds(self, 65 if name.startswith(("web.", "sandbox.", "vision.")) else 30),
+                    timeout=tool_seconds(self, 65 if name.startswith(("web.", "sandbox.", "vision.", "mcp.", "skill.")) else 30),
                 )
                 observation = {
                     "status": result["status"],
@@ -359,9 +365,10 @@ class ToolExecutor:
                         logical_id, (result.get("data") or {}).get("usage")
                     )
                 if result["status"] in {"succeeded", "partial"}:
-                    if name == "web.search":
+                    if name in {"web.search", "mcp.discover", "skill.list", "skill.load"}:
                         observation["data"] = result["data"]
-                        observation = compose_search(self, observation, args, logical_id)
+                        if name == "web.search":
+                            observation = compose_search(self, observation, args, logical_id)
                         observation.update(call_ref=logical_id, tool=name, arguments=args)
                         self.harness.save_record(
                             "observations", logical_id, {"observation": observation}
@@ -378,6 +385,8 @@ class ToolExecutor:
                         if name.startswith("web.")
                         else "图片观察" if name == "vision.inspect"
                         else "沙箱分析 · " + name if name.startswith("sandbox.")
+                        else "MCP · " + result["data"].get("service_id", "") + " · " + result["data"].get("tool_name", "") if name == "mcp.call"
+                        else "技能 · " + result["data"].get("skill_name", "") if name == "skill.execute"
                         else "合成演示数据 · " + name,
                         refs=refs,
                         job_id=result["job_id"],

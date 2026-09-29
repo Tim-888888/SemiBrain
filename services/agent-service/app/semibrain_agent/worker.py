@@ -1,3 +1,4 @@
+from semibrain_common.event_governance import consume_redrives
 from semibrain_common.runtime import consume, relay
 from semibrain_common.worker import PollTask, worker_app
 
@@ -17,6 +18,7 @@ def command(event, session):
 @app.task(name="agent.tick", base=PollTask)
 def tick():
     initialize()
+    consume_redrives(db(), "agent-run-requests", command)
     consume(db(), "stream:runs", "agent-run-requests", command)
     relay(db())
     reconcile_cancellations()

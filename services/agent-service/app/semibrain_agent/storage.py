@@ -4,6 +4,19 @@ from semibrain_agent.runs import db
 
 
 def initialize():
+    migrate(db(), "e-configuration-001", [
+        ("agent_configuration_versions", [("created_at", -1)], {}),
+        ("agent_configuration_commands", [("created_at", -1)], {}),
+    ])
+    migrate(db(), "e-evaluation-001", [
+        ("evaluations", [("actor_id", 1), ("run_id", 1)], {"unique": True}),
+        ("evaluation_commands", [("created_at", -1)], {}),
+    ])
+    migrate(db(), "e-memory-001", [
+        ("memories", [("owner_id", 1), ("updated_at", -1)], {}),
+        ("memory_revisions", [("memory_id", 1), ("revision", 1)], {"unique": True}),
+        ("memory_commands", [("expires_at", 1)], {"expireAfterSeconds": 0}),
+    ])
     migrate(db(), "model-context-001", [
         ("model_contexts", [("run_id", 1), ("created_at", 1)], {}),
     ])

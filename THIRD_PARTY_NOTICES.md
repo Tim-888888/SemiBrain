@@ -5,6 +5,15 @@ commit `c40a9dd1940f85d85a59787bd532eb0f290cb176`. Original parser sources are u
 license in that directory. `provenance.json` lists SHA-256 hashes and upstream paths.
 Only the selected parser dependency closure is packaged; no WeKnora service is deployed.
 
+Additional XMind, EPUB, HTML/MHTML, image, and XLSX repair modules are copied
+unchanged from commit `f46c9905677b36a454aa6669a2619f9eecf9fd23`; each file's
+revision and hash are recorded in the same provenance manifest. The business
+format adapter preserves cell/slide/chapter locations, enforces EPUB spine order,
+and reports lossy conversions for human review. Legacy Office conversion runs
+LibreOffice inside the existing network-disabled Docker sandbox. LibreOffice
+and Neo4j Community retain their upstream component licenses; neither component
+changes the repository's project-wide license status.
+
 The Python Markdown chunker and document-image mapper in
 `services/business-service/app/semibrain_business/{chunking,document_images}.py`
 adapt design and algorithmic ideas from Tencent/WeKnora commit

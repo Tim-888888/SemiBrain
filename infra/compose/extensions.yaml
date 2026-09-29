@@ -1,0 +1,16 @@
+name: semibrain-platform
+services:
+  mcp-measurement:
+    image: ${BACKEND_IMAGE:?Build and pin backend image}
+    command: [uvicorn, semibrain_business.mcp_measurement:app, --host, 0.0.0.0, --port, '8000', --no-access-log]
+    restart: unless-stopped
+    read_only: true
+    tmpfs: ['/tmp:size=32m,mode=1777']
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [business-data]
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 64
+networks:
+  business-data: {internal: true}

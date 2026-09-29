@@ -108,6 +108,9 @@ class Harness:
         row = self.db.runs.find_one(self.predicate())
         if not row:
             raise RunStopped("RUN_STOPPED_OR_LEASE_LOST")
+        if row.get("memory_binding"):
+            from semibrain_agent.memory import guard
+            guard(row)
         if row.get("deadline_at") and now() >= row["deadline_at"]:
             raise BudgetExhausted("RUN_TIME_BUDGET")
         if time.monotonic() - self.last_renewed > 10:

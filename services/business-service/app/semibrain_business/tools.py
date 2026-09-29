@@ -9,7 +9,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Request
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError
-from pymongo import ReturnDocument
+from semibrain_common.operations import admission
 from semibrain_common.runtime import (
     call,
     canonical,
@@ -30,8 +30,12 @@ from sqlalchemy.exc import DBAPIError
 from semibrain_business import warehouse as w
 from semibrain_business.analysis_tools import ANALYSIS_TOOLS, sandbox_configured, vision_configured
 from semibrain_business.cancellation import CancellationScope, QueryCancelled, watch_engine
+from semibrain_business.mcp_governance import MCP_TOOLS
+from semibrain_business.mcp_governance import allowed as mcp_allowed
 from semibrain_business.safe_fetch import WebError
 from semibrain_business.security import authorize_request, db
+from semibrain_business.skills import SKILL_TOOLS
+from semibrain_business.skills import available as skill_available
 from semibrain_business.sql_policy import SQLInput, execute_query
 from semibrain_business.statistics import StatisticsInput, calculate
 from semibrain_business.web_tools import WEB_TOOLS, configured
@@ -165,7 +169,7 @@ register(
     "对本运行成功查询的job_ids做均值、样本标准差、百分点差或分组比较。只读已有授权结果；同口径跨组百分点比较用same_metric；同队列首终测用first_vs_final，固定终测减首测，要求产品/阶段/程序/窗口/as_of/器件队列一致。",
 )
 
-for _name, (_schema, _function, _description) in {**WEB_TOOLS, **ANALYSIS_TOOLS}.items():
+for _name, (_schema, _function, _description) in {**WEB_TOOLS, **ANALYSIS_TOOLS, **MCP_TOOLS, **SKILL_TOOLS}.items():
     register(_name, _schema, _function, _description)
 
 
@@ -173,9 +177,24 @@ for _name, (_schema, _function, _description) in {**WEB_TOOLS, **ANALYSIS_TOOLS}
 def catalog(request: Request):
     claim = authorize_request(request, "business.catalog")
     business_authorized = "demo" in claim["resource_ids"]
+    # The supervisor needs a discovery union; execution still checks the actual child role.
+    roles = ["sqlbot", "rag", "vision", "tool"] if (
+        claim.get("investigation_strategy") == "multi_agent" and not claim.get("child_task")
+    ) else [claim.get("agent_role") or "single_agent"]
+    extensions = {}
+    for role in roles:
+        scoped = {**claim, "agent_role": role}
+        names = []
+        if set(claim["allowed_ops"]) & set(MCP_TOOLS) and mcp_allowed(scoped):
+            names += list(MCP_TOOLS)
+        if set(claim["allowed_ops"]) & set(SKILL_TOOLS) and skill_available(scoped):
+            names += list(SKILL_TOOLS)
+        extensions[role] = names
+    extension_union = {name for names in extensions.values() for name in names}
     return {
-        "version": "p1-tools-v8",
+        "version": "p1-tools-v9",
         "data_origin": "synthetic",
+        "extensions_by_role": extensions,
         "business_access": {
             "resource_authorized": business_authorized,
             "reason": None if business_authorized else "RESOURCE_NOT_GRANTED",
@@ -191,6 +210,8 @@ def catalog(request: Request):
             and (not name.startswith("web.") or configured())
             and (not name.startswith("sandbox.") or sandbox_configured())
             and (not name.startswith("vision.") or vision_configured())
+            and (not name.startswith(("mcp.", "skill.")) or name in extension_union)
+            and (name != "skill.execute" or sandbox_configured())
             and (not name.startswith("business.") or business_authorized)
         ],
         "web_available": configured(),
@@ -344,7 +365,7 @@ def cancel(job_id: str, request: Request):
         return "cancelling"
 
     state = transaction(stop)
-    if state == "cancelling" and job["tool"] == "sandbox.python":
+    if state == "cancelling" and job["tool"] in {"sandbox.python", "skill.execute"}:
         from semibrain_business.sandbox import provider
 
         instance = db().sandbox_instances.find_one({"job_id": job_id})
@@ -363,7 +384,7 @@ def execute_one():
                 "lease_until": {"$lt": now()},
                 "$or": [
                     {"status": "cancelling"},
-                    {"status": "running", "tool": {"$regex": "^(web|sandbox|vision)\\."}},
+                    {"status": "running", "tool": {"$regex": "^(web|sandbox|vision|mcp|skill)\\."}},
                 ],
             }
         )
@@ -428,14 +449,14 @@ def execute_one():
 
     expire_exhausted(db(), "tool_jobs", "stream:business", "tool.completed", "tool", exhausted)
     fence = uid()
-    job = db().tool_jobs.find_one_and_update(
+    job = admission(db(), "tool_jobs",
         {
             "$or": [
                 {"status": "queued"},
                 {
                     "status": "running",
                     "lease_until": {"$lt": now()},
-                    "tool": {"$not": {"$regex": "^(web|sandbox|vision)\\."}},
+                    "tool": {"$not": {"$regex": "^(web|sandbox|vision|mcp|skill)\\."}},
                 },
             ],
             "attempt": {"$lt": 3},
@@ -449,7 +470,7 @@ def execute_one():
             },
             "$inc": {"attempt": 1},
         },
-        return_document=ReturnDocument.AFTER,
+        
     )
     if not job:
         return False
@@ -486,13 +507,15 @@ def execute_one():
                 calculate(form, job)
                 if job["tool"] == "business.statistics"
                 else tool["function"](form, job)
-                if job["tool"].startswith(("web.", "sandbox.", "vision."))
+                if job["tool"].startswith(("web.", "sandbox.", "vision.", "mcp.", "skill."))
                 else tool["function"](form)
             )
         data = json.loads(canonical(data))
         assert_no_credentials(data)
         warnings = []
         assets = [item["ref"] for item in data.get("artifacts", [])]
+        if len(canonical(data).encode()) > 50000 and job["tool"] in {"mcp.call", "mcp.discover", "skill.load", "skill.list"}:
+            raise WebError("TOOL_RESULT_TOO_LARGE")
         if len(canonical(data).encode()) > 50000:
             from semibrain_business.knowledge import store_asset
 
@@ -516,7 +539,9 @@ def execute_one():
             source_id=job["_id"],
             source_version="web-v2" if job["tool"].startswith("web.")
             else "vision-v1" if job["tool"].startswith("vision.")
-            else "docker-v1" if job["tool"].startswith("sandbox.") else w.METRIC_VERSION,
+            else "docker-v1" if job["tool"].startswith("sandbox.")
+            else "skill-v1" if job["tool"].startswith("skill.")
+            else "mcp-v1" if job["tool"].startswith("mcp.") else w.METRIC_VERSION,
             content_hash=digest(canonical(data)),
             scope_ref="demo",
             kind="web" if job["tool"].startswith("web.") else "image" if job["tool"].startswith("vision.") else "query",
@@ -551,6 +576,9 @@ def execute_one():
         if job["tool"] in {"web.search", "web.fetch"}:
             attempt = db().web_attempts.find_one({"_id": job["_id"] + ":" + str(job["attempt"])})
             external_data["usage"] = attempt.get("usage") if attempt else {"total_tokens": 0}
+            if attempt and job["tool"] == "web.search":
+                external_data.update({key: attempt.get(key) for key in
+                                     ("provider", "complement_provider", "configuration_revision")})
         result = ToolResult(
             job_id=job["_id"],
             logical_call_id=job["logical_call_id"],

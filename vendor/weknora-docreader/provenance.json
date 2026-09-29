@@ -62,6 +62,41 @@
     {
       "path": "docreader/utils/endecode.py",
       "sha256": "20d1b3088de0576ddbee8ac2447965756563b0399fc18d6a2abd3e48458ba8a6"
+    },
+    {
+      "path": "docreader/parser/xmind_parser.py",
+      "sha256": "508aee94d0055f6d21292e904f59089e5d2b1cd307a651370feaa38531be7c7d",
+      "commit": "f46c9905677b36a454aa6669a2619f9eecf9fd23"
+    },
+    {
+      "path": "docreader/parser/epub_parser.py",
+      "sha256": "74a80e86b47c54718d7162228a437faceeb344ade18c3fd465feea5add7762b9",
+      "commit": "f46c9905677b36a454aa6669a2619f9eecf9fd23"
+    },
+    {
+      "path": "docreader/parser/mhtml_parser.py",
+      "sha256": "4de9b90fdb020c7fa95d24f444dcbd2d53c29325d044cb354b2a986634d3a227",
+      "commit": "f46c9905677b36a454aa6669a2619f9eecf9fd23"
+    },
+    {
+      "path": "docreader/parser/html_parser.py",
+      "sha256": "462d23a94adf28cf02df7e34a038ee42f2b39436ad1a6d00e1bc8e5d3f9ca45b",
+      "commit": "f46c9905677b36a454aa6669a2619f9eecf9fd23"
+    },
+    {
+      "path": "docreader/parser/xlsx_merge.py",
+      "sha256": "502056dd1a7a51510532838c66c45bc09db591dfcefed94bc12651beee7eb7d4",
+      "commit": "f46c9905677b36a454aa6669a2619f9eecf9fd23"
+    },
+    {
+      "path": "docreader/parser/xlsx_repair.py",
+      "sha256": "467ac5d914abb8456ee4b9b37d29a7d07079cd1e12f69221af7568eed51856ac",
+      "commit": "f46c9905677b36a454aa6669a2619f9eecf9fd23"
+    },
+    {
+      "path": "docreader/parser/image_parser.py",
+      "sha256": "755fffd16764bc6cbdd24135ee949afb7f9db5e77a261ee3e89a2926da1f4baa",
+      "commit": "f46c9905677b36a454aa6669a2619f9eecf9fd23"
     }
   ],
   "license_sha256": "25cfeca2c3eee245313b1106cf1b27244e47b682802a02cc536f8f1beb6a29a6"

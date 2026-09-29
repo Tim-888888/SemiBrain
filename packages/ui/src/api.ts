@@ -5,11 +5,36 @@ export type Citation = { body_expired?: boolean; marker: string; title: string; 
 export type DocumentImage = { asset_id: string; url: string; display_url?: string; alt: string; media_type?: string }
 export type Artifact = { name: string; asset_id: string; media_type?: string }
 export type TaskNode = { task_id: string; role: string; key: string; goals: string[]; depends_on: string[]; plan_version: number; status: string; attempt: number; role_round?: number; error?: string; model_calls?: number; tool_calls?: number; settled_tokens?: number }
-export type Run = { context_usage?: ContextUsage; image_refs?: DocumentImage[]; artifacts?: Artifact[]; task_tree?: TaskNode[]; run_id: string; status: string; sequence: number; body_markdown: string; citations: Citation[]; progress?: string; error?: string; web_disabled?: boolean; web_activity?: { search: string; reason: string; results?: number; error?: string; pages: { status: string; error?: string }[] }; continuation?: { from_run_id: string; kind: string }; input_scope?: { investigation_strategy?: "single_agent" | "multi_agent"; mode: "quick_qa" | "investigation"; allow_web: boolean; resource_restrictions: string[]; attachment_refs: string[] }; strategy?: string; model_origin?: string; round?: number; active_tool?: string; scope_summary?: { goals: string[]; constraints: string[]; missing: string[]; allow_web: boolean }; budget?: { model_calls: number; tools: number; searches?: number; pages?: number; settled_tokens: number; unreconciled_calls: number } }
+export type Run = { historical_source_refs?: string[]; context_usage?: ContextUsage; image_refs?: DocumentImage[]; artifacts?: Artifact[]; task_tree?: TaskNode[]; run_id: string; status: string; sequence: number; body_markdown: string; citations: Citation[]; progress?: string; error?: string; web_disabled?: boolean; web_activity?: { search: string; reason: string; results?: number; error?: string; pages: { status: string; error?: string }[] }; continuation?: { from_run_id: string; kind: string }; input_scope?: { investigation_strategy?: "single_agent" | "multi_agent"; mode: "quick_qa" | "investigation"; allow_web: boolean; resource_restrictions: string[]; attachment_refs: string[] }; strategy?: string; model_origin?: string; round?: number; active_tool?: string; scope_summary?: { goals: string[]; constraints: string[]; missing: string[]; allow_web: boolean }; budget?: { model_calls: number; tools: number; searches?: number; pages?: number; settled_tokens: number; unreconciled_calls: number } }
 export type Message = Partial<Run> & { id: string; role: string; text?: string; run_id: string; input_revision: number }
 let csrf = ''
 export function setCsrf(value: string) { csrf = value }
 const labels: Record<string, string> = {
+  CONFIG_MODEL_UNAVAILABLE: '所选模型未在当前部署中批准，请重新选择可用模型。',
+  CONFIG_BASELINE_CHANGED: '系统基线已升级，请基于此内容创建新草稿并重新审核。',
+  CONFIG_ROLLBACK_UNPUBLISHED: '只能回滚到曾经发布过的版本。',
+  CONFIG_VERSION_UNAVAILABLE: '配置版本不可用，请刷新或联系管理员。',
+  EXPORT_QUEUE_LIMIT: '已有 3 个文件正在转换，请等待完成后再导出。',
+  EXPORT_EXPIRED: '导出文件已过期，请从原回答重新生成。',
+  EXPORT_SOURCE_CHANGED: '原回答已变化，请刷新后重新导出。',
+  EXPORT_FINAL_REPORT_REQUIRED: '回答尚未完成，暂不能导出。',
+  EXPORT_UNAVAILABLE: '文件不存在、来源已不可用或当前账号无权访问。',
+  MEMORY_CHANGED: '个人记忆已变更，本轮已停止使用旧内容。请重新提交问题。',
+  MEMORY_SOURCE_UNAVAILABLE: '记忆关联的原回答或来源已不可用。',
+  MEMORY_EXCERPT_REQUIRED: '调查摘要请从当前可访问的原回答复制连续原文。',
+  MEMORY_EXPIRY_INVALID: '有效期需晚于当前时间且在一年内。',
+  MEMORY_LIMIT: '最多保存 100 条记忆，请删除不再需要的内容。',
+  MEMORY_NOT_FOUND: '记忆不存在或无权访问。',
+  SKILL_REVIEW_REQUIRED: '发布前请确认审核并填写审核说明。',
+  SKILL_UNAVAILABLE: '技能已停用、权限变化或版本不适用于本轮。',
+  SKILL_SCRIPT_SYNTAX: 'Python 脚本存在语法错误，请检查后再保存。',
+  SKILL_INSTRUCTIONS_TOO_LARGE: '技能说明和参数定义过长，请缩短后保存。',
+  SKILL_DEPENDENCY_UNKNOWN: '依赖工具中包含未登记名称，请核对工具目录。',
+  CHUNK_REBUILD_REQUIRED: '此旧版本缺少可靠的片段坐标，请先重新处理并发布后再修订。',
+  CHUNK_COORDINATE_CONFLICT: '片段与原文坐标不一致，请重新处理文档后再编辑。',
+  CHUNK_REVISION_CONFLICT: '片段已经变化，请刷新版本后重试。',
+  EDIT_IMAGE_NOT_REGISTERED: '编辑只能保留已登记的图片引用；新增图片请从资料上传入口添加。',
+  ROLLBACK_VERSION_UNPUBLISHED: '只能回滚到曾经发布且索引完整的版本。',
   LOGIN_FAILED: '账号或密码不正确，或账号已被停用。', CAPTCHA_INVALID: '验证码不正确，请刷新后重试。',
   CAPTCHA_EXPIRED: '验证码已使用或已过期，请刷新后重试。', USERNAME_UNAVAILABLE: '这个用户名已被使用或属于保留账号。',
   RATE_LIMITED: '操作较频繁，请稍后重试。', LOGIN_REQUIRED: '请先登录。', SESSION_REVOKED: '登录已失效，请重新登录。',
@@ -30,6 +55,13 @@ const labels: Record<string, string> = {
   CONTEXT_DATA_INCOMPLETE: '新版本的内容片段或上下文关系不完整，暂不能发布。请重新处理。',
   IDEMPOTENCY_CONFLICT: '操作请求已发生变化，请刷新后重试。',
   INVALID_ARGUMENT: '填写内容不符合要求，请检查后重试。',
+  GRAPH_SOURCE_UNAVAILABLE: '引句必须来自所选原文片段，请保留连续原文并核对版本。',
+  GRAPH_PROJECTION_UNAVAILABLE: '图谱服务暂不可用，知识检索仍可使用；请稍后重建投影。',
+  GRAPH_CHANGED_DURING_REBUILD: '关系在重建期间已更新，请刷新后再次重建。',
+  GRAPH_MERGE_INVALID: '请选择两个不同且类型相同的实体。',
+  GRAPH_NOT_CONFIGURED: '图谱服务尚未配置。',
+  WIKI_SOURCE_UNAVAILABLE: 'Wiki 来源已下架、换版或无权访问，请核对来源。',
+  WIKI_EXPIRED: 'Wiki 已超过设定有效期。',
 }
 export async function api<T = any>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers)

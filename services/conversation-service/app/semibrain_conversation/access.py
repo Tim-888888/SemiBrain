@@ -25,6 +25,11 @@ RUN_OPS = {
     "business.query",
     "business.statistics",
     "lineage.check",
+    "mcp.discover",
+    "mcp.call",
+    "skill.list",
+    "skill.load",
+    "skill.execute",
 }
 WEB_OPS = {"web.search", "web.fetch", "web.read"}
 MULTI_OPS = {"sandbox.python", "sandbox.files", "vision.inspect"}
@@ -65,6 +70,8 @@ def make_grant(user, *, run=None, operations=None, child=None):
         "run_id": run["_id"] if run else None,
         "task_id": child["task_id"] if child else run["task_id"] if run else None,
         "child_task": bool(child),
+        "investigation_strategy": run["input"].get("investigation_strategy") if run else None,
+        "agent_role": child.get("role") if child else "single_agent",
         "trace_root_id": run.get("trace_root_id") if run else None,
         "input_revision": run["input"]["input_revision"] if run else None,
         "allowed_ops": sorted(allowed),
@@ -154,15 +161,16 @@ def introspect(form: IntrospectInput, request: Request):
     return claim
 
 
-def check_lineage(user, refs):
+def check_lineage(user, refs, *, historical=False):
     if refs:
-        business(
+        return business(
             user,
             "POST",
             "/internal/v1/lineage/check",
             operation="lineage.check",
-            json={"refs": refs},
-        )
+            json={"refs": refs, **({"historical": True} if historical else {})},
+        ).json()
+    return {}
 
 
 class ExecutionAuthorization(BaseModel):
@@ -183,12 +191,18 @@ def execution_authorization(form: ExecutionAuthorization, request: Request):
     if not user:
         failure("EXECUTION_REVOKED", 403)
     mode = None
+    agent_role = "single_agent"
     run = None
     strategy, conversation_id = None, None
+    allowed = set(RUN_OPS)
     if form.run_id:
         run, _ = trusted_run(form.run_id)
         mode = run["input"]["mode"]
         strategy = run["input"].get("investigation_strategy") or "single_agent"
+        if strategy == "multi_agent":
+            allowed |= MULTI_OPS
+        if web_allowed(run):
+            allowed |= WEB_OPS
         conversation_id = run["input"]["conversation_id"]
         if run["owner_id"] != form.subject_id:
             failure("EXECUTION_BINDING_MISMATCH", 403)
@@ -202,6 +216,8 @@ def execution_authorization(form: ExecutionAuthorization, request: Request):
             child = call(
                 "agent", "GET", f"/internal/v1/runs/{run['_id']}/tasks/{form.task_id}/authorization"
             ).json()
+            agent_role = child["role"]
+            allowed &= set(child["allowed_ops"])
             if not child["active"] or form.operation not in child["allowed_ops"]:
                 failure("CHILD_EXECUTION_DENIED", 403)
         if (
@@ -210,11 +226,15 @@ def execution_authorization(form: ExecutionAuthorization, request: Request):
             and "demo" not in user.get("resource_ids", ["demo"])
         ):
             failure("RESOURCE_SCOPE_DENIED", 403)
+    if "demo" not in user.get("resource_ids", ["demo"]):
+        allowed = {name for name in allowed if not name.startswith("business.") or name == "business.catalog"}
     return {
         "active": True,
+        "allowed_ops": sorted(allowed),
         "policy_version": POLICY,
         "mode": mode,
         "investigation_strategy": strategy,
+        "agent_role": agent_role,
         "conversation_id": conversation_id,
         "subject_id": user["_id"],
         "role": user["role"],
@@ -233,7 +253,9 @@ def run_snapshot(user, run_id):
         failure("RUN_REVOKED", 403)
     # Recover from projection lag using the owning service, never its database.
     response = call("agent", "GET", "/internal/v1/runs/" + run_id).json()
-    check_lineage(user, response.get("lineage_refs", []))
+    terminal = response.get("status") in {"succeeded", "partial", "cancelled", "failed"}
+    lineage = check_lineage(user, response.get("lineage_refs", []), historical=terminal) or {}
+    response["historical_source_refs"] = lineage.get("historical_refs", [])
     response["input_scope"] = {
         key: gateway["input"].get(key)
         for key in (
@@ -280,7 +302,7 @@ class AnswerInput(ExecutionAuthorization):
 def sandbox_answer_input(form: AnswerInput, request: Request):
     # The business service owns sandbox files; the gateway owns conversation access.
     # A model-supplied ID alone is never authority to copy another answer.
-    if not form.run_id or not form.task_id or form.operation != "sandbox.python":
+    if not form.run_id or not form.task_id or form.operation not in {"sandbox.python", "skill.execute"}:
         failure("ANSWER_INPUT_BINDING_REQUIRED", 403)
     execution_authorization(ExecutionAuthorization.model_validate(
         form.model_dump(exclude={"answer_run_id"})), request)

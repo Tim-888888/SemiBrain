@@ -1,0 +1,25 @@
+name: semibrain-platform
+services:
+  neo4j:
+    image: ${NEO4J_IMAGE:?Pin Neo4j Community image}
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH_FILE: /run/neo4j-auth
+      NEO4J_server_memory_heap_initial__size: 256m
+      NEO4J_server_memory_heap_max__size: 512m
+      NEO4J_server_memory_pagecache_size: 256m
+      NEO4J_server_http_enabled: 'false'
+      NEO4J_server_https_enabled: 'false'
+    volumes:
+      - ${DATA_DIR}/neo4j:/data
+      - ${SECRET_DIR}/neo4j-auth:/run/neo4j-auth:ro
+    networks: [business-data]
+    mem_limit: 1536m
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD-SHELL, 'neo4j status']
+      interval: 15s
+      timeout: 5s
+      retries: 12
+networks:
+  business-data: {internal: true}

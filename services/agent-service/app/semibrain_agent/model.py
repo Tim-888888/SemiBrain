@@ -50,6 +50,9 @@ class ModelAdapter:
         self.deadline = time.monotonic() + 210
 
     def bind_context(self, harness, context, snapshot):
+        from semibrain_agent.configuration import profile
+        self.profile = profile("investigator", context.get("agent_configuration"))
+        self.model = self.profile.model
         self.harness, self.context, self.compaction_snapshot = harness, context, snapshot
         self.final, self.phase = False, "quick_understand"
 

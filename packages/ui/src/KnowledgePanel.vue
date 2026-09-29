@@ -1,21 +1,24 @@
 <script setup lang="ts">
+import { documentCatalog } from './document-catalog'
 import { onMounted, onUnmounted, ref } from 'vue'
 import { api, post } from './api'
 import MarkdownAnswer from './MarkdownAnswer.vue'
-import { documentBundle, documentFile } from './knowledge-upload.mjs'
+import KnowledgeVersions from './KnowledgeVersions.vue'
+const versionDocument = ref<any>(null)
+import { documentBundle, selectedDocuments } from './knowledge-upload.mjs'
 const props = defineProps<{ manage: boolean }>()
 const items = ref<any[]>([]), error = ref(''), busy = ref(false), preview = ref<any>(null), selected = ref<any>(null)
 const path = ref(''), origin = ref('public'), external = ref(false), files = ref<File[]>([])
 const changing = ref(''), notice = ref('')
-const rebuilding = ref<any>(null)
+const rebuilding = ref<any>(null), reviewText = ref(''), reviewReason = ref(''), reviewing = ref(false)
 let timer: ReturnType<typeof setInterval>
-async function load() { try { items.value = (await api('/v1/knowledge/documents')).items } catch (e) { error.value = (e as Error).message } }
+async function load() { try { items.value = (await documentCatalog()).items } catch (e) { error.value = (e as Error).message } }
 function choose(event: Event) { files.value = Array.from((event.target as HTMLInputElement).files || []); if (files.value.length === 1) path.value = files.value[0].name }
 async function upload() {
   busy.value = true; error.value = ''
   try {
-    const documents = files.value.filter(documentFile)
-    if (!documents.length) throw new Error('没有选中支持的知识文档。图片需与 Markdown 一起选择。')
+    const documents = await selectedDocuments(files.value)
+    if (!documents.length) throw new Error('没有选中支持的知识文档。')
     for (const file of documents) {
       const documentPath = files.value.length === 1 ? path.value : file.webkitRelativePath || file.name
       const images = await documentBundle(file, files.value, documentPath)
@@ -31,10 +34,28 @@ async function upload() {
   finally { busy.value = false }
 }
 async function view(item: any, version = item.ingestion?.version || item.active_version) {
-  selected.value = item; error.value = ''
+  selected.value = item; error.value = ''; reviewing.value = false; reviewReason.value = ''
   try { preview.value = { ...await api(`/admin/v1/knowledge/documents/${item.id}/preview?version=${version}`), version } }
   catch (e) { error.value = (e as Error).message }
 }
+function beginReview() { reviewText.value=preview.value.body_markdown;reviewing.value=true }
+async function submitReview() {
+  if (changing.value) return
+  changing.value=selected.value.id;error.value=''
+  try {
+    await post(`/admin/v1/knowledge/documents/${selected.value.id}/review`,{request_id:crypto.randomUUID(),expected_revision:selected.value.revision,source_version:preview.value.version,text:reviewText.value,reason:reviewReason.value})
+    preview.value=null;notice.value='复核内容已提交为新版本，重建完成后请再次预览发布。';await load()
+  } catch(e) { error.value=(e as Error).message }
+  finally { changing.value='' }
+}
+async function cancelParsing(item:any) {
+  if (changing.value) return
+  changing.value=item.id;error.value=''
+  try { await post(`/admin/v1/knowledge/jobs/${item.ingestion.id}/cancel`,{});notice.value='已请求停止处理，当前已发布版本继续可用。';await load() }
+  catch(e) { error.value=(e as Error).message }
+  finally { changing.value='' }
+}
+const findingNames:Record<string,string>={FORMULA_CACHE_MISSING:'公式没有缓存结果，未代为计算',LEGACY_XLS_VALUES_ONLY:'旧版表格仅取得数值，公式和图片需复核',EMBEDDED_IMAGE_UNSUPPORTED:'部分内嵌图片无法解析',EMBEDDED_OBJECT_REQUIRES_REVIEW:'图表或内嵌对象需核对原文件',XMIND_ATTACHMENTS_REQUIRE_REVIEW:'思维导图附件需核对原文件',XMIND_NON_TREE_CONTENT_REQUIRES_REVIEW:'思维导图含非树状内容，需核对原文件',IMAGE_TRANSCRIPTION_REVIEW_REQUIRED:'图片转录文字需核对原图',OCR_REQUIRED:'图片缺少可读文字，请补充转录',XLSX_PACKAGING_REPAIRED:'已修复表格封装，请核对内容',XLSX_STYLES_REPAIRED:'已修复表格样式，请核对内容'}
 async function publish(item: any) {
   await changePublication(item, 'publish')
 }
@@ -75,17 +96,17 @@ function draftStatus(item: any) {
   return item.active_version && item.ingestion?.version !== item.active_version
     ? `新版本：${statusNames[item.ingestion?.status] || '处理中'}` : ''
 }
-const statusNames: Record<string, string> = { published: '已发布', unpublished: '已下架', staged: '待预览发布', queued: '等待解析', running: '处理中', failed: '处理失败', needs_attention: '需检查内容', receiving: '正在接收' }
+const statusNames: Record<string, string> = { published: '已发布', unpublished: '已下架', staged: '待预览发布', queued: '等待解析', running: '处理中', failed: '处理失败', needs_attention: '需检查内容', receiving: '正在接收', cancelled: '已取消' }
 onMounted(() => { load(); timer = setInterval(load, 5000) }); onUnmounted(() => clearInterval(timer))
 </script>
 <template>
   <section class="resource-panel">
     <div class="page-title"><div><p class="eyebrow">KNOWLEDGE LIBRARY</p><h1>知识库</h1><p class="muted">文档与来源放在一起，回答更容易核验。</p></div><span class="badge">{{ items.length }} 份资料</span></div>
     <div v-if="manage" class="upload-card">
-      <h3>添加资料</h3><p class="muted small">支持 PDF、DOCX、Markdown、CSV。含图片的 Markdown 请连同配图选择文件夹，单篇及配图合计最大 32 MB。解析完成后预览并发布。</p>
-      <input type="file" multiple accept=".pdf,.docx,.md,.csv,.png,.jpg,.jpeg,.webp,.gif,.svg" @change="choose" aria-label="选择知识库文件" />
+      <h3>添加资料</h3><p class="muted small">支持 PDF、DOC/DOCX、XLS/XLSX、PPT/PPTX、Markdown、CSV、JSON、XMind、EPUB、HTML/MHTML 和图片。含图片的 Markdown 请连同配图选择文件夹，单篇及配图合计最大 32 MB。解析完成后预览并发布。</p>
+      <input type="file" multiple accept=".pdf,.doc,.docx,.ppt,.md,.csv,.xlsx,.xls,.pptx,.epub,.xmind,.json,.html,.htm,.mhtml,.mht,.png,.jpg,.jpeg,.webp,.gif,.svg" @change="choose" aria-label="选择知识库文件" />
       <label class="small">或选择文件夹<input type="file" webkitdirectory multiple @change="choose" aria-label="选择资料文件夹" /></label><div class="form-row"><label>文档路径<input v-model="path" placeholder="例如 工艺规范/文档名称.pdf" :disabled="files.length !== 1" /></label><label>资料来源<select v-model="origin"><option value="public">公开资料</option><option value="synthetic">合成演示资料</option><option value="authorized_business">已授权业务资料</option></select></label></div>
-      <label class="checkbox"><input v-model="external" type="checkbox" />允许使用云端 MinerU 解析 PDF</label>
+      <label class="checkbox"><input v-model="external" type="checkbox" />允许使用云端解析 PDF 和转录图片文字</label>
       <button class="primary" :disabled="!files.length || busy" @click="upload">{{ busy ? '正在上传…' : '上传并解析' }}</button>
     </div>
     <p v-if="error" role="alert" class="error">{{ error }}</p>
@@ -99,7 +120,8 @@ onMounted(() => { load(); timer = setInterval(load, 5000) }); onUnmounted(() => 
           <p v-if="item.ingestion?.error" class="error small">新版本处理未完成，可重新处理。{{ item.active_version ? '当前已发布版本仍可使用。' : '' }}</p>
         </div>
         <span class="status-pill">{{ item.active_version ? '已发布' : statusNames[item.ingestion?.status] || '未发布' }}</span>
-        <div v-if="manage" class="row-actions">
+        <div v-if="manage" class="row-actions"><button v-if="['queued','running'].includes(item.ingestion?.status)" class="secondary" :disabled="!!changing" @click="cancelParsing(item)">取消处理</button>
+          <button v-if="item.active_version || item.restore_version" class="secondary" @click="versionDocument = item">修订／版本历史</button>
           <button v-if="item.active_version" class="secondary" @click="view(item, item.active_version)">预览当前版本</button>
           <button v-if="['staged', 'unpublished', 'needs_attention'].includes(item.ingestion?.status) && item.ingestion?.version !== item.active_version" class="secondary" @click="view(item)">{{ item.active_version ? '预览新版本' : '预览' }}</button>
           <button v-if="item.reprocess_source_version" class="secondary" :disabled="!!changing || item.reprocess_pending" @click="openRebuild(item)">重新处理／重建版本</button>
@@ -108,7 +130,8 @@ onMounted(() => { load(); timer = setInterval(load, 5000) }); onUnmounted(() => 
         </div>
       </article>
     </div>
-    <div v-if="preview" class="modal-backdrop" @click.self="preview = null"><section class="preview-modal" role="dialog" aria-modal="true" aria-label="文档预览"><div class="page-title"><h2>{{ selected?.title }}</h2><button class="secondary" @click="preview = null">关闭</button></div><div class="preview-scroll"><MarkdownAnswer :text="preview.body_markdown" :image-refs="preview.image_refs" /><p v-if="preview.truncated" class="muted">预览仅显示部分内容，请核验原文件。</p><p v-if="preview.manifest?.quality_findings?.length" class="notice">内容提示：{{ preview.manifest.quality_findings.join('、') }}</p></div><div class="modal-footer"><span class="muted small">{{ preview.chunk_count }} 个内容片段</span><button v-if="selected?.ingestion?.status === 'staged' && preview.version === selected?.ingestion?.version" class="primary" :disabled="!!changing" @click="publish(selected)">{{ selected?.active_version ? '发布新版本' : '确认发布' }}</button><button v-else-if="!selected?.active_version && selected?.restore_version === preview.version" class="primary" :disabled="!!changing" @click="changePublication(selected, 'republish')">{{ changing ? '正在校验并上架…' : '重新上架' }}</button></div></section></div>
+    <KnowledgeVersions v-if="versionDocument" :document="versionDocument" @close="versionDocument = null" @changed="load" />
+    <div v-if="preview" class="modal-backdrop" @click.self="preview = null"><section class="preview-modal" role="dialog" aria-modal="true" aria-label="文档预览"><div class="page-title"><h2>{{ selected?.title }}</h2><button class="secondary" @click="preview = null">关闭</button></div><div class="preview-scroll"><MarkdownAnswer :text="preview.body_markdown" :image-refs="preview.image_refs" /><p v-if="preview.truncated" class="muted">预览仅显示部分内容，请核验原文件。</p><p v-if="preview.manifest?.quality_findings?.length" class="notice">内容提示：{{ preview.manifest.quality_findings.map((v:string)=>findingNames[v] || v).join('；') }}</p></div><form v-if="reviewing" @submit.prevent="submitReview"><label>核对原文件并修正正文<textarea v-model="reviewText" rows="12" maxlength="200000" required style="width:100%" /></label><label>复核依据与接受的限制<input v-model="reviewReason" minlength="10" maxlength="1000" required /></label><button class="primary" :disabled="!!changing">保存复核版本</button></form><div class="modal-footer"><button v-if="preview.manifest?.status==='needs_attention' && !preview.truncated && !reviewing" class="secondary" @click="beginReview">核对并修正内容</button><span class="muted small">{{ preview.chunk_count }} 个内容片段</span><button v-if="selected?.ingestion?.status === 'staged' && preview.version === selected?.ingestion?.version" class="primary" :disabled="!!changing" @click="publish(selected)">{{ selected?.active_version ? '发布新版本' : '确认发布' }}</button><button v-else-if="!selected?.active_version && selected?.restore_version === preview.version" class="primary" :disabled="!!changing" @click="changePublication(selected, 'republish')">{{ changing ? '正在校验并上架…' : '重新上架' }}</button></div></section></div>
     <div v-if="rebuilding" class="modal-backdrop" @click.self="!changing && (rebuilding = null)">
       <section class="preview-modal" role="dialog" aria-modal="true" aria-label="重新处理文档">
         <h2>重新处理／重建版本</h2><p>{{ rebuilding.item.title }}</p>

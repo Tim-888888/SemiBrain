@@ -25,6 +25,7 @@ from semibrain_business.security import (
     lineage_check,
     require_manager,
 )
+from semibrain_business.version_access import citation_asset, published_version
 
 router = APIRouter()
 
@@ -39,6 +40,11 @@ def knowledge_snapshot(request: Request):
     restrictions = claim.get("document_ids", [])
     versions = sorted((r["_id"], r.get("active_version"), r.get("revision")) for r in rows
                       if can_read(r, claim) and (not restrictions or r["_id"] in restrictions))
+    # Derived Wiki availability changes when its source expires or is revoked,
+    # even if the selected Wiki's own version has not changed.
+    from semibrain_business.wiki_access import wiki_readable
+    unavailable = {r["_id"] for r in rows if not wiki_readable(r, claim)}
+    versions = [r for r in versions if r[0] not in unavailable]
     return {"cacheable": True, "snapshot": digest(canonical([
         claim["subject_id"], claim["role"], sorted(claim["resource_ids"]),
         sorted(restrictions), versions, "hybrid-mmr-section-v2"]))}
@@ -96,18 +102,27 @@ def document_view(row):
         "asset_id": row.get("raw_asset_id"),
         "revoked": row.get("revoked", False),
         "data_origin": row["data_origin"],
+        "kind": row.get("kind", "document"),
     }
 
 
 @router.get("/internal/v1/knowledge/documents")
-def documents(request: Request):
+def documents(request: Request, before: UUID | None = None):
     claim = authorize_request(request, "knowledge.read")
-    rows = (
-        db()
-        .documents.find({"$or": [{"visibility": "demo"}, {"owner_id": claim["subject_id"]}]})
-        .sort("created_at", -1)
-        .limit(200)
-    )
+    query = {"$or": [{"visibility": "demo"}, {"owner_id": claim["subject_id"]}]}
+    if claim.get("document_ids"):
+        query["_id"] = {"$in": claim["document_ids"]}
+    if before:
+        cursor = db().documents.find_one({"$and": [query, {"_id": str(before)}]})
+        if not cursor:
+            failure("DOCUMENT_CURSOR_INVALID", 400)
+        query = {"$and": [query, {"$or": [
+            {"created_at": {"$lt": cursor["created_at"]}},
+            {"created_at": cursor["created_at"], "_id": {"$lt": cursor["_id"]}},
+        ]}]}
+    rows = list(db().documents.find(query).sort([("created_at", -1), ("_id", -1)]).limit(201))
+    next_cursor = rows[199]["_id"] if len(rows) > 200 else None
+    rows = rows[:200]
     items = []
     for row in rows:
         if claim.get("document_ids") and row["_id"] not in claim["document_ids"]:
@@ -122,6 +137,10 @@ def documents(request: Request):
             and row["owner_id"] != claim["subject_id"]
         ):
             continue
+        if row.get("kind") == "wiki" and claim["role"] != "admin":
+            from semibrain_business.wiki_access import wiki_readable
+            if not row.get("active_version") or not wiki_readable(row, claim):
+                continue
         view = document_view(row)
         if claim["role"] == "admin" and not row.get("active_version") and not row.get("revoked"):
             view["restore_version"] = last_published_version(row)
@@ -147,7 +166,7 @@ def documents(request: Request):
                 view["reprocess_pending"] = (latest.get("generation") == row["revision"]
                     and latest["status"] in {"receiving", "queued", "running", "staged"})
         items.append(view)
-    return {"items": items}
+    return {"items": items, "next_cursor": next_cursor}
 
 
 @router.post("/internal/v1/knowledge/uploads", status_code=202)
@@ -170,7 +189,8 @@ def upload(
         path = validate_path(document_path)
     except ValueError:
         failure("INVALID_DOCUMENT_PATH")
-    if Path(path).suffix.lower() not in {".pdf", ".docx", ".md", ".csv"}:
+    from semibrain_business.parsing import SUPPORTED
+    if Path(path).suffix.lower().lstrip(".") not in SUPPORTED:
         failure("UNSUPPORTED_FORMAT")
     content = file.file.read(32 * 1024**2 + 1)
     if not content or len(content) > 32 * 1024**2:
@@ -323,6 +343,25 @@ def ingestion_status(job_id: str, request: Request):
     }
 
 
+@router.post("/internal/v1/knowledge/jobs/{job_id}/cancel")
+def cancel_ingestion(job_id: str, request: Request):
+    claim = authorize_request(request, "knowledge.manage")
+    require_manager(claim)
+    def commit(session):
+        job = db().ingestion_jobs.find_one({"_id": job_id}, session=session)
+        if not job:
+            failure("JOB_NOT_FOUND", 404)
+        authorized_document(job["document_id"], claim)
+        if job["status"] not in {"queued", "running"}:
+            return {"status": job["status"], "cancel_requested": bool(job.get("cancel_requested"))}
+        status = "cancelled" if job["status"] == "queued" else "running"
+        db().ingestion_jobs.update_one({"_id": job_id}, {"$set": {
+            "cancel_requested": True, "cancelled_by": claim["subject_id"],
+            "cancel_requested_at": now(), "status": status}}, session=session)
+        return {"status": status, "cancel_requested": True}
+    return transaction(commit)
+
+
 @router.get("/internal/v1/knowledge/documents/{document_id}/preview")
 def preview(document_id: str, version: str, request: Request):
     claim = authorize_request(request, "knowledge.read")
@@ -332,6 +371,8 @@ def preview(document_id: str, version: str, request: Request):
     row = db().document_versions.find_one({"_id": version, "document_id": document_id})
     if not row:
         failure("VERSION_NOT_FOUND", 404)
+    from semibrain_business.wiki_access import validate_wiki
+    validate_wiki(document, claim, version)
     asset = db().assets.find_one({"_id": row["parsed_asset_id"]})
     content = read_asset(asset).decode("utf-8")
     return {
@@ -355,7 +396,7 @@ class PublishInput(BaseModel):
 def activate(document_id: str, form: PublishInput, request: Request):
     claim = authorize_request(request, "knowledge.manage")
     require_manager(claim)
-    authorized_document(document_id, claim)
+    document = authorized_document(document_id, claim)
     key = str(form.request_id)
     payload_hash = digest(canonical({"document_id": document_id, **form.model_dump(mode="json")}))
 
@@ -377,6 +418,8 @@ def activate(document_id: str, form: PublishInput, request: Request):
         if not version or version["manifest"]["status"] != "staged":
             failure("VERSION_NOT_READY", 409)
         verify_context_version(version)
+        from semibrain_business.wiki_access import validate_wiki
+        wiki = validate_wiki(document, claim, str(form.version), session=session, fence=True)
         changed = db().documents.update_one(
             {"_id": document_id, "revision": form.expected_revision, "revoked": False},
             {
@@ -384,6 +427,8 @@ def activate(document_id: str, form: PublishInput, request: Request):
                     "active_version": str(form.version),
                     "last_published_version": str(form.version),
                     "raw_asset_id": version["raw_asset_id"],
+                    "citation_asset_id": citation_asset(version),
+                    **({"title": wiki["title"], "data_origin": wiki["data_origin"]} if wiki else {}),
                 },
                 "$inc": {"revision": 1},
             },
@@ -462,11 +507,13 @@ def republish(document_id: str, form: UnpublishInput, request: Request):
             failure("REVISION_CONFLICT", 409)
         if restore_target(current, session=session)["_id"] != version["_id"]:
             failure("REVISION_CONFLICT", 409)
+        from semibrain_business.wiki_access import validate_wiki
+        validate_wiki(current, claim, version["_id"], session=session, fence=True)
         changed = db().documents.update_one(
             {"_id": document_id, "revision": form.expected_revision, "active_version": None,
              "revoked": False},
             {"$set": {"active_version": version["_id"], "last_published_version": version["_id"],
-                      "raw_asset_id": version["raw_asset_id"]}, "$inc": {"revision": 1}},
+                      "raw_asset_id": version["raw_asset_id"], "citation_asset_id": citation_asset(version)}, "$inc": {"revision": 1}},
             session=session,
         )
         if not changed.modified_count:
@@ -582,7 +629,7 @@ def read_document(form: ReadDocumentInput, request: Request):
     return {
         "evidence": [
             {
-                "asset_id": version["raw_asset_id"],
+                "asset_id": citation_asset(version),
                 "document_id": document["_id"],
                 "version": version["_id"],
                 "title": document["title"],
@@ -665,18 +712,31 @@ class LineageInput(BaseModel):
     # A run may hold 50 evidence items with both a query and a web snapshot reference.
     refs: list[str] = Field(max_length=120)
     protect_for_publication: bool = False
+    historical: bool = False
 
 
 @router.post("/internal/v1/lineage/check")
 def check(form: LineageInput, request: Request):
     claim = authorize_request(request, "lineage.check")
-    lineage_check(form.refs, claim, protect_for_publication=form.protect_for_publication)
-    return {"valid": True}
+    seen = set()
+    lineage_check(form.refs, claim, seen, protect_for_publication=form.protect_for_publication,
+                  historical=form.historical)
+    older = []
+    if form.historical:
+        for ref in sorted(seen):
+            kind, identity, version = ref.split(":", 2)
+            if kind == "document" and authorized_document(identity, claim, active=True)["active_version"] != version:
+                older.append(ref)
+    return {"valid": True, "historical_refs": older}
 
 
 @router.get("/internal/v1/assets/{asset_id}/content")
 def asset_content(asset_id: str, request: Request, preview_version: UUID | None = None):
     claim = authorize_request(request, "asset.read")
+    return asset_response(asset_id, claim, preview_version)
+
+
+def asset_response(asset_id: str, claim, preview_version: UUID | None = None):
     asset = db().assets.find_one({"_id": asset_id})
     if not asset:
         failure("ASSET_NOT_FOUND", 404)
@@ -689,14 +749,36 @@ def asset_content(asset_id: str, request: Request, preview_version: UUID | None 
         version = db().document_versions.find_one({"_id": str(preview_version) if preview_version else document["active_version"], "document_id": document["_id"]})
         if not version:
             failure("ASSET_VERSION_UNAVAILABLE", 403)
+        from semibrain_business.wiki_access import validate_wiki
+        validate_wiki(document, claim, version["_id"])
         valid = {version["raw_asset_id"], version["parsed_asset_id"], *version["image_asset_ids"]}
         if asset_id not in valid:
-            failure("ASSET_VERSION_UNAVAILABLE", 403)
+            if preview_version is not None or claim.get("run_id"):
+                failure("ASSET_VERSION_UNAVAILABLE", 403)
+            candidates = db().document_versions.find({"document_id": document["_id"], "$or": [
+                {"raw_asset_id": asset_id}, {"parsed_asset_id": asset_id}, {"image_asset_ids": asset_id}
+            ]}).limit(100)
+            permitted = False
+            from fastapi import HTTPException
+            for candidate in candidates:
+                try:
+                    published_version(document["_id"], candidate["_id"], claim)
+                    permitted = True
+                    break
+                except HTTPException as exc:
+                    if exc.status_code != 403:
+                        raise
+            if not permitted:
+                failure("ASSET_VERSION_UNAVAILABLE", 403)
+    elif asset.get("report_export_id"):
+        from semibrain_business.report_exports import authorize_asset
+        authorize_asset(asset, claim)
     elif asset.get("job_id"):
         job = db().tool_jobs.find_one({"_id": asset["job_id"], "subject_id": claim["subject_id"]})
         if not job or job["status"] not in {"succeeded", "partial"}:
             failure("ASSET_UNAVAILABLE", 403)
-        lineage_check((job.get("result", {}).get("data") or {}).get("lineage_refs", []), claim)
+        lineage_check((job.get("result", {}).get("data") or {}).get("lineage_refs", []), claim,
+                      historical=not claim.get("run_id"))
     elif asset.get("chat_upload") and asset["owner_id"] == claim["subject_id"]:
         lineage_check(asset.get("source_refs", []), claim)
     else:

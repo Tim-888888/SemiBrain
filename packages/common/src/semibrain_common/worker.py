@@ -71,4 +71,6 @@ def worker_app(service):
         task_routes={service + ".*": {"queue": queue}},
         beat_schedule={"tick": {"task": service + ".tick", "schedule": 2.0}},
     )
+    from semibrain_common.operations import attach_heartbeat
+    attach_heartbeat(app, service)
     return app

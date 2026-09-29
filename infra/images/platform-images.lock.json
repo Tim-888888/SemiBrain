@@ -38,5 +38,15 @@
     "platform": "linux/amd64",
     "archive_sha256": "56ae761796c0db26a9b51b641fdcfd7db16853c408e407cf2ea0e2d0b6436a38",
     "imported_digest": "semibrain-base/milvus@sha256:a09f3003892bf965afc69be179f58142bf55073c56fc92d5ea222058a1a72d3b"
+  },
+  "neo4j": {
+    "source": "registry-1.docker.io/library/neo4j:2026.09.0",
+    "manifest_digest": "sha256:5ed9ae1dc7119bea322d4f486b9c374a2250f5140d78be8c709da1e25435a37f",
+    "index_digest": "sha256:91fb0bf237c41b7b3dcbe84703aa0b82e0d7d067b16e1c8ab21f03fc679edf4e",
+    "config_digest": "sha256:f6c218c106ade5430cc3f8fa385a13beac9bd75ea037114d2e92d7269a10fb10",
+    "local_alias": "semibrain-base/neo4j:sha-5ed9ae1dc7119bea",
+    "platform": "linux/amd64",
+    "archive_sha256": "5076636beeab81625a8659939809b10586e9a10612d7f4cfec5cef9c784ac9b7",
+    "imported_digest": "semibrain-base/neo4j@sha256:624415aa0078cd58cc88219488f9ee2a4755bf7e4bb140ef77570b1d4cc791ac"
   }
 }

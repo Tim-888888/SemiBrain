@@ -249,16 +249,34 @@ def search(form, job):
     access = authorization(job)
     quick = access.get("mode") == "quick_qa"
     search_limit, result_limit = (2, 5) if quick else (3, 10)
-    provider = search_providers.select(form.provider)
     quota(job, "searches", search_limit)
+    from semibrain_business import search_governance as governance
+    setting = governance.policy_for_run(job["run_id"])
+    provider = governance.choose(setting["policy"], form.provider)
     usage = {"total_tokens": 0, "search_requests": 1}
     attempt = {"_id": job["_id"] + ":" + str(job["attempt"])}
+    complement = next((name for name in setting["policy"]["order"] if name != provider
+                       and setting["policy"]["providers"][name]["enabled"]), None)
     db().web_attempts.update_one(
-        attempt, {"$set": {"provider": provider, "provider_request_started": True,
-                          "provider_search_count": 1, "usage": usage}},
+        attempt, {"$set": {"provider": provider, "complement_provider": complement,
+                          "configuration_revision": setting["revision"]}},
     )
-    sources = search_providers.request(provider, query, result_limit,
-        timeout=remaining(job, 10), guard=lambda: authorization(job))
+    audit_id = job["_id"] + ":" + str(job["attempt"])
+    governance.reserve(provider, audit_id, revision=setting["revision"], run_id=job["run_id"],
+                       limit=setting["policy"]["providers"][provider]["daily_limit"])
+    db().web_attempts.update_one(attempt, {"$set": {
+        "provider_request_started": True, "provider_search_count": 1, "usage": usage}})
+    started = time.monotonic()
+    def guard():
+        authorization(job)
+        governance.assert_enabled(provider)
+    try:
+        sources = search_providers.request(provider, query, result_limit,
+            timeout=remaining(job, setting["policy"]["timeout_seconds"]), guard=guard)
+        governance.finish(audit_id, started, count=len(sources))
+    except WebError as exc:
+        governance.finish(audit_id, started, error=str(exc))
+        raise
     db().web_attempts.update_one(attempt, {"$set": {"completed_at": now()}})
     authorization(job)
     return {
@@ -268,6 +286,8 @@ def search(form, job):
         "query": query,
         "data_origin": "public",
         "provider": provider,
+        "complement_provider": complement,
+        "configuration_revision": setting["revision"],
         "usage": usage,
         "source_text_available": False,
         "notice": "来源及供应商导读仅用于选页，不是正文证据；使用web.fetch取得页面内容或明确标注的提取片段。",

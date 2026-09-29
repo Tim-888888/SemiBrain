@@ -10,6 +10,9 @@ RUN sed -i 's|http://deb.debian.org/debian|https://mirrors.aliyun.com/debian|g' 
     && apt-get -o Acquire::Retries=2 -o Acquire::https::Timeout=30 update \
     && apt-get -o Acquire::Retries=2 -o Acquire::https::Timeout=30 install -y --no-install-recommends fonts-noto-cjk=1:20220127+repack1-1 \
     && rm -rf /var/lib/apt/lists/*
+RUN apt-get -o Acquire::Retries=2 -o Acquire::https::Timeout=30 update \
+    && apt-get -o Acquire::Retries=2 -o Acquire::https::Timeout=30 install -y --no-install-recommends libreoffice-writer libreoffice-impress libreoffice-calc \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=build /opt/runtime /opt/runtime
 COPY infra/images/configure-matplotlib.py /tmp/configure-matplotlib.py
 RUN /opt/runtime/bin/python /tmp/configure-matplotlib.py && rm /tmp/configure-matplotlib.py

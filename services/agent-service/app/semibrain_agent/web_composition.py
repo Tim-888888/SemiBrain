@@ -51,15 +51,16 @@ def compose_search(executor, observation, args, logical_id):
     data = observation.get("data") or {}
     error = (observation.get("error") or {}).get("code")
     valid = any(s.get("url") for s in data.get("sources", []))
-    fallback = (args.get("provider", "auto") == "auto" and data.get("provider") != "zhipu"
+    complement = data.get("complement_provider", "zhipu" if data.get("provider") != "zhipu" else None)
+    fallback = (args.get("provider", "auto") == "auto" and complement in {"bocha", "zhipu"}
                 and (error in FALLBACK_ERRORS or (not valid and observation["status"] in {"succeeded", "partial"})))
     attempts = [{"call_ref": logical_id, "provider": data.get("provider", args.get("provider", "auto")),
                  "status": observation["status"], "error": error}]
     if fallback:
-        child = str(uuid5(NAMESPACE_URL, logical_id + ":fallback:zhipu"))
-        other = executor.execute("web.search", json.dumps({"query": args["query"], "provider": "zhipu",
+        child = str(uuid5(NAMESPACE_URL, logical_id + ":fallback:" + complement))
+        other = executor.execute("web.search", json.dumps({"query": args["query"], "provider": complement,
                                                            "content": False}), child)
-        attempts.append({"call_ref": child, "provider": "zhipu", "status": other["status"],
+        attempts.append({"call_ref": child, "provider": complement, "status": other["status"],
                          "error": (other.get("error") or {}).get("code")})
         if other["status"] in {"succeeded", "partial"}:
             # Keep primary job identity/audit; link the independently accounted fallback.

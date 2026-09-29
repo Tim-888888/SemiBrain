@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ContextUsage } from './api'
 defineProps<{ value: ContextUsage }>()
-const labels: Record<string, string> = { system: '系统规则', tools: '工具定义', summary: '历史摘要', history: '近期对话', evidence: '工具结果与证据', current: '当前任务与工作消息', overhead: '消息封装' }
+const labels: Record<string, string> = { system: '系统规则', tools: '工具定义', summary: '历史摘要', history: '近期对话', memory: '个人记忆', evidence: '工具结果与证据', current: '当前任务与工作消息', overhead: '消息封装' }
 const roles: Record<string, string> = { understanding: '问题理解', investigator: '调查与回答', supervisor: '协调器', rag: '知识检索', sqlbot: '业务数据', tool: '计算与外部资料', vision: '图片观察', rca: '汇总回答', reviewer: '答案核验' }
 const count = (value?: number | null) => typeof value === 'number' ? value.toLocaleString('zh-CN') : '未返回'
 </script>

@@ -226,10 +226,10 @@ def _consume_locked(db, topic, consumer, apply, fence, limit):
                         db.quarantine.update_one(
                             {"_id": consumer + ":" + event_id},
                             {
+                                "$set": {"state": "pending", "updated_at": now()},
                                 "$setOnInsert": {
                                     "reason": "SCHEMA_VERSION",
-                                    "event": event,
-                                    "state": "pending",
+                                    "event": event, "topic": topic,
                                     "consumer": consumer,
                                     "created_at": now(),
                                 }
@@ -240,8 +240,40 @@ def _consume_locked(db, topic, consumer, apply, fence, limit):
                     else:
                         apply(event, session)
                         db.inbox.insert_one({**key, "received_at": now()}, session=session)
+                    if supported:
+                        db.quarantine.update_one({"_id": consumer + ":" + event_id},
+                            {"$set": {"state": "resolved", "updated_at": now()}}, session=session)
+                else:
+                    db.quarantine.update_one({"_id": consumer + ":" + event_id},
+                        {"$set": {"state": "resolved", "updated_at": now()}}, session=session)
 
-            transaction(commit)
+            try:
+                transaction(commit)
+            except ValueError:
+                # A poison event must not starve every later event. Keep the
+                # cursor unchanged until its bounded apply attempts are exhausted.
+                def rejected(session):
+                    held = db.cursors.update_one(
+                        {"_id": consumer, "fence": fence, "lease_until": {"$gt": now()}},
+                        {"$set": {"lease_until": now() + timedelta(seconds=30)}}, session=session)
+                    if not held.matched_count:
+                        raise RuntimeError("STALE_CONSUMER")
+                    key = consumer + ":" + event_id
+                    row = db.event_failures.find_one_and_update({"_id": key},
+                        {"$inc": {"attempts": 1}, "$set": {"updated_at": now()},
+                         "$setOnInsert": {"ceiling": 3}}, upsert=True,
+                        return_document=ReturnDocument.AFTER, session=session)
+                    if row["attempts"] < row["ceiling"]:
+                        return False
+                    db.quarantine.update_one({"_id": key}, {"$set": {
+                        "reason": "EVENT_APPLY_REJECTED", "event": event, "topic": topic,
+                        "state": "pending", "consumer": consumer, "updated_at": now()},
+                        "$setOnInsert": {"created_at": now()}}, upsert=True, session=session)
+                    db.cursors.update_one({"_id": consumer, "fence": fence},
+                        {"$set": {"value": stream_id}}, session=session)
+                    return True
+                if not transaction(rejected):
+                    return
 
 
 def internal_identity(request: Request, allowed: set[str]):
@@ -266,7 +298,7 @@ def call(service: str, method: str, path: str, *, delegation=None, timeout=30, *
     if response.status_code >= 400:
         if (service == "business" and method == "POST"
                 and path.startswith("/internal/v1/knowledge/documents/")
-                and path.endswith(("/republish", "/reprocess", "/publish"))):
+                and path.endswith(("/republish", "/reprocess", "/publish", "/edit", "/rollback"))):
             # Only fixed, public lifecycle codes may cross the service boundary.
             try:
                 code = response.json().get("detail", {}).get("code")
@@ -276,7 +308,9 @@ def call(service: str, method: str, path: str, *, delegation=None, timeout=30, *
                 409: {"REPROCESS_SOURCE_UNAVAILABLE", "REPROCESS_PENDING", "CONTEXT_DATA_INCOMPLETE",
                       "REPUBLISH_DATA_INCOMPLETE", "REPUBLISH_NEW_VERSION_PENDING",
                       "NO_PUBLISHED_VERSION", "DOCUMENT_ALREADY_PUBLISHED",
-                      "REVISION_CONFLICT", "IDEMPOTENCY_CONFLICT"},
+                      "REVISION_CONFLICT", "IDEMPOTENCY_CONFLICT", "CHUNK_REBUILD_REQUIRED",
+                      "CHUNK_COORDINATE_CONFLICT", "CHUNK_REVISION_CONFLICT", "ROLLBACK_VERSION_UNPUBLISHED"},
+                400: {"EDIT_IMAGE_NOT_REGISTERED"},
                 503: {"REPUBLISH_CHECK_UNAVAILABLE"},
             }
             if isinstance(code, str) and code in allowed.get(response.status_code, set()):

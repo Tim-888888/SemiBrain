@@ -1,13 +1,25 @@
 <script setup lang="ts">
+import { documentCatalog } from './document-catalog'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import ComposerAddMenu from './ComposerAddMenu.vue'
 import ResizableSidebar from './ResizableSidebar.vue'
 import { clipboardImages, imageError, ScrollFollow } from './composer.mjs'
 import AuthPanel from './AuthPanel.vue'
 import KnowledgePanel from './KnowledgePanel.vue'
+import WikiPanel from './WikiPanel.vue'
+import GraphPanel from './GraphPanel.vue'
+import MCPPanel from './MCPPanel.vue'
+import SkillsPanel from './SkillsPanel.vue'
+import MemoryPanel from './MemoryPanel.vue'
+import AgentConfiguration from './AgentConfiguration.vue'
+import EvaluationPanel from './EvaluationPanel.vue'
+import ReportExport from './ReportExport.vue'
 import MarkdownAnswer from './MarkdownAnswer.vue'
 import RunDetails from './RunDetails.vue'
+import RunDiagnostics from './RunDiagnostics.vue'
+const diagnosticRun = ref('')
 import RunComparison from './RunComparison.vue'
+import OperationsPanel from './OperationsPanel.vue'
 import UsersPanel from './UsersPanel.vue'
 import { api, post, setCsrf, type Message, type Run, type User } from './api'
 import './style.css'
@@ -40,7 +52,7 @@ const denied = computed(() => adminPage.value && user.value?.role !== 'admin')
 const running = computed(() => sending.value || (!!activeRun.value && !['succeeded', 'failed', 'partial', 'cancelled', 'waiting_input'].includes(activeRun.value.status)))
 async function loadLists() {
   const current = generation
-  const [page, documents, capabilities] = await Promise.all([api('/v1/conversations'), api('/v1/knowledge/documents'), api('/v1/capabilities')])
+  const [page, documents, capabilities] = await Promise.all([api('/v1/conversations'), documentCatalog(), api('/v1/capabilities')])
   if (current !== generation) return
   multiAvailable.value = capabilities.multi_agent === true; conversations.value = page.items; conversationsCursor.value = page.next_cursor
   knowledge.value = documents.items.filter((item: any) => item.active_version)
@@ -241,17 +253,18 @@ onUnmounted(() => { closeStream(); clearImages() })
   <div v-else class="workspace">
     <ResizableSidebar><a class="wordmark" href="/"><span class="brand-icon">S</span> SemiBrain</a><span v-if="adminPage" class="admin-caption">管理控制台</span>
       <button v-if="!adminPage" class="new-chat" @click="newChat">＋ 新会话</button>
-      <nav><button v-if="!adminPage" :class="{ active: view === 'chat' }" @click="view = 'chat'">◈ 对话工作台</button><button :class="{ active: view === 'knowledge' }" @click="view = 'knowledge'">▤ 知识库</button><button v-if="adminPage" :class="{ active: view === 'users' }" @click="view = 'users'">♙ 用户管理</button><button v-if="adminPage" :class="{ active: view === 'comparison' }" @click="view = 'comparison'">运行对照</button></nav>
+      <nav><button v-if="adminPage" :class="{ active: view === 'evaluations' }" @click="view = 'evaluations'">评测与用量</button><button v-if="adminPage" :class="{ active: view === 'agent-config' }" @click="view = 'agent-config'">Agent 配置</button><button :class="{ active: view === 'memory' }" @click="view = 'memory'">我的记忆</button><button v-if="!adminPage" :class="{ active: view === 'chat' }" @click="view = 'chat'">◈ 对话工作台</button><button :class="{ active: view === 'knowledge' }" @click="view = 'knowledge'">▤ 知识库</button><button :class="{ active: view === 'wiki' }" @click="view = 'wiki'">工程 Wiki</button><button :class="{ active: view === 'graph' }" @click="view = 'graph'">工程图谱</button><button v-if="adminPage" :class="{ active: view === 'skills' }" @click="view = 'skills'">Skills 技能</button><button v-if="adminPage" :class="{ active: view === 'mcp' }" @click="view = 'mcp'">MCP 服务</button><button v-if="adminPage" :class="{ active: view === 'users' }" @click="view = 'users'">♙ 用户管理</button><button v-if="adminPage" :class="{ active: view === 'comparison' }" @click="view = 'comparison'">运行对照</button><button v-if="adminPage" :class="{ active: view === 'operations' }" @click="view = 'operations'">运行治理</button></nav>
       <div v-if="!adminPage" class="history"><p class="eyebrow">最近会话</p><button v-for="item in conversations" :key="item.id" :title="item.title" :class="{ selected: conversation?.id === item.id }" @click="openChat(item)">{{ item.title }}</button><button v-if="conversationsCursor" @click="olderChats">加载更早会话</button><p v-if="!conversations.length" class="small muted">你的会话会保存在这里</p></div>
       <div class="sidebar-bottom"><a v-if="user.role === 'admin' && !adminPage" class="admin-link" href="/admin/">管理控制台 ↗</a><a v-if="adminPage" class="admin-link" href="/">返回工作台 ↗</a><div class="profile"><span class="avatar">{{ user.username.slice(0, 1).toUpperCase() }}</span><div><strong>{{ user.username }}</strong><small>{{ user.role === 'admin' ? '管理员' : '普通用户' }}</small></div><button class="text-button" @click="settings = true" aria-label="账号设置">⚙</button></div><button class="text-button logout" @click="logout">退出登录</button></div>
     </ResizableSidebar>
-    <main class="main-panel"><header class="topbar"><span>{{ view === 'chat' ? conversation?.title || '对话工作台' : view === 'knowledge' ? '知识库' : view === 'comparison' ? '运行对照' : '用户管理' }}</span><span class="workspace-tag">半导体知识空间</span></header>
-      <KnowledgePanel v-if="view === 'knowledge'" :manage="adminPage && user.role === 'admin'" />
-      <UsersPanel v-else-if="view === 'users'" /><RunComparison v-else-if="view === 'comparison'" />
+    <main class="main-panel"><header class="topbar"><span>{{ view === 'chat' ? conversation?.title || '对话工作台' : view === 'evaluations' ? '评测与用量' : view === 'agent-config' ? 'Agent 配置' : view === 'knowledge' ? '知识库' : view === 'wiki' ? '工程 Wiki' : view === 'graph' ? '工程图谱' : view === 'memory' ? '我的记忆' : view === 'skills' ? 'Skills 技能' : view === 'mcp' ? 'MCP 服务' : view === 'comparison' ? '运行对照' : view === 'operations' ? '运行治理' : '用户管理' }}</span><span class="workspace-tag">半导体知识空间</span></header>
+      <EvaluationPanel v-if="view === 'evaluations'" /><AgentConfiguration v-else-if="view === 'agent-config'" /><MemoryPanel v-else-if="view === 'memory'" />
+      <KnowledgePanel v-else-if="view === 'knowledge'" :manage="adminPage && user.role === 'admin'" />
+      <SkillsPanel v-else-if="view === 'skills'" /><MCPPanel v-else-if="view === 'mcp'" /><GraphPanel v-else-if="view === 'graph'" :manage="adminPage && user.role === 'admin'" /><WikiPanel v-else-if="view === 'wiki'" :manage="adminPage && user.role === 'admin'" /><OperationsPanel v-else-if="view === 'operations'" /><UsersPanel v-else-if="view === 'users'" /><RunComparison v-else-if="view === 'comparison'" />
       <template v-else>
         <div ref="scrollArea" class="conversation-scroll" tabindex="0" aria-label="对话记录" @scroll.passive="scrollFollow.scrolled()" @wheel.passive="$event.deltaY < 0 && scrollFollow.pause()" @keydown="scrollKey" @touchstart.passive="touchY = $event.touches[0]?.clientY || 0" @touchmove.passive="scrollTouch">
           <div v-if="!messages.length && !activeRun" class="welcome"><span class="welcome-symbol">✳</span><p class="eyebrow">SEMI BRAIN / KNOWLEDGE ASSISTANT</p><h1>从一个问题开始</h1><p>查阅资料，理解工艺，核验每一条来源。</p><div class="starter-grid"><button @click="text = '知识库中有哪些关于测试良率的资料？'">▤ 查找专业资料<span>从已发布文档中寻找证据 ↗</span></button><button @click="text = '请列出可查询的合成演示批次。'">▦ 查询演示数据<span>了解批次与测试上下文 ↗</span></button></div></div>
-          <div ref="messageColumn" class="message-column"><button v-if="messagesCursor" class="text-button" :disabled="loadingOlder" @click="olderMessages">{{ loadingOlder ? '正在加载…' : '加载更早消息' }}</button><section v-for="message in messages" :key="message.id" :data-message-id="message.id" :class="['message', message.role]"><div v-if="message.role === 'user'" class="question-bubble">{{ message.text }}</div><template v-else><div class="assistant-label"><span class="mini-brand">S</span> SemiBrain<span v-if="message.status === 'failed'" class="muted">处理未完成</span></div><RunDetails :run="message" /><button v-if="user.role === 'admin' && ['single_agent', 'multi_agent'].includes(message.strategy || '')" class="text-button" @click="showPrompt(message.run_id)">查看脱敏提示词</button><MarkdownAnswer :text="message.body_markdown || (message.status === 'failed' ? '本次处理未完成，请稍后重试。' : message.status === 'cancelled' ? '本次执行已停止。' : '')" :citations="message.citations" :artifacts="message.artifacts" :image-refs="message.image_refs" /></template></section>
+          <div ref="messageColumn" class="message-column"><button v-if="messagesCursor" class="text-button" :disabled="loadingOlder" @click="olderMessages">{{ loadingOlder ? '正在加载…' : '加载更早消息' }}</button><section v-for="message in messages" :key="message.id" :data-message-id="message.id" :class="['message', message.role]"><div v-if="message.role === 'user'" class="question-bubble">{{ message.text }}</div><template v-else><div class="assistant-label"><span class="mini-brand">S</span> SemiBrain<span v-if="message.status === 'failed'" class="muted">处理未完成</span></div><RunDetails :run="message" /><button v-if="user.role === 'admin'" class="text-button" @click="diagnosticRun = message.run_id">查看运行详情</button><button v-if="user.role === 'admin' && ['single_agent', 'multi_agent'].includes(message.strategy || '')" class="text-button" @click="showPrompt(message.run_id)">查看脱敏提示词</button><p v-if="message.historical_source_refs?.length" class="muted" role="note">此回答引用了当时已发布的历史版本，资料目前已有更新。</p><MarkdownAnswer :text="message.body_markdown || (message.status === 'failed' ? '本次处理未完成，请稍后重试。' : message.status === 'cancelled' ? '本次执行已停止。' : '')" :citations="message.citations" :artifacts="message.artifacts" :image-refs="message.image_refs" /><ReportExport v-if="message.run_id && message.body_markdown && ['succeeded', 'partial'].includes(message.status || '')" :run-id="message.run_id" /></template></section>
             <section v-if="activeRun" class="message assistant"><div class="assistant-label"><span class="mini-brand">S</span> SemiBrain</div><div class="run-progress" role="status"><span class="pulse-dot"></span>{{ activeRun.progress || '正在处理' }}</div><RunDetails :run="activeRun" /><button v-if="allowWeb" class="text-button" @click="disableWeb">关闭本次联网</button><button class="text-button" :disabled="cancelling || activeRun.status === 'cancelling'" @click="cancelRun">{{ activeRun.status === 'cancelling' ? '正在停止…' : '停止回答' }}</button><MarkdownAnswer :text="activeRun.body_markdown" :citations="activeRun.citations" :artifacts="activeRun.artifacts" :image-refs="activeRun.image_refs" streaming /></section>
           </div>
         </div>
@@ -281,6 +294,7 @@ onUnmounted(() => { closeStream(); clearImages() })
         </div>
       </template>
     </main>
+    <div v-if="diagnosticRun" class="modal-backdrop"><section class="diagnostics-modal" role="dialog" aria-modal="true" aria-label="运行详情"><button class="secondary" @click="diagnosticRun = ''">关闭</button><RunDiagnostics :run-id="diagnosticRun" /></section></div>
     <div v-if="promptPreview" class="modal-backdrop"><section class="small-modal" role="dialog" aria-modal="true" aria-label="脱敏提示词预览"><h2>只读装配预览</h2><p>仅显示本账号且来源仍可访问的已执行模型输入；不包含密钥或隐藏推理。</p><pre class="prompt-preview">{{ promptPreview }}</pre><button class="secondary" @click="promptPreview = ''">关闭</button></section></div>
     <div v-if="settings" class="modal-backdrop"><section class="small-modal" role="dialog" aria-modal="true" aria-label="账号设置"><h2>账号设置</h2><p class="muted">修改密码后需要重新登录。</p><form @submit.prevent="changePassword"><label>当前密码<input v-model="oldPassword" type="password" autocomplete="current-password" required /></label><label>新密码<input v-model="newPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" required /></label><p v-if="error" class="error">{{ error }}</p><div class="row-actions"><button type="button" class="secondary" @click="settings = false">取消</button><button class="primary">保存密码</button></div></form></section></div>
   </div>

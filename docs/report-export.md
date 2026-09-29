@@ -1,0 +1,11 @@
+# Saved-answer export
+
+Every terminal succeeded/partial answer exposes Markdown, Word and PDF export. The gateway authorizes the owner and asks the Agent service for its immutable report. The business service converts those bytes; no model rewrites the answer and no browser HTML is accepted. Existing Markdown and report schemas remain unchanged.
+
+`POST /v1/runs/{run_id}/exports` accepts only request UUID and format. A durable, idempotent job pins report ID, revision, content hash and renderer version. `GET /v1/runs/{run_id}/exports` restores recent jobs after refresh. Download uses the existing authenticated asset proxy. It revalidates the owner authentication epoch, source access, report hash, winning job and expiration. Withdrawing sources also blocks future export/download; previously downloaded files cannot be recalled.
+
+`report_exports` and `report_export_owners` belong to the business service. There is no cross-service database access. Jobs share queue drain controls, have fenced 150-second leases, at most two crash-recovery attempts and three outstanding exports per user. Normal conversion failures terminate visibly; the user can request a new export. Upload intent is registered before object upload so crashes remain reclaimable. Files expire after 30 days, while job metadata remains for audit. Cleanup removes objects before asset metadata and keeps the winning publication.
+
+Word uses python-docx and Markdown tokens. It preserves headings, prose, lists, tables, quotes and code blocks, and appends citation labels. Only images actually referenced in the answer and present in the service image registry are embedded, after live asset authorization. Unknown images become alt-text placeholders; no remote images, scripts or HTML are executed. Formula syntax remains literal text. Markdown export preserves the exact source bytes, so its authenticated image URLs require an online session. These are format limitations, not model-generated content changes.
+
+PDF converts the generated DOCX using the existing network-disabled Docker/LibreOffice runtime with CJK fonts, a fixed command, 28-second execution limit and unconditional cleanup. No new sandbox provider is introduced. Inputs are bounded to 64,000 text characters, 12 images/12 MiB image input and 16 MiB output. Oversized inputs fail visibly instead of truncating the answer.

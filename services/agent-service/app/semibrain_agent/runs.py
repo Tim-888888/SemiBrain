@@ -5,6 +5,7 @@ from datetime import timedelta
 
 from fastapi import APIRouter, Request
 from pymongo import ReturnDocument
+from semibrain_common.operations import admission
 from semibrain_common.runtime import (
     call,
     canonical,
@@ -30,7 +31,9 @@ router = APIRouter()
 @router.get("/internal/v1/capabilities")
 def capabilities(request: Request):
     internal_identity(request, {"conversation"})
-    return {"multi_agent": os.getenv("SEMIBRAIN_MULTI_AGENT_ENABLED", "false").lower() == "true"}
+    from semibrain_agent.configuration import snapshot
+    enabled = os.getenv("SEMIBRAIN_MULTI_AGENT_ENABLED", "false").lower() == "true"
+    return {"multi_agent": enabled and snapshot()["settings"]["multi_agent_enabled"]}
 
 
 @router.get("/internal/v1/runs/{run_id}/tasks/{task_id}/authorization")
@@ -42,7 +45,7 @@ def task_authorization(run_id: str, task_id: str, request: Request):
     if not run or not task or task["role"] not in ROLE_TOOLS:
         failure("TASK_BINDING_UNAVAILABLE", 403)
     return {
-        "task_id": task_id, "run_id": run_id,
+        "task_id": task_id, "run_id": run_id, "role": task["role"],
         "active": run["status"] == "running" and task["status"] == "running"
         and not run.get("cancel_requested_at") and run.get("lease_until", now()) > now()
         and task.get("parent_fence") == run.get("fence"),
@@ -66,12 +69,14 @@ def accept(command, session):
         if existing["payload_hash"] != payload_hash and not compatible:
             failure("IDEMPOTENCY_CONFLICT", 409)
         return existing
+    from semibrain_agent.configuration import snapshot as configuration_snapshot
     row = {
         "_id": str(command.run_id),
         "command": payload,
         "payload_hash": payload_hash,
         "retention_version": 1,
         "context_compaction": policy_snapshot(),
+        "agent_configuration": configuration_snapshot(session),
         "execution_policy": {
             "context": os.getenv("SEMIBRAIN_DSH_CONTEXT_ENABLED", "true").lower() == "true",
             "efficiency": os.getenv("SEMIBRAIN_DSH_EFFICIENCY_ENABLED", "true").lower() == "true",
@@ -156,15 +161,13 @@ def snapshot(run_id: str, request: Request):
                        "tool_attempts", "tool_reuses")
         result["task_tree"] = [{"task_id": task["_id"], **{k: task.get(k) for k in task_fields}}
                                for task in db().tasks.find({"run_id": run_id}).sort("created_at", 1)]
-        # Artifacts are server-registered references, never URLs parsed from model prose.
-        result["artifacts"] = []
-        if row.get("report_id"):
-            for evidence in db().evidence.find({"run_id": run_id}):
-                content = evidence.get("content")
-                if isinstance(content, dict):
-                    result["artifacts"].extend({"name": a["name"], "asset_id": a["asset_id"],
-                                                "media_type": a["ref"]["media_type"]}
-                                               for a in content.get("artifacts", []))
+    # Single and multi Agent files share the same trusted export registry.
+    from semibrain_agent.delivery import FILE_TOOLS, registered_artifacts
+    result["artifacts"] = []
+    if row.get("report_id"):
+        jobs = {item["observation"].get("job_id") for item in db().observations.find({
+            "run_id": run_id, "observation.tool": {"$in": sorted(FILE_TOOLS)}})} - {None}
+        result["artifacts"] = registered_artifacts(db().evidence.find({"run_id": run_id}), jobs)
     # Image references are registered with evidence; model-supplied URLs are not a registry.
     images = [image for item in db().evidence.find({"run_id": run_id}, {"image_refs": 1}) for image in item.get("image_refs", [])]
     images += [image for citation in result.get("citations", []) for image in citation.get("image_refs", [])]
@@ -227,7 +230,7 @@ def execute_one():
         lambda row: {"body_draft": "", "progress": "重试次数已用完", "error": "ATTEMPTS_EXHAUSTED"},
     )
     fence = uid()
-    run = db().runs.find_one_and_update(
+    run = admission(db(), "runs",
         {
             "$or": [{"status": "queued"}, {"status": "running", "lease_until": {"$lt": now()}}],
             "attempt": {"$lt": 3},
@@ -240,12 +243,14 @@ def execute_one():
             },
             "$inc": {"attempt": 1},
         },
-        return_document=ReturnDocument.AFTER,
+        
     )
     if not run:
         return False
     try:
         context = call("conversation", "GET", "/internal/v1/runs/" + run["_id"] + "/context").json()
+        from semibrain_agent.configuration import baseline
+        context["agent_configuration"] = run.get("agent_configuration") or baseline()
         from semibrain_agent.conversation_history import load_history
         context = load_history(run["_id"], context)
         client = BusinessClient(run["_id"], context["task_id"], context["input"]["input_revision"])
@@ -466,6 +471,8 @@ def execute_one():
         unknown = set(re.findall(r"\[(\d+)\]", body)) - valid
         if unknown:
             body = re.sub(r"\[(\d+)\]", lambda m: m[0] if m[1] in valid else "[来源待核验]", body)
+        from semibrain_agent.memory import publication
+        refs = publication(model.harness, refs)
         client.request("POST", "/internal/v1/lineage/check", json={"refs": refs})
         report = Report(
             report_id=uid(),
@@ -480,6 +487,7 @@ def execute_one():
         ).model_dump(mode="json")
 
         def finish(session):
+            publication(model.harness, refs, session=session)
             changed = db().runs.find_one_and_update(
                 {
                     "_id": run["_id"],
@@ -491,6 +499,7 @@ def execute_one():
                     "$set": {
                         "status": "partial" if unknown or partial_evidence else "succeeded",
                         "report_id": report["report_id"],
+                        "lineage_refs": refs,
                         "body_draft": "",
                         "progress": "完成",
                         "usage": model.usage,
@@ -519,7 +528,8 @@ def execute_one():
         from semibrain_agent.control import acknowledge_stopped
 
         acknowledge_stopped(run["_id"], fence)
-        error_kind = type(exc).__name__
+        memory_stopped = str(exc) in {"MEMORY_CHANGED", "MEMORY_SOURCE_UNAVAILABLE"}
+        error_kind = str(exc) if memory_stopped else type(exc).__name__
 
         def failed(session):
             row = db().runs.find_one_and_update(
@@ -533,7 +543,7 @@ def execute_one():
                     "$set": {
                         "status": "failed",
                         "body_draft": "",
-                        "progress": "本次处理未完成",
+                        "progress": "个人记忆已变更或来源失效，请重新提交问题" if memory_stopped else "本次处理未完成",
                         "error": error_kind,
                         "completed_at": now(),
                     },

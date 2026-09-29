@@ -19,6 +19,7 @@ from semibrain_agent.checkpoints import GRAPH_VERSION, STATE_VERSION, Checkpoint
 from semibrain_agent.citations import cited_markers
 from semibrain_agent.client import BusinessClient
 from semibrain_agent.context_policy import project_evidence
+from semibrain_agent.delivery import FILE_TOOLS
 from semibrain_agent.executor import ToolExecutor, extend_catalog, wire_tools
 from semibrain_agent.harness import (
     BudgetExhausted,
@@ -45,7 +46,6 @@ from semibrain_agent.provider import (
     ModelProfile,
     ModelTurn,
     ProviderAdapter,
-    profile_for,
 )
 from semibrain_agent.review_delivery import draft_blocks, retain_reviewed, reviewed_partial
 
@@ -109,8 +109,9 @@ class Investigator:
             graph_version=self.graph_version, state_version=self.state_version,
         )
         self.state = self.checkpoints.restore()
+        from semibrain_agent.configuration import profile as configured_profile
         runtime_models = {
-            role: profile_for(role).snapshot()
+            role: configured_profile(role, context.get("agent_configuration")).snapshot()
             for role in self.roles
         }
         self.bundle = run.get("version_bundle") or {
@@ -215,6 +216,8 @@ class Investigator:
     ):
         if state.get("closing"):
             final, tools = True, None
+        if self.context.get("subject_ref") and self.context.get("auth_version"):
+            self.harness.check()
         identity = f"{self.run['_id']}:{state['step']}:{role}:{suffix}"
         cached = self.db.model_turns.find_one({"_id": identity, "run_id": self.run["_id"]})
         if cached:
@@ -229,6 +232,10 @@ class Investigator:
             stable_tools,
         )
         system = system_override if system_override is not None else self.prompts.system(role)
+        from semibrain_agent.configuration import role_note
+        note = role_note(self.context, role)
+        if note and note not in system:
+            system += note
         if ARCHIVE_RULE not in system:
             system += "\n\n" + ARCHIVE_RULE
         tools = stable_tools(tools)
@@ -299,6 +306,12 @@ class Investigator:
             inputs, compressed = compact_messages(inputs)
         if compressed:
             self.notify({"progress": "正在整理上下文，证据仍可追溯"})
+        if not compaction_call and self.context.get("subject_ref") and self.context.get("auth_version"):
+            from semibrain_agent.memory import prepare
+            memory = prepare(self.harness, self.context)
+            if memory and role not in {"understanding", "reviewer"}:
+                # Never summarize or checkpoint the copied memory in working history.
+                inputs = [*inputs, memory]
         basis = token_basis(system, inputs, tools, profile.snapshot())
         baselines = self.db.model_turns.find(
             {"run_id": self.run["_id"], "token_basis.context": basis["context"],
@@ -446,7 +459,7 @@ class Investigator:
         )
         from semibrain_agent.delivery import FORMATS, requested_files
         formats = requested_files(state["intent"])
-        if formats and (set(formats) - FORMATS or "sandbox.python" not in
+        if formats and (set(formats) - FORMATS or not FILE_TOOLS &
                         {t["name"] for t in self.catalog["tools"]}):
             reason = ("当前文件工具尚不支持所需格式：" + "、".join(sorted(set(formats) - FORMATS))
                       if set(formats) - FORMATS else
@@ -969,6 +982,8 @@ class Investigator:
     def finish(self, state):
         evidence = self.executor.evidence()
         refs = list(dict.fromkeys(ref for record in evidence for ref in record["lineage_refs"]))
+        from semibrain_agent.memory import publication
+        refs = publication(self.harness, refs)
         citations = [
             {
                 key: record.get(key)
@@ -988,7 +1003,7 @@ class Investigator:
         body = state["draft"]
         from semibrain_agent.delivery import missing_files, requested_files
         current_jobs = {r["observation"].get("job_id") for r in self.db.observations.find({
-            "run_id": self.run["_id"], "observation.tool": "sandbox.python"})} - {None} if requested_files(state.get("intent", {})) else set()
+            "run_id": self.run["_id"], "observation.tool": {"$in": sorted(FILE_TOOLS)}})} - {None} if requested_files(state.get("intent", {})) else set()
         missing = missing_files(state.get("intent", {}), evidence, current_jobs)
         if missing:
             state["outcome"] = "partial"
@@ -1021,6 +1036,7 @@ class Investigator:
         self.client.request("POST", "/internal/v1/lineage/check", json={"refs": refs, "protect_for_publication": True})
 
         def commit(session):
+            publication(self.harness, refs, session=session)
             changed = self.db.runs.find_one_and_update(
                 self.harness.predicate(),
                 {

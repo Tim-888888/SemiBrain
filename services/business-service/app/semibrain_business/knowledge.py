@@ -4,12 +4,13 @@ import hashlib
 import io
 import os
 import tempfile
+import time
 from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
 
 from minio import Minio
-from pymongo import ReturnDocument
+from semibrain_common.operations import admission
 from semibrain_common.runtime import (
     canonical,
     digest,
@@ -40,7 +41,7 @@ def bucket():
     return os.getenv("SEMIBRAIN_MINIO_BUCKET", "knowledge-assets")
 
 
-def store_asset(content, media_type, owner_id, filename, *, document_id=None, job_id=None, retention_version=None):
+def store_asset(content, media_type, owner_id, filename, *, document_id=None, job_id=None, retention_version=None, report_export_id=None):
     asset_id = uid()
     content_hash = hashlib.sha256(content).hexdigest()
     key = owner_id + "/" + asset_id + "/" + content_hash
@@ -57,12 +58,13 @@ def store_asset(content, media_type, owner_id, filename, *, document_id=None, jo
         "job_id": job_id,
         "created_at": now(),
         **({"retention_version": retention_version} if retention_version else {}),
+        **({"report_export_id": report_export_id} if report_export_id else {}),
     }
     # Track managed object intent before upload so failed uploads remain reclaimable.
-    if retention_version:
+    if retention_version or report_export_id:
         db().assets.insert_one(row)
     objects().put_object(bucket(), key, io.BytesIO(content), len(content), content_type=media_type)
-    if not retention_version:
+    if not retention_version and not report_export_id:
         db().assets.insert_one(row)
     return row
 
@@ -102,6 +104,21 @@ def chunk_blocks(parsed, document_id, version):
     return build_chunk_tree(parsed, document_id, version, EMBEDDING_VERSION)[0]
 
 
+class IngestionCancellation:
+    def __init__(self, job, fence):
+        self.job, self.fence, self.checked, self.cancelled = job, fence, 0.0, False
+
+    def is_set(self):
+        if self.cancelled or time.monotonic() - self.checked < 0.5:
+            return self.cancelled
+        self.checked = time.monotonic()
+        row = db().ingestion_jobs.find_one({"_id": self.job["_id"], "fence": self.fence})
+        doc = db().documents.find_one({"_id": self.job["document_id"]})
+        self.cancelled = bool(not row or row.get("cancel_requested") or not doc
+                              or doc.get("revoked") or doc["revision"] != self.job["generation"])
+        return self.cancelled
+
+
 def process_one():
     expire_exhausted(
         db(),
@@ -112,7 +129,7 @@ def process_one():
         lambda row: {"step": "failed", "error": "ATTEMPTS_EXHAUSTED"},
     )
     fence = uid()
-    job = db().ingestion_jobs.find_one_and_update(
+    job = admission(db(), "ingestion_jobs",
         {
             "$or": [{"status": "queued"}, {"status": "running", "lease_until": {"$lt": now()}}],
             "attempt": {"$lt": 3},
@@ -126,7 +143,7 @@ def process_one():
             },
             "$inc": {"attempt": 1},
         },
-        return_document=ReturnDocument.AFTER,
+        
     )
     if not job:
         return False
@@ -138,22 +155,33 @@ def process_one():
         )
         return True
     try:
+        cancellation = IngestionCancellation(job, fence)
         asset = db().assets.find_one({"_id": job["asset_id"]})
         content = read_asset(asset)
-        with tempfile.TemporaryDirectory(prefix="semibrain-parse-") as temporary:
-            path = Path(temporary) / ("input" + Path(asset["filename"]).suffix.lower())
-            path.write_bytes(content)
-            parsed = parse_asset(
-                path,
-                allowed_root=Path(temporary),
-                profile=ParseProfile(allow_external=job["allow_external"], timeout_seconds=180),
-            )
         version = job["version"]
         from semibrain_business.chunking import CHUNKER_VERSION
         from semibrain_business.document_images import bind_images
-        image_refs = bind_images(parsed, document, job, store_asset, read_asset, db().assets)
+        if job.get("edited_snapshot_id"):
+            edited = db().assets.find_one({"_id": job["edited_snapshot_id"], "document_id": document["_id"]})
+            parsed = ParseResult.model_validate_json(read_asset(edited))
+            if job.get("operation") == "reprocess":
+                parsed.image_refs = [{**ref, "version": version} for ref in parsed.image_refs]
+            if any(ref["version"] != version for ref in parsed.image_refs):
+                raise ValueError("EDIT_IMAGE_VERSION_MISMATCH")
+            image_refs = sorted({ref["asset_id"] for ref in parsed.image_refs})
+        else:
+            with tempfile.TemporaryDirectory(prefix="semibrain-parse-") as temporary:
+                path = Path(temporary) / ("input" + Path(asset["filename"]).suffix.lower())
+                path.write_bytes(content)
+                parsed = parse_asset(
+                    path,
+                    allowed_root=Path(temporary),
+                    profile=ParseProfile(allow_external=job["allow_external"], timeout_seconds=180),
+                    cancel=cancellation,
+                )
+            image_refs = bind_images(parsed, document, job, store_asset, read_asset, db().assets)
         parsed.parser_manifest["chunker_version"] = CHUNKER_VERSION
-        manifest = parsed.model_dump(exclude={"images", "markdown", "blocks", "image_refs"})
+        manifest = parsed.model_dump(exclude={"images", "markdown", "blocks", "image_refs", "source_spans"})
         text_asset = store_asset(parsed.markdown.encode(), "text/markdown", document["owner_id"],
                                  "parsed.md", document_id=document["_id"])
         snapshot = store_asset(
@@ -224,6 +252,8 @@ def process_one():
             )
             return True
         from semibrain_business.chunk_tree import CONTEXT_VERSION, build_chunk_tree, tree_manifest
+        if cancellation.is_set():
+            raise ValueError("INGESTION_CANCELLED")
         if parsed.parser_manifest.get("chunker_version") != CHUNKER_VERSION:
             raise ValueError("CHUNKER_VERSION_CHANGED_REBUILD_REQUIRED")
         chunks, parents = build_chunk_tree(parsed, document["_id"], version, EMBEDDING_VERSION)
@@ -237,6 +267,9 @@ def process_one():
         index_chunks(document, version, chunks)
 
         def staged(session):
+            live_job = db().ingestion_jobs.find_one({"_id": job["_id"]}, session=session)
+            if live_job.get("cancel_requested"):
+                raise ValueError("INGESTION_CANCELLED")
             current = db().documents.find_one(
                 {"_id": document["_id"], "revision": job["generation"]}, session=session
             )
@@ -300,8 +333,8 @@ def process_one():
             {"_id": job["_id"], "fence": fence, "status": "running", "lease_until": {"$gt": now()}},
             {
                 "$set": {
-                    "status": "failed",
-                    "error": "INGESTION_FAILED",
+                    "status": "cancelled" if str(exc) == "INGESTION_CANCELLED" else "failed",
+                    "error": "INGESTION_CANCELLED" if str(exc) == "INGESTION_CANCELLED" else "INGESTION_FAILED",
                     "error_kind": type(exc).__name__,
                     "completed_at": now(),
                 }

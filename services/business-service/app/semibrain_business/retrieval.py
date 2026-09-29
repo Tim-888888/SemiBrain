@@ -159,6 +159,8 @@ def search(query, claim, top_k=5):
     allowed = [
         d for d in allowed if can_read(d, claim) and (not restrictions or d["_id"] in restrictions)
     ]
+    from semibrain_business.wiki_access import wiki_readable
+    allowed = [d for d in allowed if wiki_readable(d, claim)]
     if not allowed:
         return [], {"dense": 0, "sparse": 0, "authorized": 0}
     if len(allowed) > 500:
@@ -227,7 +229,7 @@ def search(query, claim, top_k=5):
                     "text": chunk["text"],
                     "location": chunk["location"],
                     "title": document["title"],
-                    "asset_id": document["raw_asset_id"],
+                    "asset_id": document.get("citation_asset_id") or document["raw_asset_id"],
                     "content_hash": chunk["content_hash"],
                     "data_origin": document["data_origin"],
                     "lineage_ref": "document:" + document["_id"] + ":" + chunk["version"],

@@ -13,6 +13,12 @@ PARENT_TEXT_LIMIT = 6000
 CONTEXT_VERSION = "section-context-v1"
 
 
+def source_locations(parsed, start, end):
+    return [{**span['location'], 'source_block_index': span['block_index'],
+             'markdown_start': max(start, span['start']), 'markdown_end': min(end, span['end'])}
+            for span in parsed.source_spans if span['start'] < end and start < span['end']]
+
+
 def sections(text):
     offsets = [0]
     for line in text.splitlines(keepends=True):
@@ -35,7 +41,8 @@ def sections(text):
 
 def build_chunk_tree(parsed, document_id, version, embedding_version):
     canonical_md = bool(parsed.image_refs) or not parsed.blocks or any(
-        b.location.get("line_start") is not None for b in parsed.blocks)
+        b.location.get("source") == "original" and b.location.get("line_start") is not None
+        for b in parsed.blocks)
     blocks = ([{"text": parsed.markdown, "kind": "markdown", "location": {}}]
               if canonical_md else [b.model_dump() for b in parsed.blocks])
     chunks, parents = [], []
@@ -58,6 +65,8 @@ def build_chunk_tree(parsed, document_id, version, embedding_version):
                       "content_hash": digest(body), "child_ids": [],
                       "location": {**base_location, "character_start": start, "character_end": end}}
             parent["image_refs"] = [r for r in parsed.image_refs if start <= r["start"] and r["end"] <= end] if canonical_md else []
+            if canonical_md and parsed.source_spans:
+                parent['location']['source_locations'] = source_locations(parsed, start, end)
             for piece in split_markdown(body):
                 a = start + piece["location"]["character_start"]
                 b = start + piece["location"]["character_end"]
@@ -74,6 +83,8 @@ def build_chunk_tree(parsed, document_id, version, embedding_version):
                 if canonical_md:
                     chunk["location"].update(line_start=text.count("\n", 0, a) + 1,
                                              line_end=text.count("\n", 0, b) + 1)
+                    if parsed.source_spans:
+                        chunk['location']['source_locations'] = source_locations(parsed, a, b)
                 chunks.append(chunk)
                 parent["child_ids"].append(identity)
             parents.append(parent)
