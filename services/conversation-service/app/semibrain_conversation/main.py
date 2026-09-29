@@ -2,6 +2,7 @@ from semibrain_common.http import create_app
 from semibrain_common.runtime import configured
 
 from semibrain_conversation import access, auth, conversations, history, resources
+from semibrain_conversation.extensions import router as extensions_router
 from semibrain_conversation.graph import router as graph_router
 from semibrain_conversation.knowledge_revisions import router as revisions_router
 from semibrain_conversation.operations import router as operations_router
@@ -12,6 +13,7 @@ app = create_app("conversation-service")
 app.include_router(operations_router)
 app.include_router(wiki_router)
 app.include_router(graph_router)
+app.include_router(extensions_router)
 app.include_router(revisions_router)
 app.include_router(auth.router)
 app.include_router(access.router)

@@ -25,6 +25,8 @@ RUN_OPS = {
     "business.query",
     "business.statistics",
     "lineage.check",
+    "mcp.discover",
+    "mcp.call",
 }
 WEB_OPS = {"web.search", "web.fetch", "web.read"}
 MULTI_OPS = {"sandbox.python", "sandbox.files", "vision.inspect"}
@@ -65,6 +67,7 @@ def make_grant(user, *, run=None, operations=None, child=None):
         "run_id": run["_id"] if run else None,
         "task_id": child["task_id"] if child else run["task_id"] if run else None,
         "child_task": bool(child),
+        "agent_role": child.get("role") if child else "single_agent",
         "trace_root_id": run.get("trace_root_id") if run else None,
         "input_revision": run["input"]["input_revision"] if run else None,
         "allowed_ops": sorted(allowed),
@@ -184,6 +187,7 @@ def execution_authorization(form: ExecutionAuthorization, request: Request):
     if not user:
         failure("EXECUTION_REVOKED", 403)
     mode = None
+    agent_role = "single_agent"
     run = None
     strategy, conversation_id = None, None
     if form.run_id:
@@ -203,6 +207,7 @@ def execution_authorization(form: ExecutionAuthorization, request: Request):
             child = call(
                 "agent", "GET", f"/internal/v1/runs/{run['_id']}/tasks/{form.task_id}/authorization"
             ).json()
+            agent_role = child["role"]
             if not child["active"] or form.operation not in child["allowed_ops"]:
                 failure("CHILD_EXECUTION_DENIED", 403)
         if (
@@ -216,6 +221,7 @@ def execution_authorization(form: ExecutionAuthorization, request: Request):
         "policy_version": POLICY,
         "mode": mode,
         "investigation_strategy": strategy,
+        "agent_role": agent_role,
         "conversation_id": conversation_id,
         "subject_id": user["_id"],
         "role": user["role"],

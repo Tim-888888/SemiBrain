@@ -30,6 +30,8 @@ from sqlalchemy.exc import DBAPIError
 from semibrain_business import warehouse as w
 from semibrain_business.analysis_tools import ANALYSIS_TOOLS, sandbox_configured, vision_configured
 from semibrain_business.cancellation import CancellationScope, QueryCancelled, watch_engine
+from semibrain_business.mcp_governance import MCP_TOOLS
+from semibrain_business.mcp_governance import allowed as mcp_allowed
 from semibrain_business.safe_fetch import WebError
 from semibrain_business.security import authorize_request, db
 from semibrain_business.sql_policy import SQLInput, execute_query
@@ -165,7 +167,7 @@ register(
     "对本运行成功查询的job_ids做均值、样本标准差、百分点差或分组比较。只读已有授权结果；同口径跨组百分点比较用same_metric；同队列首终测用first_vs_final，固定终测减首测，要求产品/阶段/程序/窗口/as_of/器件队列一致。",
 )
 
-for _name, (_schema, _function, _description) in {**WEB_TOOLS, **ANALYSIS_TOOLS}.items():
+for _name, (_schema, _function, _description) in {**WEB_TOOLS, **ANALYSIS_TOOLS, **MCP_TOOLS}.items():
     register(_name, _schema, _function, _description)
 
 
@@ -173,6 +175,7 @@ for _name, (_schema, _function, _description) in {**WEB_TOOLS, **ANALYSIS_TOOLS}
 def catalog(request: Request):
     claim = authorize_request(request, "business.catalog")
     business_authorized = "demo" in claim["resource_ids"]
+    mcp_available = bool(set(claim["allowed_ops"]) & {"mcp.discover", "mcp.call"}) and bool(mcp_allowed(claim))
     return {
         "version": "p1-tools-v8",
         "data_origin": "synthetic",
@@ -191,6 +194,7 @@ def catalog(request: Request):
             and (not name.startswith("web.") or configured())
             and (not name.startswith("sandbox.") or sandbox_configured())
             and (not name.startswith("vision.") or vision_configured())
+            and (not name.startswith("mcp.") or mcp_available)
             and (not name.startswith("business.") or business_authorized)
         ],
         "web_available": configured(),
@@ -363,7 +367,7 @@ def execute_one():
                 "lease_until": {"$lt": now()},
                 "$or": [
                     {"status": "cancelling"},
-                    {"status": "running", "tool": {"$regex": "^(web|sandbox|vision)\\."}},
+                    {"status": "running", "tool": {"$regex": "^(web|sandbox|vision|mcp)\\."}},
                 ],
             }
         )
@@ -435,7 +439,7 @@ def execute_one():
                 {
                     "status": "running",
                     "lease_until": {"$lt": now()},
-                    "tool": {"$not": {"$regex": "^(web|sandbox|vision)\\."}},
+                    "tool": {"$not": {"$regex": "^(web|sandbox|vision|mcp)\\."}},
                 },
             ],
             "attempt": {"$lt": 3},
@@ -486,7 +490,7 @@ def execute_one():
                 calculate(form, job)
                 if job["tool"] == "business.statistics"
                 else tool["function"](form, job)
-                if job["tool"].startswith(("web.", "sandbox.", "vision."))
+                if job["tool"].startswith(("web.", "sandbox.", "vision.", "mcp."))
                 else tool["function"](form)
             )
         data = json.loads(canonical(data))
@@ -516,7 +520,8 @@ def execute_one():
             source_id=job["_id"],
             source_version="web-v2" if job["tool"].startswith("web.")
             else "vision-v1" if job["tool"].startswith("vision.")
-            else "docker-v1" if job["tool"].startswith("sandbox.") else w.METRIC_VERSION,
+            else "docker-v1" if job["tool"].startswith("sandbox.")
+            else "mcp-v1" if job["tool"].startswith("mcp.") else w.METRIC_VERSION,
             content_hash=digest(canonical(data)),
             scope_ref="demo",
             kind="web" if job["tool"].startswith("web.") else "image" if job["tool"].startswith("vision.") else "query",

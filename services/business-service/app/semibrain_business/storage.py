@@ -4,6 +4,11 @@ from semibrain_business.security import db
 
 
 def initialize():
+    migrate(db(), "e-mcp-001", [
+        ("mcp_config_history", [("revision", 1)], {"unique": True}),
+        ("mcp_tool_refs", [("expires_at", 1)], {"expireAfterSeconds": 0}),
+        ("mcp_run_policies", [("expires_at", 1)], {"expireAfterSeconds": 0}),
+    ])
     migrate(db(), "e-graph-001", [
         ("graph_edges", [("document_id", 1), ("version", 1)], {}),
         ("graph_commands", [("at", -1)], {}),

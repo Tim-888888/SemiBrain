@@ -43,7 +43,7 @@ def task_authorization(run_id: str, task_id: str, request: Request):
     if not run or not task or task["role"] not in ROLE_TOOLS:
         failure("TASK_BINDING_UNAVAILABLE", 403)
     return {
-        "task_id": task_id, "run_id": run_id,
+        "task_id": task_id, "run_id": run_id, "role": task["role"],
         "active": run["status"] == "running" and task["status"] == "running"
         and not run.get("cancel_requested_at") and run.get("lease_until", now()) > now()
         and task.get("parent_fence") == run.get("fence"),

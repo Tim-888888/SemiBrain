@@ -352,7 +352,7 @@ class ToolExecutor:
                     args,
                     logical_id=logical_id,
                     guard=self.tool_guard,
-                    timeout=tool_seconds(self, 65 if name.startswith(("web.", "sandbox.", "vision.")) else 30),
+                    timeout=tool_seconds(self, 65 if name.startswith(("web.", "sandbox.", "vision.", "mcp.")) else 30),
                 )
                 observation = {
                     "status": result["status"],
@@ -365,9 +365,10 @@ class ToolExecutor:
                         logical_id, (result.get("data") or {}).get("usage")
                     )
                 if result["status"] in {"succeeded", "partial"}:
-                    if name == "web.search":
+                    if name in {"web.search", "mcp.discover"}:
                         observation["data"] = result["data"]
-                        observation = compose_search(self, observation, args, logical_id)
+                        if name == "web.search":
+                            observation = compose_search(self, observation, args, logical_id)
                         observation.update(call_ref=logical_id, tool=name, arguments=args)
                         self.harness.save_record(
                             "observations", logical_id, {"observation": observation}
@@ -384,6 +385,7 @@ class ToolExecutor:
                         if name.startswith("web.")
                         else "图片观察" if name == "vision.inspect"
                         else "沙箱分析 · " + name if name.startswith("sandbox.")
+                        else "MCP · " + result["data"].get("service_id", "") + " · " + result["data"].get("tool_name", "") if name == "mcp.call"
                         else "合成演示数据 · " + name,
                         refs=refs,
                         job_id=result["job_id"],

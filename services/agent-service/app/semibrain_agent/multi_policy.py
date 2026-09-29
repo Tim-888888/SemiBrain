@@ -25,11 +25,13 @@ ROLE_TOOLS = {
             "business.get_fdc_alerts",
             "business.query",
             "business.statistics",
+            "mcp.discover",
+            "mcp.call",
             "evidence.read",
         }
     ),
-    "rag": frozenset({"knowledge.search", "knowledge.read", "knowledge.graph", "evidence.read"}),
-    "vision": frozenset({"vision.inspect", "evidence.read"}),
+    "rag": frozenset({"knowledge.search", "knowledge.read", "knowledge.graph", "evidence.read", "mcp.discover", "mcp.call"}),
+    "vision": frozenset({"vision.inspect", "evidence.read", "mcp.discover", "mcp.call"}),
     "tool": frozenset(
         {
             "web.search",
@@ -39,6 +41,8 @@ ROLE_TOOLS = {
             "sandbox.files",
             "evidence.read",
             "business.statistics",
+            "mcp.discover",
+            "mcp.call",
         }
     ),
 }
