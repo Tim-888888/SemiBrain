@@ -25,6 +25,7 @@ from semibrain_business.security import (
     lineage_check,
     require_manager,
 )
+from semibrain_business.version_access import citation_asset, published_version
 
 router = APIRouter()
 
@@ -418,6 +419,7 @@ def activate(document_id: str, form: PublishInput, request: Request):
                     "active_version": str(form.version),
                     "last_published_version": str(form.version),
                     "raw_asset_id": version["raw_asset_id"],
+                    "citation_asset_id": citation_asset(version),
                     **({"title": wiki["title"], "data_origin": wiki["data_origin"]} if wiki else {}),
                 },
                 "$inc": {"revision": 1},
@@ -503,7 +505,7 @@ def republish(document_id: str, form: UnpublishInput, request: Request):
             {"_id": document_id, "revision": form.expected_revision, "active_version": None,
              "revoked": False},
             {"$set": {"active_version": version["_id"], "last_published_version": version["_id"],
-                      "raw_asset_id": version["raw_asset_id"]}, "$inc": {"revision": 1}},
+                      "raw_asset_id": version["raw_asset_id"], "citation_asset_id": citation_asset(version)}, "$inc": {"revision": 1}},
             session=session,
         )
         if not changed.modified_count:
@@ -619,7 +621,7 @@ def read_document(form: ReadDocumentInput, request: Request):
     return {
         "evidence": [
             {
-                "asset_id": version["raw_asset_id"],
+                "asset_id": citation_asset(version),
                 "document_id": document["_id"],
                 "version": version["_id"],
                 "title": document["title"],
@@ -702,13 +704,22 @@ class LineageInput(BaseModel):
     # A run may hold 50 evidence items with both a query and a web snapshot reference.
     refs: list[str] = Field(max_length=120)
     protect_for_publication: bool = False
+    historical: bool = False
 
 
 @router.post("/internal/v1/lineage/check")
 def check(form: LineageInput, request: Request):
     claim = authorize_request(request, "lineage.check")
-    lineage_check(form.refs, claim, protect_for_publication=form.protect_for_publication)
-    return {"valid": True}
+    seen = set()
+    lineage_check(form.refs, claim, seen, protect_for_publication=form.protect_for_publication,
+                  historical=form.historical)
+    older = []
+    if form.historical:
+        for ref in sorted(seen):
+            kind, identity, version = ref.split(":", 2)
+            if kind == "document" and authorized_document(identity, claim, active=True)["active_version"] != version:
+                older.append(ref)
+    return {"valid": True, "historical_refs": older}
 
 
 @router.get("/internal/v1/assets/{asset_id}/content")
@@ -730,12 +741,29 @@ def asset_content(asset_id: str, request: Request, preview_version: UUID | None 
         validate_wiki(document, claim, version["_id"])
         valid = {version["raw_asset_id"], version["parsed_asset_id"], *version["image_asset_ids"]}
         if asset_id not in valid:
-            failure("ASSET_VERSION_UNAVAILABLE", 403)
+            if preview_version is not None or claim.get("run_id"):
+                failure("ASSET_VERSION_UNAVAILABLE", 403)
+            candidates = db().document_versions.find({"document_id": document["_id"], "$or": [
+                {"raw_asset_id": asset_id}, {"parsed_asset_id": asset_id}, {"image_asset_ids": asset_id}
+            ]}).limit(100)
+            permitted = False
+            from fastapi import HTTPException
+            for candidate in candidates:
+                try:
+                    published_version(document["_id"], candidate["_id"], claim)
+                    permitted = True
+                    break
+                except HTTPException as exc:
+                    if exc.status_code != 403:
+                        raise
+            if not permitted:
+                failure("ASSET_VERSION_UNAVAILABLE", 403)
     elif asset.get("job_id"):
         job = db().tool_jobs.find_one({"_id": asset["job_id"], "subject_id": claim["subject_id"]})
         if not job or job["status"] not in {"succeeded", "partial"}:
             failure("ASSET_UNAVAILABLE", 403)
-        lineage_check((job.get("result", {}).get("data") or {}).get("lineage_refs", []), claim)
+        lineage_check((job.get("result", {}).get("data") or {}).get("lineage_refs", []), claim,
+                      historical=not claim.get("run_id"))
     elif asset.get("chat_upload") and asset["owner_id"] == claim["subject_id"]:
         lineage_check(asset.get("source_refs", []), claim)
     else:

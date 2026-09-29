@@ -17,6 +17,7 @@ from semibrain_contracts.graph import (
 from semibrain_business import graph_projection as projection
 from semibrain_business.retrieval import rank_candidates, search
 from semibrain_business.security import authorize_request, authorized_document, db, require_manager
+from semibrain_business.version_access import citation_asset
 
 router = APIRouter()
 PROJECTION_ERRORS = (Neo4jError, ServiceUnavailable, SessionExpired, OSError, TimeoutError)
@@ -348,7 +349,7 @@ def graph_search(form, claim):
                             **chunk,
                             "title": document["title"],
                             "data_origin": document["data_origin"],
-                            "asset_id": version["raw_asset_id"],
+                            "asset_id": citation_asset(version),
                             "content_hash": digest(chunk["text"]),
                             "lineage_ref": "document:" + document["_id"] + ":" + row["version"],
                         }

@@ -306,6 +306,8 @@ def parse_web_archive(content, extension):
         for index, part in enumerate(email.message_from_bytes(content).walk()):
             if part.get_content_type() == "text/html":
                 soup = BeautifulSoup(part.get_payload(decode=True) or b"", "lxml")
+                for unsafe in soup(["script", "style", "iframe", "object", "embed", "noscript"]):
+                    unsafe.decompose()
                 blocks.append(block(soup.get_text(" ", strip=True), "mime_html", mime_part=index,
                                     content_location=str(part.get("Content-Location", ""))))
     return output([document.content], blocks, images=document.images, **document.metadata)

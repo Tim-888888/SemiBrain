@@ -66,7 +66,9 @@ def require_manager(claim):
         failure("ADMIN_REQUIRED", 403)
 
 
-def lineage_check(refs, claim, _seen=None, *, protect_for_publication=False):
+def lineage_check(refs, claim, _seen=None, *, protect_for_publication=False, historical=False):
+    if historical and (claim.get("run_id") or protect_for_publication):
+        failure("HISTORICAL_READ_ONLY", 403)
     seen = set() if _seen is None else _seen
     for ref in refs:
         if ref in seen:
@@ -78,20 +80,23 @@ def lineage_check(refs, claim, _seen=None, *, protect_for_publication=False):
             failure("INVALID_LINEAGE", 403)
         kind, identity, version = ref.split(":", 2)
         if kind == "document":
-            # P0 conservatively denies older-version answers after replacement/unpublication.
-            authorized_document(identity, claim, active=True, version=version)
+            if historical:
+                from semibrain_business.version_access import published_version
+                published_version(identity, version, claim)
+            else:
+                authorized_document(identity, claim, active=True, version=version)
         elif kind == "query":
             job = db().tool_jobs.find_one({"_id": identity, "subject_id": claim["subject_id"]})
             if not job or job.get("result_hash") != version:
                 failure("EVIDENCE_UNAVAILABLE", 403)
             if job.get("tool", "").startswith("business.") and "demo" not in claim["resource_ids"]:
                 failure("RESOURCE_SCOPE_DENIED", 403)
-            lineage_check((job.get("result", {}).get("data") or {}).get("lineage_refs", []), claim, seen, protect_for_publication=protect_for_publication)
+            lineage_check((job.get("result", {}).get("data") or {}).get("lineage_refs", []), claim, seen, protect_for_publication=protect_for_publication, historical=historical)
         elif kind == "asset":
             asset = db().assets.find_one({"_id": identity, "owner_id": claim["subject_id"]})
             if not asset or asset.get("revoked") or asset["ref"]["content_hash"] != version:
                 failure("ASSET_UNAVAILABLE", 403)
-            lineage_check(asset.get("source_refs", []), claim, seen, protect_for_publication=protect_for_publication)
+            lineage_check(asset.get("source_refs", []), claim, seen, protect_for_publication=protect_for_publication, historical=historical)
         elif kind == "web":
             snapshot = db().web_snapshots.find_one(
                 {"_id": identity, "owner_id": claim["subject_id"], "content_hash": version}

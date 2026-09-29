@@ -229,7 +229,7 @@ def search(query, claim, top_k=5):
                     "text": chunk["text"],
                     "location": chunk["location"],
                     "title": document["title"],
-                    "asset_id": document["raw_asset_id"],
+                    "asset_id": document.get("citation_asset_id") or document["raw_asset_id"],
                     "content_hash": chunk["content_hash"],
                     "data_origin": document["data_origin"],
                     "lineage_ref": "document:" + document["_id"] + ":" + chunk["version"],

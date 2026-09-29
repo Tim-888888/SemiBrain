@@ -154,15 +154,16 @@ def introspect(form: IntrospectInput, request: Request):
     return claim
 
 
-def check_lineage(user, refs):
+def check_lineage(user, refs, *, historical=False):
     if refs:
-        business(
+        return business(
             user,
             "POST",
             "/internal/v1/lineage/check",
             operation="lineage.check",
-            json={"refs": refs},
-        )
+            json={"refs": refs, **({"historical": True} if historical else {})},
+        ).json()
+    return {}
 
 
 class ExecutionAuthorization(BaseModel):
@@ -233,7 +234,9 @@ def run_snapshot(user, run_id):
         failure("RUN_REVOKED", 403)
     # Recover from projection lag using the owning service, never its database.
     response = call("agent", "GET", "/internal/v1/runs/" + run_id).json()
-    check_lineage(user, response.get("lineage_refs", []))
+    terminal = response.get("status") in {"succeeded", "partial", "cancelled", "failed"}
+    lineage = check_lineage(user, response.get("lineage_refs", []), historical=terminal) or {}
+    response["historical_source_refs"] = lineage.get("historical_refs", [])
     response["input_scope"] = {
         key: gateway["input"].get(key)
         for key in (

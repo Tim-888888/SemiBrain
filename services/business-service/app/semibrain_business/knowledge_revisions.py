@@ -13,6 +13,7 @@ from semibrain_business.knowledge import read_asset, store_asset
 from semibrain_business.parsing import ParseResult
 from semibrain_business.publication import verify_restore
 from semibrain_business.security import authorize_request, authorized_document, db, require_manager
+from semibrain_business.version_access import citation_asset
 
 router = APIRouter()
 PENDING = ["receiving", "queued", "running", "staged"]
@@ -276,7 +277,7 @@ def rollback(document_id: str, form: Rollback, request: Request):
             failure("REPROCESS_PENDING", 409)
         if not db().documents.update_one({"_id": document_id, "revision": form.expected_revision, "revoked": False},
             {"$set": {"active_version": str(form.version), "last_published_version": str(form.version),
-                      "raw_asset_id": version["raw_asset_id"]}, "$inc": {"revision": 1}}, session=session).modified_count:
+                      "raw_asset_id": version["raw_asset_id"], "citation_asset_id": citation_asset(version)}, "$inc": {"revision": 1}}, session=session).modified_count:
             failure("REVISION_CONFLICT", 409)
         result = {"document_id": document_id, "active_version": str(form.version), "revision": form.expected_revision + 1}
         if wiki:
