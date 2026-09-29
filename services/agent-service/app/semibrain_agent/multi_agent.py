@@ -128,7 +128,7 @@ class MultiPrompts(PromptAssembler):
                 "SQLBot已有statistics，可直接完成良率查询与百分点差，不另派Tool或Python再算一遍。"
                 "聚合数值和指标比较交付evidence；dataset用于需要向下游交付行数据的任务，回答里显示表格不等于dataset。"
                 "只有确需Python、文件或外部资料工具时才安排Tool；artifact_formats仅填写用户明确要求导出的格式，未要求文件时为空。\n"
-                "delivery.kind=file必须派Tool以python导出delivery.formats中的所有格式；改写已有内容同样需要文件工具，不能只放汇总目标。"
+                "delivery.kind=file且method=tool必须派Tool导出全部格式；method=report则由服务端保存最终正文，不派MD导出子任务，规划只覆盖输入goals中的内容工作。"
                 "answer_input是已授权历史回答文件，Tool可直接读取并整理，不为纯导出追加RAG/SQL/联网调查。\n"
                 + canonical(Plan.model_json_schema())
             )

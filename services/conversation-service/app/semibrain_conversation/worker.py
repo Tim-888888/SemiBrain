@@ -18,6 +18,13 @@ def project(event, session):
     status = event["payload"].get("status")
     if status:
         updates["status"] = status
+    export = event["payload"].get("answer_export")
+    if (event["event_type"] == "report.ready" and status in {"succeeded", "partial"}
+            and isinstance(export, dict) and export.get("format") == "md"):
+        from datetime import timedelta
+        updates["answer_export"] = {"format": "md", "status": "pending",
+                                    "report_id": event["payload"]["report_id"],
+                                    "deadline_at": now() + timedelta(minutes=10), "failures": 0}
     db().gateway_runs.update_one(
         {
             "_id": run["_id"],
@@ -55,6 +62,8 @@ def tick():
     relay(db())
     consume_redrives(db(), "conversation-agent-events", project)
     consume(db(), "stream:agent", "conversation-agent-events", project)
+    from semibrain_conversation.exports import process_automatic
+    process_automatic()
     for run in (
         db()
         .gateway_runs.find(

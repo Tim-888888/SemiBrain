@@ -4,6 +4,9 @@ from semibrain_conversation.auth import db
 
 
 def initialize():
+    migrate(db(), "answer-export-001", [
+        ("gateway_runs", [("answer_export.status", 1), ("answer_export.next_at", 1)], {}),
+    ])
     migrate(db(), "conversation-context-001", [
         ("conversation_contexts", [("owner_id", 1), ("conversation_id", 1), ("covered_revision", -1), ("created_at", -1)], {}),
     ])

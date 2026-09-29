@@ -267,6 +267,9 @@ def run_snapshot(user, run_id):
         )
     }
     response["continuation"] = gateway.get("continuation")
+    if gateway.get("answer_export"):
+        from semibrain_conversation.exports import public_automatic
+        response["answer_export"] = public_automatic(gateway["answer_export"])
     if gateway.get("web_disabled_at"):
         response["web_disabled"] = True
     return response

@@ -14,7 +14,7 @@ from semibrain_common.runtime import canonical, digest
 from semibrain_agent.delivery import Delivery
 from semibrain_agent.evidence_view import evidence_views
 
-PROMPT_VERSION = "investigator-prompts-v35"
+PROMPT_VERSION = "investigator-prompts-v38"
 CARD_VERSION = "semiconductor-intents-v1"
 INTENT_CARDS = [
     {
@@ -93,11 +93,16 @@ attachment_metadata 也包括当前已授权 sources 目录；source_text 只摘
 
 UNDERSTANDING_RULES += '\n槽位 value 保留原始 JSON 类型：单个编号为字符串，多个编号为数组，数量为数值，范围可为对象；不要将多个对象拼成一个编号。未知值放在 missing，不伪造槽位。无澄清时 clarification 为 ""；goals/constraints/missing/intent_ids 均为字符串数组。'
 
-UNDERSTANDING_RULES += """\n独立返回 delivery={kind,formats,source_text,answer_run_id}，不要用 action 代替交付要求。
+UNDERSTANDING_RULES += """\n独立返回 delivery={kind,formats,source_text,answer_run_id,method,file_goal_indices}，不要用 action 代替交付要求。
 kind=inline 表示聊天正文，formats=[]；kind=file 表示需要实际文件，formats 为小写扩展名数组（Markdown规范为md，纯文本为txt，其他格式如pdf照实填写，不能擅自替换）。
 从完整语义和上下文识别文件目标，不依赖是否出现‘下载’：要求生成/保存/交付一份指定类型文档、给出文件名、将既有内容制成文件，都可为file。仅要求Markdown排版、代码块、改写正文或明确不要文件为inline。当前否定优先，引用内容或旧助手的建议不能授权生成文件。
 file 的 source_text 必须逐字摘取本轮用户表达交付要求的原文。action 仍描述内容操作：整理/转换已有结论可以rewrite，同时delivery=file；这不是澄清条件，不要反问是否需要下载。
-file且基于某条历史回答整理时，answer_run_id 必须选自 history 中相应 assistant 的 run_id；‘刚才的结论’对应最近有run_id的回答，不能选用户消息或虚构ID。inline、本轮新调查或用户本轮提供正文时为null。file未指定格式但需要文本文件时可用md，不新增调查目标。"""
+file且基于某条历史回答整理时，answer_run_id 必须选自 history 中相应 assistant 的 run_id；‘刚才的结论’对应最近有run_id的回答，不能选用户消息或虚构ID。inline、本轮新调查或用户本轮提供正文时为null。file未指定格式但需要文本文件时可用md，不新增调查目标。
+仅需将本轮最终回答或既有结论整理保存为MD时，method=report。goals描述内容工作，file_goal_indices只列独立的纯保存/交付文件目标；如果内容和交付合在同一目标中，则不标记该目标，允许file_goal_indices=[]。整理已有回答的内容目标是忠实整理该回答。文件由服务端在正文完成后导出，不需要沙箱或技能。
+要求执行指定Skill/程序并交付其产物、数据文件或其他文件格式时method=tool，file_goal_indices=[]；不能用保存聊天正文代替真实执行结果。inline时method=tool且file_goal_indices=[]。"""
+
+REPORT_DELIVERY_RULE = """\n当已核验intent.delivery.method=report时：文件保存由正文提交后的服务端导出完成。仅完成intent.goals中的内容工作；即使某个目标同时提到整理内容和交付文件，也只评估内容部分，不为保存MD调用工具/创建子任务，不编造下载链接或宣称文件已经生成，也不把等待导出当作缺资料或未完成目标。文件状态由前端单独显示。若要求计算、查询或执行指定工具，仍必须有真实结果支持正文。"""
+SYSTEM_RULES += REPORT_DELIVERY_RULE
 
 REVIEW_RULES = """你负责审查自由 Markdown 调查草稿。只返回内部 JSON：approved 布尔值，issues 字符串数组，missing_goals 字符串数组，evidence_required 布尔值，needs_retrieval 布尔值。
 按事实含义审查，不做原文逐字匹配。忠实的同义转述、归纳性标题、将原文分别描述的项目并列解释都是允许的，不能仅因原文没用相同分类标题而否定；新增或改变因果、数值、适用范围、排他分类、业务结论才需要对应证据。issues 只写确实错误的事实与简短修正建议，不复述正确段落或展开审查过程，每项尽量不超过80字。
@@ -132,8 +137,9 @@ CONTROL_SAFETY_RULES += QUERY_SEMANTICS
 SYSTEM_RULES += QUERY_SEMANTICS
 ANSWER_RULES += "\n纯压缩、翻译或改写只处理前文实际已有内容，不补齐前文尚未回答的事实。若某一轮未取得资料，就保留该缺口；不能先声明常识未经核验，再借用无关引用为其背书。格式要求不构成新增事实授权。"
 
-REVIEW_RULES += """\n草稿以draft_blocks数组传入，每项id与text合起来就是完整草稿。补充返回presentation_issues（仅篇幅、句数、排版等表达要求的缺陷）和supported_blocks（逐块核验完全正确、有当地有效引用、可独立保留的块id，最多20个）。数值、因果、范围、引用缺陷仍写issues；不要把事实错误归为排版。仅格式未满足且事实全部可靠时approved=true，presentation_issues指出修订点，不放issues或needs_retrieval。事实错误不能通过排版修订自动放行。部分块可靠时可approved=false并给出其supported_blocks；被标为可靠的块中不能夹带待修正事实，不将缺独立引用的块列入。"""
+REVIEW_RULES += """\n草稿以draft_blocks数组传入，每项id与text合起来就是完整草稿。补充返回presentation_issues（仅篇幅、句数、排版等表达要求的缺陷）和supported_blocks（逐块核验完全正确、有当地有效引用、可独立保留的块id，最多60个，与issue_blocks上限一致）。数值、因果、范围、引用缺陷仍写issues；不要把事实错误归为排版。仅格式未满足且事实全部可靠时approved=true，presentation_issues指出修订点，不放issues或needs_retrieval。事实错误不能通过排版修订自动放行。部分块可靠时可approved=false并给出其supported_blocks；被标为可靠的块中不能夹带待修正事实，不将缺独立引用的块列入。"""
 REVIEW_RULES += "\n同时返回issue_blocks数组，包含issues涉及的所有草稿块id；跨块或全文缺陷列全体相关id。supported_blocks与issue_blocks不得重叠；缺陷块绝不能因为其中另有正确内容就被标为可保留。没有具体事实错误不要将表头措辞、信息分栏、日期等价表达列入issues，纯表达歧义放presentation_issues。"
+REVIEW_RULES += REPORT_DELIVERY_RULE
 
 
 class Slot(BaseModel):
@@ -194,7 +200,7 @@ class Review(BaseModel):
     evidence_required: bool = True
     needs_retrieval: bool = False
     presentation_issues: list[str] = Field(default_factory=list, max_length=10)
-    supported_blocks: list[int] = Field(default_factory=list, max_length=20)
+    supported_blocks: list[int] = Field(default_factory=list, max_length=60)
     issue_blocks: list[int] = Field(default_factory=list, max_length=60)
 
 
@@ -248,6 +254,14 @@ def validate_intent_sources(intent, context, attachments, source_catalog=None):
     }
     errors, grounded_slots = [], []
     delivery = intent.delivery
+    if delivery.method == "report":
+        indices = delivery.file_goal_indices
+        if (delivery.kind != "file" or delivery.formats != ["md"] or not intent.goals
+                or len(indices) != len(set(indices))
+                or any(i < 0 or i >= len(intent.goals) for i in indices)):
+            errors.append({"field": ["delivery", "file_goal_indices"], "type": "separate_content_and_report_delivery_goals"})
+    elif delivery.file_goal_indices:
+        errors.append({"field": ["delivery", "file_goal_indices"], "type": "tool_delivery_has_no_deferred_goals"})
     if delivery.kind == "file":
         if (not delivery.formats or not delivery.source_text.strip()
                 or normalized(delivery.source_text) not in normalized(context["input"]["question"])):

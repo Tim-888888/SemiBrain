@@ -140,6 +140,7 @@ def snapshot(run_id: str, request: Request):
         "web_activity",
         "task_tree",
         "plan_version",
+        "answer_export",
     ):
         if key in row:
             result[key] = row[key]

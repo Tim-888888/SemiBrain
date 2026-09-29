@@ -219,8 +219,11 @@ def process_one():
             or row["renderer_version"] != VERSION
         ):
             failure("EXPORT_SOURCE_CHANGED", 409)
+        stem = "SemiBrain回答-" + row["run_id"][:8]
+        filename, media = stem + "." + row["format"], MEDIA[row["format"]]
         if row["format"] == "md":
-            raw = report["body_markdown"].encode("utf-8")
+            from semibrain_business.markdown_export import package
+            raw, filename, media = package(report, stem)
         else:
             raw = word(
                 report["body_markdown"], report.get("citations") or [], report_images(report)
@@ -230,9 +233,8 @@ def process_one():
         if len(raw) > 16 * 1024**2:
             failure("EXPORT_SIZE_LIMIT", 413)
         source(row)
-        filename = "SemiBrain回答-" + row["run_id"][:8] + "." + row["format"]
         asset = store_asset(
-            raw, MEDIA[row["format"]], row["owner_id"], filename, report_export_id=row["_id"]
+            raw, media, row["owner_id"], filename, report_export_id=row["_id"]
         )
         db().assets.update_one(
             {"_id": asset["_id"]},

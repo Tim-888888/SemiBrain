@@ -30,9 +30,35 @@ class Delivery(BaseModel):
     formats: list[str] = Field(default_factory=list, max_length=5)
     source_text: str = Field(default="", max_length=1500)
     answer_run_id: str | None = Field(default=None, max_length=64)
+    method: Literal["tool", "report"] = Field(default="tool", description="report仅将最终审核正文保存为MD；指定技能/程序产物、数据文件等用tool。")
+    file_goal_indices: list[int] = Field(default_factory=list, max_length=12,
+        description="report时标出仅保存文件的goals索引，不能包含知识、计算、执行技能等内容目标。")
+
+
+def report_format(intent):
+    delivery = intent.get("delivery", {})
+    if (delivery.get("kind") == "file" and delivery.get("method") == "report"
+            and delivery.get("formats") == ["md"]):
+        return "md"
+    return None
+
+
+def execution_intent(intent):
+    """Separate a deterministic delivery obligation without discarding the user's goals."""
+    value = intent.model_dump()
+    if report_format(value):
+        indices = set(value["delivery"]["file_goal_indices"])
+        value["original_goals"] = value["goals"]
+        content = [goal for i, goal in enumerate(value["goals"]) if i not in indices]
+        # Models may merge editing and delivery into one goal. Never discard all
+        # content or reject an otherwise grounded file request for this layout.
+        value["goals"] = content or value["goals"]
+    return value
 
 
 def requested_files(intent):
+    if report_format(intent):
+        return []  # Persisted post-answer export, not an expert/tool artifact.
     delivery = intent.get("delivery", {})
     return delivery.get("formats", []) if delivery.get("kind") == "file" else []
 
@@ -50,6 +76,8 @@ def answer_input(intent, context):
 
 
 def validate_delivery_plan(plan, intent):
+    if report_format(intent) and any("md" in task.deliverables.artifact_formats for task in plan.tasks):
+        raise ValueError("REPORT_EXPORT_IS_SERVER_MANAGED:只安排内容目标，不委派保存MD；计算或指定工具仍须执行")
     expected = set(requested_files(intent))
     produced = {f for task in plan.tasks for f in task.deliverables.artifact_formats}
     if expected - produced:
