@@ -18,7 +18,7 @@ def save_draft(form, claim):
     # Wiki text never performs remote image fetching. Embedded images require
     # registered, version-bound assets through the ordinary knowledge uploader.
     from semibrain_business.document_images import image_spans
-    if image_spans(form.body_markdown):
+    if any(image_spans(form.body_markdown)):
         failure("WIKI_IMAGES_REQUIRE_DOCUMENT_UPLOAD", 400)
     if form.valid_until and form.valid_until <= now():
         failure("WIKI_EXPIRED", 400)

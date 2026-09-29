@@ -90,6 +90,17 @@ def test_draft_cannot_fetch_arbitrary_remote_images(monkeypatch):
     store.assert_not_called()
 
 
+@pytest.mark.parametrize("body", ["Plain supported Markdown body.", "```md\n![example](https://example.com/a.png)\n```"])
+def test_text_and_image_syntax_in_code_reach_source_authorization(monkeypatch, body):
+    form = WikiDraft(request_id=uuid4(), title="Test", body_markdown=body,
+                     applicability="Test", source_refs=[{"document_id": uuid4(), "version": uuid4()}])
+    authorization = Mock(side_effect=ValueError("SOURCE_CHECK_REACHED"))
+    monkeypatch.setattr(wiki, "authorized_document", authorization)
+    with pytest.raises(ValueError, match="SOURCE_CHECK_REACHED"):
+        wiki.save_draft(form, {"role": "admin"})
+    assert authorization.call_count == 1
+
+
 def test_regular_user_cannot_mutate_or_preview_wiki_drafts():
     app.dependency_overrides[current_user] = lambda: {"_id": str(uuid4()), "role": "user"}
     try:
