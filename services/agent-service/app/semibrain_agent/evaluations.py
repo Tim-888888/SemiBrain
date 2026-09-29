@@ -102,9 +102,13 @@ def save(form: EvaluationCommand, request: Request):
         revision = old["revision"] if old else 0
         if revision != form.edit.expected_revision:
             failure("REVISION_CONFLICT", 409)
+        reviewed_at = now()
+        # BSON persists milliseconds. Return that same precision on first write
+        # so a retried command is byte-for-byte equivalent after a DB round trip.
+        reviewed_at = reviewed_at.replace(microsecond=reviewed_at.microsecond // 1000 * 1000)
         row = {"_id": identity, "actor_id": owner, "run_id": run_id, "revision": revision + 1,
             **form.edit.model_dump(mode="json", exclude={"request_id", "expected_revision", "run_id"}),
-            "predicted_action": run.get("understanding", {}).get("action"), "reviewed_at": now()}
+            "predicted_action": run.get("understanding", {}).get("action"), "reviewed_at": reviewed_at}
         db().evaluations.replace_one({"_id": identity}, row, upsert=True, session=session)
         db().evaluation_commands.insert_one({"_id": str(form.edit.request_id), "payload_hash": hashed, "result": row,
             "actor_id": owner, "created_at": now()}, session=session)

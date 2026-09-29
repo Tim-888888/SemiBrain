@@ -137,3 +137,31 @@ def test_evaluation_rejects_other_owner_run(monkeypatch):
     assert error.value.detail["code"] == "EVALUATION_RUN_UNAVAILABLE"
     assert database.runs.find_one.call_args.args[0]["command.subject_ref"] == str(form.actor_id)
     database.evaluations.replace_one.assert_not_called()
+
+
+def test_authorized_pending_run_diagnostics_do_not_report_permission_denied(monkeypatch):
+    from semibrain_agent import diagnostics
+    database = SimpleNamespace(runs=Mock())
+    database.runs.find_one.return_value = None
+    monkeypatch.setattr(diagnostics, "db", lambda: database)
+    monkeypatch.setattr(diagnostics, "internal_identity", lambda *args: None)
+    result = diagnostics.diagnostics("pending", None)
+    assert result["status"] == "dispatching" and result["items"] == []
+    assert result["trace"]["url"] is None
+
+
+def test_evaluation_replay_is_identical_after_bson_precision_roundtrip(monkeypatch):
+    from bson import BSON
+    from bson.codec_options import CodecOptions
+    database = SimpleNamespace(runs=Mock(), evaluations=Mock(), evaluation_commands=Mock())
+    database.evaluation_commands.find_one.return_value = None
+    database.evaluations.find_one.return_value = None
+    database.runs.find_one.return_value = {"status": "succeeded", "understanding": {"action": "greeting"}}
+    monkeypatch.setattr(evaluations, "db", lambda: database)
+    monkeypatch.setattr(evaluations, "internal_identity", lambda *args: None)
+    monkeypatch.setattr(evaluations, "transaction", lambda operation: operation(None))
+    form = EvaluationCommand(actor_id=uuid4(), edit=EvaluationEdit(request_id=uuid4(), run_id=uuid4(), expected_revision=0, outcome="complete", grounding="not_checked"))
+    first = evaluations.save(form, None)
+    receipt = database.evaluation_commands.insert_one.call_args.args[0]
+    database.evaluation_commands.find_one.return_value = BSON.encode(receipt).decode(codec_options=CodecOptions(tz_aware=True))
+    assert evaluations.save(form, None) == first

@@ -5,7 +5,7 @@ import re
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Request
-from semibrain_common.runtime import digest, failure, internal_identity
+from semibrain_common.runtime import digest, internal_identity
 
 from semibrain_agent.runs import db
 
@@ -48,7 +48,12 @@ def diagnostics(run_id: str, request: Request):
     internal_identity(request, {"conversation"})
     run = db().runs.find_one({"_id": run_id})
     if not run:
-        failure("RUN_NOT_FOUND", 404)
+        # The gateway has already authorized its durable run binding. Outbox
+        # delivery can lag admission; absent execution data is not an ACL denial.
+        return {"run_id": run_id, "status": "dispatching", "items": [],
+                "counts": {"model": 0, "tool": 0}, "truncated": False,
+                "trace": {"enabled": False, "url": None, "delivery_status": "not_started"},
+                "currency_cost": None, "configuration_version": None, "read_only": True}
     items, counts = [], {}
     for name, kind in (("model_calls", "model"), ("tool_calls", "tool")):
         collection = db()[name]
