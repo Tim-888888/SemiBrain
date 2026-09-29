@@ -37,15 +37,27 @@ def test_deferred_delivery_preserves_original_goals_and_content_obligation():
 
 
 @pytest.mark.parametrize("change", [
-    {"file_goal_indices": []}, {"file_goal_indices": [0, 1]}, {"file_goal_indices": [-1]},
+    {"file_goal_indices": [-1]},
     {"file_goal_indices": [5]}, {"file_goal_indices": [1, 1]}, {"kind": "inline"},
     {"formats": ["csv"]}, {"formats": ["md", "png"]}, {"method": "tool"},
 ])
-def test_bad_goal_partition_cannot_silently_remove_all_content(change):
+def test_bad_delivery_shape_is_rejected(change):
     value = intent().model_dump()
     value["delivery"].update(change)
     with pytest.raises(IntentSourceError):
         validate_intent_sources(Intent.model_validate(value), {"input": {"question": "save as a file"}}, [])
+
+
+@pytest.mark.parametrize("indices", [[], [0]])
+def test_merged_content_and_file_goal_is_not_rejected_or_discarded(indices):
+    value = intent().model_dump()
+    value["goals"] = ["Summarize the previous comparison and deliver it as Markdown"]
+    value["delivery"]["file_goal_indices"] = indices
+    checked = validate_intent_sources(Intent.model_validate(value), {"input": {"question": "save as a file"}}, [])
+    runtime = execution_intent(checked)
+    assert runtime["goals"] == value["goals"]
+    assert runtime["original_goals"] == value["goals"]
+    assert not requested_files(runtime)
 
 
 def test_legacy_and_explicit_program_outputs_still_need_tool_artifacts():

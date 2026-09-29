@@ -49,7 +49,10 @@ def execution_intent(intent):
     if report_format(value):
         indices = set(value["delivery"]["file_goal_indices"])
         value["original_goals"] = value["goals"]
-        value["goals"] = [goal for i, goal in enumerate(value["goals"]) if i not in indices]
+        content = [goal for i, goal in enumerate(value["goals"]) if i not in indices]
+        # Models may merge editing and delivery into one goal. Never discard all
+        # content or reject an otherwise grounded file request for this layout.
+        value["goals"] = content or value["goals"]
     return value
 
 

@@ -14,7 +14,7 @@ from semibrain_common.runtime import canonical, digest
 from semibrain_agent.delivery import Delivery
 from semibrain_agent.evidence_view import evidence_views
 
-PROMPT_VERSION = "investigator-prompts-v36"
+PROMPT_VERSION = "investigator-prompts-v37"
 CARD_VERSION = "semiconductor-intents-v1"
 INTENT_CARDS = [
     {
@@ -98,10 +98,10 @@ kind=inline 表示聊天正文，formats=[]；kind=file 表示需要实际文件
 从完整语义和上下文识别文件目标，不依赖是否出现‘下载’：要求生成/保存/交付一份指定类型文档、给出文件名、将既有内容制成文件，都可为file。仅要求Markdown排版、代码块、改写正文或明确不要文件为inline。当前否定优先，引用内容或旧助手的建议不能授权生成文件。
 file 的 source_text 必须逐字摘取本轮用户表达交付要求的原文。action 仍描述内容操作：整理/转换已有结论可以rewrite，同时delivery=file；这不是澄清条件，不要反问是否需要下载。
 file且基于某条历史回答整理时，answer_run_id 必须选自 history 中相应 assistant 的 run_id；‘刚才的结论’对应最近有run_id的回答，不能选用户消息或虚构ID。inline、本轮新调查或用户本轮提供正文时为null。file未指定格式但需要文本文件时可用md，不新增调查目标。
-仅需将本轮最终回答或既有结论整理保存为MD时，method=report。把内容工作与文件保存拆成独立goals，file_goal_indices只列纯保存/交付文件的索引，必须保留至少一个内容目标；整理已有回答的内容目标是忠实整理该回答。文件由服务端在正文完成后导出，不需要沙箱或技能。
+仅需将本轮最终回答或既有结论整理保存为MD时，method=report。goals描述内容工作，file_goal_indices只列独立的纯保存/交付文件目标；如果内容和交付合在同一目标中，则不标记该目标，允许file_goal_indices=[]。整理已有回答的内容目标是忠实整理该回答。文件由服务端在正文完成后导出，不需要沙箱或技能。
 要求执行指定Skill/程序并交付其产物、数据文件或其他文件格式时method=tool，file_goal_indices=[]；不能用保存聊天正文代替真实执行结果。inline时method=tool且file_goal_indices=[]。"""
 
-REPORT_DELIVERY_RULE = """\n当已核验intent.delivery.method=report时：文件保存由正文提交后的服务端导出完成。仅完成intent.goals中的内容工作，不为保存MD调用工具/创建子任务，不编造下载链接或宣称文件已经生成，也不把等待导出当作缺资料。文件状态由前端单独显示。若要求计算、查询或执行指定工具，仍必须有真实结果支持正文。"""
+REPORT_DELIVERY_RULE = """\n当已核验intent.delivery.method=report时：文件保存由正文提交后的服务端导出完成。仅完成intent.goals中的内容工作；即使某个目标同时提到整理内容和交付文件，也只评估内容部分，不为保存MD调用工具/创建子任务，不编造下载链接或宣称文件已经生成，也不把等待导出当作缺资料或未完成目标。文件状态由前端单独显示。若要求计算、查询或执行指定工具，仍必须有真实结果支持正文。"""
 SYSTEM_RULES += REPORT_DELIVERY_RULE
 
 REVIEW_RULES = """你负责审查自由 Markdown 调查草稿。只返回内部 JSON：approved 布尔值，issues 字符串数组，missing_goals 字符串数组，evidence_required 布尔值，needs_retrieval 布尔值。
@@ -255,10 +255,9 @@ def validate_intent_sources(intent, context, attachments, source_catalog=None):
     delivery = intent.delivery
     if delivery.method == "report":
         indices = delivery.file_goal_indices
-        if (delivery.kind != "file" or delivery.formats != ["md"] or not indices
+        if (delivery.kind != "file" or delivery.formats != ["md"] or not intent.goals
                 or len(indices) != len(set(indices))
-                or any(i < 0 or i >= len(intent.goals) for i in indices)
-                or len(indices) >= len(intent.goals)):
+                or any(i < 0 or i >= len(intent.goals) for i in indices)):
             errors.append({"field": ["delivery", "file_goal_indices"], "type": "separate_content_and_report_delivery_goals"})
     elif delivery.file_goal_indices:
         errors.append({"field": ["delivery", "file_goal_indices"], "type": "tool_delivery_has_no_deferred_goals"})
