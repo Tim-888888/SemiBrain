@@ -64,12 +64,15 @@ def private_json(path, value):
     path.chmod(0o600)
 
 
-def source_paths(containers):
+def source_paths(containers, volume_root=None):
     paths = set()
     for container in containers:
         for mount in container["Mounts"]:
             source = Path(mount["Source"]).resolve()
-            if mount["Type"] != "bind" or not any(source.is_relative_to(root) for root in (Path('/data/semibrain'), Path('/srv/semibrain'))):
+            supported_bind = mount['Type'] == 'bind' and any(source.is_relative_to(root) for root in (Path('/data/semibrain'), Path('/srv/semibrain')))
+            supported_volume = (mount['Type'] == 'volume' and volume_root is not None
+                and source.is_relative_to(volume_root) and source.name == '_data')
+            if not (supported_bind or supported_volume):
                 raise RuntimeError("Unsupported backup mount; inspect it before proceeding")
             paths.add(source)
     # Avoid archiving a file twice when a parent directory is already included.
@@ -113,7 +116,8 @@ def main():
         raise RuntimeError('All current services must be running before rehearsal')
     live_exec(prefix, 'agent', "from semibrain_common.runtime import database;assert not database('agent').runs.count_documents({'status':{'$in':['dispatching','queued','running','retrying','waiting_input','cancelling']}})")
     live_exec(prefix, 'business', "from semibrain_common.runtime import database;b=database('business');assert not sum(b[c].count_documents({'status':{'$in':['queued','running','receiving','cancelling']}}) for c in ['ingestion_jobs','tool_jobs','report_exports'])")
-    sources = source_paths(storage.values())
+    volume_root = Path(run(['docker','info','--format','{{.DockerRootDir}}']).strip())/'volumes'
+    sources = source_paths(storage.values(), volume_root)
     private_json(output/'deployment.private.json', {'storage': storage, 'applications': apps})
     snapshot_at = None
     started = time.monotonic()

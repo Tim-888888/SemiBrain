@@ -13,12 +13,13 @@ import json
 from fastapi import HTTPException
 from semibrain_business import knowledge, retrieval, graph
 from semibrain_business.security import db, authorized_document
-from semibrain_common.runtime import redis
+from semibrain_common.runtime import redis, uid
 b=db();redis().ping()
 document=None
 for row in b.documents.find({'active_version':{'$ne':None},'revoked':False,'visibility':'demo','kind':{'$ne':'wiki'}}):
  chunks=list(b.chunks.find({'document_id':row['_id'],'version':row['active_version']}))
- if 1 <= len(chunks) <= 8:document=row;break
+ version=b.document_versions.find_one({'_id':row['active_version']})
+ if 1 <= len(chunks) <= 8 and version.get('snapshot_asset_id') and not version.get('image_refs'):document=row;break
 assert document,'No small published document available'
 claim={'subject_id':document['owner_id'],'role':'admin','resource_ids':['demo'],'document_ids':[document['_id']]}
 authorized_document(document['_id'],claim,active=True,version=document['active_version'])
@@ -48,10 +49,31 @@ retrieval.index_chunks(document,document['active_version'],chunks)
 assert len(v.get(retrieval.COLLECTION,ids=ids))==len(ids)
 evidence,trace=retrieval.search(chunks[0]['text'][:150],claim,top_k=3)
 assert evidence and all(r['document_id']==document['_id'] for r in evidence)
+# Inject one vector-write failure only in this isolated process and a new job.
+# The same worker persistence path must preserve the old active version.
+from pymongo import ReturnDocument
+job_id,new_version=uid(),uid()
+b.ingestion_jobs.insert_one({'_id':job_id,'document_id':document['_id'],'asset_id':document['raw_asset_id'],
+ 'edited_snapshot_id':version['snapshot_asset_id'],'version':new_version,'status':'queued','attempt':0,
+ 'generation':document['revision'],'allow_external':False})
+def own_admission(database,collection,query,update):
+ return database[collection].find_one_and_update({'$and':[query,{'_id':job_id}]},update,return_document=ReturnDocument.AFTER)
+def fail_index(*args):raise RuntimeError('RECOVERY_PROBE_VECTOR_OUTAGE')
+original_admission,original_index=knowledge.admission,knowledge.index_chunks
+try:
+ knowledge.admission,knowledge.index_chunks=own_admission,fail_index
+ knowledge.process_one()
+finally:knowledge.admission,knowledge.index_chunks=original_admission,original_index
+assert b.ingestion_jobs.find_one({'_id':job_id})['status']=='failed'
+assert b.documents.find_one({'_id':document['_id']})['active_version']==document['active_version']
+assert not b.document_versions.find_one({'_id':new_version}).get('projection_verified')
+old_evidence,_=retrieval.search(chunks[0]['text'][:150],claim,top_k=3)
+assert old_evidence and all(r['version']==document['active_version'] for r in old_evidence)
 rebuilt=graph.rebuild_projection()
 print(json.dumps({'assets':checked,'private_acl_denied':True,'redis_authenticated':True,
  'vector_rebuilt_document':document['_id'],'vector_rebuilt_chunks':len(chunks),'retrieval_count':len(evidence),
- 'graph_rebuild':rebuilt,'scope':'full cold snapshot restore, one document re-embedded, full graph topology rebuilt'}))
+ 'graph_rebuild':rebuilt,'vector_failure_preserves_old_version':True,
+ 'scope':'full cold snapshot restore, one document re-embedded, full graph topology rebuilt'}))
 '''
 
 
