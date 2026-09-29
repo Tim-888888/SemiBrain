@@ -12,7 +12,8 @@ from semibrain_agent.delivery import execution_intent, requested_files, validate
 from semibrain_agent.investigator import Investigator
 from semibrain_agent.multi_agent import MultiAgent
 from semibrain_agent.multi_policy import Plan
-from semibrain_agent.prompts import Intent, IntentSourceError, validate_intent_sources
+from semibrain_agent.prompts import Intent, IntentSourceError, Review, validate_intent_sources
+from semibrain_agent.review_delivery import retain_reviewed, reviewed_partial
 from semibrain_common.runtime import now
 from semibrain_conversation import exports
 
@@ -169,3 +170,15 @@ def test_single_and_multi_publish_body_and_delivery_in_one_transaction(monkeypat
     assert agent.db.runs.find_one_and_update.call_args.args[1]["$set"]["answer_export"] == {"format": "md", "status": "queued"}
     assert event.call_args.args[4]["answer_export"] == {"format": "md", "status": "queued"}
     assert event.call_args.args[5] == "atomic"
+
+
+def test_long_markdown_keeps_verified_blocks_without_publishing_rejected_content():
+    draft = "\n\n".join(f"Verified block {i} [1]." for i in range(35))
+    verdict = Review.model_validate({"approved": False, "issues": ["One unsupported claim"],
+        "issue_blocks": [25], "supported_blocks": list(range(35))})
+    state = {"draft": draft}
+    retain_reviewed(state, verdict, [{"marker": "1"}])
+    result = reviewed_partial(state, "One claim was omitted")
+    assert "Verified block 34 [1]." in result
+    assert "Verified block 25 [1]." not in result
+    assert len(state["reviewed_blocks"]) == 34
