@@ -4,6 +4,11 @@ from semibrain_business.security import db
 
 
 def initialize():
+    migrate(db(), "e-skills-001", [
+        ("skill_versions", [("skill_id", 1), ("created_at", -1)], {}),
+        ("skill_run_pins", [("expires_at", 1)], {"expireAfterSeconds": 0}),
+        ("skill_loads", [("expires_at", 1)], {"expireAfterSeconds": 0}),
+    ])
     migrate(db(), "e-mcp-001", [
         ("mcp_config_history", [("revision", 1)], {"unique": True}),
         ("mcp_tool_refs", [("expires_at", 1)], {"expireAfterSeconds": 0}),

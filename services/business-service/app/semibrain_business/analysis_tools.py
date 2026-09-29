@@ -27,7 +27,7 @@ def current(job):
     state = db().tool_jobs.find_one({"_id": job["_id"], "fence": job["fence"]})
     if not state or state.get("cancel_requested_at") or state.get("lease_until", now()) <= now():
         raise WebError("EXECUTION_CANCELLED")
-    return call(
+    claim = call(
         "conversation",
         "POST",
         "/internal/v1/authorization/check",
@@ -39,6 +39,10 @@ def current(job):
             "operation": job["tool"],
         },
     ).json()
+    if job["tool"] == "skill.execute":
+        from semibrain_business.skills import check_job
+        check_job(job, claim)
+    return claim
 
 
 def asset_access(asset, claim, *, image=False):
@@ -191,7 +195,7 @@ def sandbox_files(form, job):
     }
 
 
-def run_python(form, job):
+def run_python(form, job, *, extra_refs=()):
     claim = current(job)
     identity = session_id(claim)
     db().sandbox_instances.update_one(
@@ -227,7 +231,7 @@ def run_python(form, job):
         raise WebError("SANDBOX_BUSY")
     try:
         validate_session(row, claim)
-        files, refs, origins = {}, set(row.get("lineage_refs", [])), set()
+        files, refs, origins = {}, set(row.get("lineage_refs", [])) | set(extra_refs), set()
         previous = {}
         for entry in row.get("files", []):
             asset = db().assets.find_one({"_id": entry["asset_id"]})
@@ -270,7 +274,7 @@ def run_python(form, job):
             answer = call("conversation", "POST", "/internal/v1/sandbox/answer-input", json={
                 "subject_id": job["subject_id"], "auth_version": job["auth_version"],
                 "run_id": job["run_id"], "task_id": job["task_id"],
-                "operation": "sandbox.python", "answer_run_id": str(form.answer_run_id),
+                "operation": job["tool"], "answer_run_id": str(form.answer_run_id),
             }).json()
             content = answer["body_markdown"]
             if digest(content) != answer["content_hash"]:

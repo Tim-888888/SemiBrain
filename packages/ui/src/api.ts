@@ -10,6 +10,11 @@ export type Message = Partial<Run> & { id: string; role: string; text?: string; 
 let csrf = ''
 export function setCsrf(value: string) { csrf = value }
 const labels: Record<string, string> = {
+  SKILL_REVIEW_REQUIRED: '发布前请确认审核并填写审核说明。',
+  SKILL_UNAVAILABLE: '技能已停用、权限变化或版本不适用于本轮。',
+  SKILL_SCRIPT_SYNTAX: 'Python 脚本存在语法错误，请检查后再保存。',
+  SKILL_INSTRUCTIONS_TOO_LARGE: '技能说明和参数定义过长，请缩短后保存。',
+  SKILL_DEPENDENCY_UNKNOWN: '依赖工具中包含未登记名称，请核对工具目录。',
   CHUNK_REBUILD_REQUIRED: '此旧版本缺少可靠的片段坐标，请先重新处理并发布后再修订。',
   CHUNK_COORDINATE_CONFLICT: '片段与原文坐标不一致，请重新处理文档后再编辑。',
   CHUNK_REVISION_CONFLICT: '片段已经变化，请刷新版本后重试。',

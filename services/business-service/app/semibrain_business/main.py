@@ -8,6 +8,7 @@ from semibrain_business import (
     knowledge_revisions,
     mcp_governance,
     search_governance,
+    skills,
     tools,
     wiki,
 )
@@ -24,6 +25,7 @@ app.include_router(search_governance.router)
 app.include_router(wiki.router)
 app.include_router(graph.router)
 app.include_router(mcp_governance.router)
+app.include_router(skills.router)
 
 
 @app.on_event("startup")

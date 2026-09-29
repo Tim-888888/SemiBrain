@@ -99,6 +99,13 @@ def lineage_check(refs, claim, _seen=None, *, protect_for_publication=False, his
                 except WebError:
                     failure("MCP_SOURCE_UNAVAILABLE", 403)
             lineage_check((job.get("result", {}).get("data") or {}).get("lineage_refs", []), claim, seen, protect_for_publication=protect_for_publication, historical=historical)
+        elif kind == "skill":
+            from semibrain_business.safe_fetch import WebError
+            from semibrain_business.skills import authorize_version
+            try:
+                authorize_version(identity, version, claim)
+            except WebError:
+                failure("SKILL_SOURCE_UNAVAILABLE", 403)
         elif kind == "asset":
             asset = db().assets.find_one({"_id": identity, "owner_id": claim["subject_id"]})
             if not asset or asset.get("revoked") or asset["ref"]["content_hash"] != version:

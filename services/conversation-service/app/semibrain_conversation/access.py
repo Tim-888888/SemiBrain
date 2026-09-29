@@ -27,6 +27,9 @@ RUN_OPS = {
     "lineage.check",
     "mcp.discover",
     "mcp.call",
+    "skill.list",
+    "skill.load",
+    "skill.execute",
 }
 WEB_OPS = {"web.search", "web.fetch", "web.read"}
 MULTI_OPS = {"sandbox.python", "sandbox.files", "vision.inspect"}
@@ -67,6 +70,7 @@ def make_grant(user, *, run=None, operations=None, child=None):
         "run_id": run["_id"] if run else None,
         "task_id": child["task_id"] if child else run["task_id"] if run else None,
         "child_task": bool(child),
+        "investigation_strategy": run["input"].get("investigation_strategy") if run else None,
         "agent_role": child.get("role") if child else "single_agent",
         "trace_root_id": run.get("trace_root_id") if run else None,
         "input_revision": run["input"]["input_revision"] if run else None,
@@ -289,7 +293,7 @@ class AnswerInput(ExecutionAuthorization):
 def sandbox_answer_input(form: AnswerInput, request: Request):
     # The business service owns sandbox files; the gateway owns conversation access.
     # A model-supplied ID alone is never authority to copy another answer.
-    if not form.run_id or not form.task_id or form.operation != "sandbox.python":
+    if not form.run_id or not form.task_id or form.operation not in {"sandbox.python", "skill.execute"}:
         failure("ANSWER_INPUT_BINDING_REQUIRED", 403)
     execution_authorization(ExecutionAuthorization.model_validate(
         form.model_dump(exclude={"answer_run_id"})), request)
