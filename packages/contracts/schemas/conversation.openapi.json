@@ -21,6 +21,159 @@
         }
       }
     },
+    "/admin/v1/search": {
+      "get": {
+        "summary": "Search Settings",
+        "operationId": "search_settings_admin_v1_search_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Update Search",
+        "operationId": "update_search_admin_v1_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchEdit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/search/probe": {
+      "post": {
+        "summary": "Probe Search",
+        "operationId": "probe_search_admin_v1_search_probe_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchProbe"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/operations/queues": {
+      "get": {
+        "summary": "Queues",
+        "operationId": "queues_admin_v1_operations_queues_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/operations/{service}/drain": {
+      "post": {
+        "summary": "Drain",
+        "operationId": "drain_admin_v1_operations__service__drain_post",
+        "parameters": [
+          {
+            "name": "service",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "agent",
+                "business"
+              ],
+              "type": "string",
+              "title": "Service"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DrainEdit"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/auth/captcha": {
       "get": {
         "summary": "Captcha",
@@ -408,8 +561,230 @@
               "type": "string",
               "title": "Run Id"
             }
+          },
+          {
+            "name": "include_history",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "title": "Include History"
+            }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/sandbox/answer-input": {
+      "post": {
+        "summary": "Sandbox Answer Input",
+        "operationId": "sandbox_answer_input_internal_v1_sandbox_answer_input_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswerInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/runs/{run_id}/history": {
+      "get": {
+        "summary": "History Page",
+        "operationId": "history_page_internal_v1_runs__run_id__history_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "After"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/runs/{run_id}/history/checkpoint": {
+      "get": {
+        "summary": "Checkpoint",
+        "operationId": "checkpoint_internal_v1_runs__run_id__history_checkpoint_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Save Checkpoint",
+        "operationId": "save_checkpoint_internal_v1_runs__run_id__history_checkpoint_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckpointInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/runs/{run_id}/history/validate": {
+      "post": {
+        "summary": "Validate",
+        "operationId": "validate_internal_v1_runs__run_id__history_validate_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Validation"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -817,6 +1192,44 @@
         }
       }
     },
+    "/admin/v1/runs/{run_id}/diagnostics": {
+      "get": {
+        "summary": "Run Diagnostics",
+        "operationId": "run_diagnostics_admin_v1_runs__run_id__diagnostics_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/v1/runs/comparison": {
       "get": {
         "summary": "Compare Recent",
@@ -1093,6 +1506,102 @@
         }
       }
     },
+    "/admin/v1/knowledge/documents/{document_id}/reprocess": {
+      "post": {
+        "summary": "Reprocess",
+        "operationId": "reprocess_admin_v1_knowledge_documents__document_id__reprocess_post",
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Reprocess"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/knowledge/documents/{document_id}/republish": {
+      "post": {
+        "summary": "Republish",
+        "operationId": "republish_admin_v1_knowledge_documents__document_id__republish_post",
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Revision"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/v1/knowledge/documents/{document_id}/unpublish": {
       "post": {
         "summary": "Unpublish",
@@ -1154,6 +1663,23 @@
               "type": "string",
               "format": "uuid",
               "title": "Asset Id"
+            }
+          },
+          {
+            "name": "preview_version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Preview Version"
             }
           }
         ],
@@ -1281,6 +1807,65 @@
   },
   "components": {
     "schemas": {
+      "AnswerInput": {
+        "properties": {
+          "subject_id": {
+            "type": "string",
+            "title": "Subject Id"
+          },
+          "auth_version": {
+            "type": "integer",
+            "title": "Auth Version"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "operation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation"
+          },
+          "answer_run_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Answer Run Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "subject_id",
+          "auth_version",
+          "answer_run_id"
+        ],
+        "title": "AnswerInput"
+      },
       "AuthInput": {
         "properties": {
           "username": {
@@ -1357,6 +1942,20 @@
             "type": "integer",
             "title": "Expected Revision",
             "default": 0
+          },
+          "images": {
+            "items": {
+              "type": "string",
+              "contentMediaType": "application/octet-stream"
+            },
+            "type": "array",
+            "title": "Images",
+            "default": []
+          },
+          "image_paths": {
+            "type": "string",
+            "title": "Image Paths",
+            "default": "[]"
           }
         },
         "type": "object",
@@ -1395,6 +1994,63 @@
           "file"
         ],
         "title": "Body_upload_image_v1_attachments_images_post"
+      },
+      "CheckpointInput": {
+        "properties": {
+          "input_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Input Revision"
+          },
+          "covered_hashes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 10000,
+            "minItems": 1,
+            "title": "Covered Hashes"
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 64000,
+            "minLength": 1,
+            "title": "Summary"
+          },
+          "source_handles": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "maxItems": 10000,
+            "title": "Source Handles"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "model_turn_id": {
+            "type": "string",
+            "title": "Model Turn Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "input_revision",
+          "covered_hashes",
+          "summary",
+          "model_turn_id"
+        ],
+        "title": "CheckpointInput"
       },
       "ConversationInput": {
         "properties": {
@@ -1455,6 +2111,32 @@
           "input_revision"
         ],
         "title": "DelegationRequest"
+      },
+      "DrainEdit": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          },
+          "draining": {
+            "type": "boolean",
+            "title": "Draining"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "expected_revision",
+          "draining"
+        ],
+        "title": "DrainEdit"
       },
       "ExecutionAuthorization": {
         "properties": {
@@ -1672,6 +2354,32 @@
         ],
         "title": "Publication"
       },
+      "Reprocess": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "title": "Expected Revision"
+          },
+          "source_version": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Source Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "expected_revision",
+          "source_version"
+        ],
+        "title": "Reprocess"
+      },
       "Revision": {
         "properties": {
           "request_id": {
@@ -1706,6 +2414,57 @@
           "request_id"
         ],
         "title": "RunControlInput"
+      },
+      "SearchEdit": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          },
+          "policy": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Policy"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "expected_revision",
+          "policy"
+        ],
+        "title": "SearchEdit"
+      },
+      "SearchProbe": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "bocha",
+              "zhipu"
+            ],
+            "title": "Provider"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "provider"
+        ],
+        "title": "SearchProbe"
       },
       "ToolCommand": {
         "properties": {
@@ -1770,6 +2529,21 @@
           "expected_revision"
         ],
         "title": "UserChange"
+      },
+      "Validation": {
+        "properties": {
+          "lineage_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 10000,
+            "title": "Lineage Refs"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "Validation"
       },
       "ValidationError": {
         "properties": {

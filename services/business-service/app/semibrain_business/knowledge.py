@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path, PurePosixPath
 
 from minio import Minio
-from pymongo import ReturnDocument
+from semibrain_common.operations import admission
 from semibrain_common.runtime import (
     canonical,
     digest,
@@ -112,7 +112,7 @@ def process_one():
         lambda row: {"step": "failed", "error": "ATTEMPTS_EXHAUSTED"},
     )
     fence = uid()
-    job = db().ingestion_jobs.find_one_and_update(
+    job = admission(db(), "ingestion_jobs",
         {
             "$or": [{"status": "queued"}, {"status": "running", "lease_until": {"$lt": now()}}],
             "attempt": {"$lt": 3},
@@ -126,7 +126,7 @@ def process_one():
             },
             "$inc": {"attempt": 1},
         },
-        return_document=ReturnDocument.AFTER,
+        
     )
     if not job:
         return False

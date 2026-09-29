@@ -9,7 +9,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Request
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError
-from pymongo import ReturnDocument
+from semibrain_common.operations import admission
 from semibrain_common.runtime import (
     call,
     canonical,
@@ -428,7 +428,7 @@ def execute_one():
 
     expire_exhausted(db(), "tool_jobs", "stream:business", "tool.completed", "tool", exhausted)
     fence = uid()
-    job = db().tool_jobs.find_one_and_update(
+    job = admission(db(), "tool_jobs",
         {
             "$or": [
                 {"status": "queued"},
@@ -449,7 +449,7 @@ def execute_one():
             },
             "$inc": {"attempt": 1},
         },
-        return_document=ReturnDocument.AFTER,
+        
     )
     if not job:
         return False
@@ -551,6 +551,9 @@ def execute_one():
         if job["tool"] in {"web.search", "web.fetch"}:
             attempt = db().web_attempts.find_one({"_id": job["_id"] + ":" + str(job["attempt"])})
             external_data["usage"] = attempt.get("usage") if attempt else {"total_tokens": 0}
+            if attempt and job["tool"] == "web.search":
+                external_data.update({key: attempt.get(key) for key in
+                                     ("provider", "complement_provider", "configuration_revision")})
         result = ToolResult(
             job_id=job["_id"],
             logical_call_id=job["logical_call_id"],

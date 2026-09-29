@@ -5,6 +5,7 @@ from datetime import timedelta
 
 from fastapi import APIRouter, Request
 from pymongo import ReturnDocument
+from semibrain_common.operations import admission
 from semibrain_common.runtime import (
     call,
     canonical,
@@ -227,7 +228,7 @@ def execute_one():
         lambda row: {"body_draft": "", "progress": "重试次数已用完", "error": "ATTEMPTS_EXHAUSTED"},
     )
     fence = uid()
-    run = db().runs.find_one_and_update(
+    run = admission(db(), "runs",
         {
             "$or": [{"status": "queued"}, {"status": "running", "lease_until": {"$lt": now()}}],
             "attempt": {"$lt": 3},
@@ -240,7 +241,7 @@ def execute_one():
             },
             "$inc": {"attempt": 1},
         },
-        return_document=ReturnDocument.AFTER,
+        
     )
     if not run:
         return False

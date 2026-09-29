@@ -4,6 +4,10 @@ from semibrain_business.security import db
 
 
 def initialize():
+    migrate(db(), "e-search-001", [
+        ("search_audits", [("created_at", -1)], {}),
+        ("search_config_history", [("revision", 1)], {"unique": True}),
+    ])
     migrate(db(), "knowledge-context-001", [
         ("knowledge_parents", [("document_id", 1), ("version", 1)], {}),
         ("ingestion_jobs", [("document_id", 1), ("created_at", -1)], {}),

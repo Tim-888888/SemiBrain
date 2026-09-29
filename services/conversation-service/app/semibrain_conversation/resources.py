@@ -6,12 +6,18 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
-from semibrain_common.runtime import failure
+from semibrain_common.runtime import call, failure
 
 from semibrain_conversation.access import business, run_snapshot
 from semibrain_conversation.auth import admin, current_user, db
 
 router = APIRouter()
+
+
+@router.get("/admin/v1/runs/{run_id}/diagnostics")
+def run_diagnostics(run_id: UUID, user=Depends(admin)):
+    run_snapshot(user, str(run_id))
+    return call("agent", "GET", f"/internal/v1/runs/{run_id}/diagnostics").json()
 
 
 @router.get("/admin/v1/runs/comparison")
