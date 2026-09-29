@@ -39,6 +39,11 @@ def knowledge_snapshot(request: Request):
     restrictions = claim.get("document_ids", [])
     versions = sorted((r["_id"], r.get("active_version"), r.get("revision")) for r in rows
                       if can_read(r, claim) and (not restrictions or r["_id"] in restrictions))
+    # Derived Wiki availability changes when its source expires or is revoked,
+    # even if the selected Wiki's own version has not changed.
+    from semibrain_business.wiki_access import wiki_readable
+    unavailable = {r["_id"] for r in rows if not wiki_readable(r, claim)}
+    versions = [r for r in versions if r[0] not in unavailable]
     return {"cacheable": True, "snapshot": digest(canonical([
         claim["subject_id"], claim["role"], sorted(claim["resource_ids"]),
         sorted(restrictions), versions, "hybrid-mmr-section-v2"]))}
@@ -96,6 +101,7 @@ def document_view(row):
         "asset_id": row.get("raw_asset_id"),
         "revoked": row.get("revoked", False),
         "data_origin": row["data_origin"],
+        "kind": row.get("kind", "document"),
     }
 
 
@@ -122,6 +128,10 @@ def documents(request: Request):
             and row["owner_id"] != claim["subject_id"]
         ):
             continue
+        if row.get("kind") == "wiki" and claim["role"] != "admin":
+            from semibrain_business.wiki_access import wiki_readable
+            if not row.get("active_version") or not wiki_readable(row, claim):
+                continue
         view = document_view(row)
         if claim["role"] == "admin" and not row.get("active_version") and not row.get("revoked"):
             view["restore_version"] = last_published_version(row)
@@ -332,6 +342,8 @@ def preview(document_id: str, version: str, request: Request):
     row = db().document_versions.find_one({"_id": version, "document_id": document_id})
     if not row:
         failure("VERSION_NOT_FOUND", 404)
+    from semibrain_business.wiki_access import validate_wiki
+    validate_wiki(document, claim, version)
     asset = db().assets.find_one({"_id": row["parsed_asset_id"]})
     content = read_asset(asset).decode("utf-8")
     return {
@@ -355,7 +367,7 @@ class PublishInput(BaseModel):
 def activate(document_id: str, form: PublishInput, request: Request):
     claim = authorize_request(request, "knowledge.manage")
     require_manager(claim)
-    authorized_document(document_id, claim)
+    document = authorized_document(document_id, claim)
     key = str(form.request_id)
     payload_hash = digest(canonical({"document_id": document_id, **form.model_dump(mode="json")}))
 
@@ -377,6 +389,8 @@ def activate(document_id: str, form: PublishInput, request: Request):
         if not version or version["manifest"]["status"] != "staged":
             failure("VERSION_NOT_READY", 409)
         verify_context_version(version)
+        from semibrain_business.wiki_access import validate_wiki
+        wiki = validate_wiki(document, claim, str(form.version), session=session, fence=True)
         changed = db().documents.update_one(
             {"_id": document_id, "revision": form.expected_revision, "revoked": False},
             {
@@ -384,6 +398,7 @@ def activate(document_id: str, form: PublishInput, request: Request):
                     "active_version": str(form.version),
                     "last_published_version": str(form.version),
                     "raw_asset_id": version["raw_asset_id"],
+                    **({"title": wiki["title"], "data_origin": wiki["data_origin"]} if wiki else {}),
                 },
                 "$inc": {"revision": 1},
             },
@@ -462,6 +477,8 @@ def republish(document_id: str, form: UnpublishInput, request: Request):
             failure("REVISION_CONFLICT", 409)
         if restore_target(current, session=session)["_id"] != version["_id"]:
             failure("REVISION_CONFLICT", 409)
+        from semibrain_business.wiki_access import validate_wiki
+        validate_wiki(current, claim, version["_id"], session=session, fence=True)
         changed = db().documents.update_one(
             {"_id": document_id, "revision": form.expected_revision, "active_version": None,
              "revoked": False},
@@ -689,6 +706,8 @@ def asset_content(asset_id: str, request: Request, preview_version: UUID | None 
         version = db().document_versions.find_one({"_id": str(preview_version) if preview_version else document["active_version"], "document_id": document["_id"]})
         if not version:
             failure("ASSET_VERSION_UNAVAILABLE", 403)
+        from semibrain_business.wiki_access import validate_wiki
+        validate_wiki(document, claim, version["_id"])
         valid = {version["raw_asset_id"], version["parsed_asset_id"], *version["image_asset_ids"]}
         if asset_id not in valid:
             failure("ASSET_VERSION_UNAVAILABLE", 403)

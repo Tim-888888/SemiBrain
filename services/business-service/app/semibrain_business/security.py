@@ -55,6 +55,9 @@ def authorized_document(document_id, claim, *, active=False, version=None):
         not document.get("active_version") or version and document["active_version"] != version
     ):
         failure("SOURCE_VERSION_UNAVAILABLE", 403)
+    if active and document.get("kind") == "wiki":
+        from semibrain_business.wiki_access import validate_wiki
+        validate_wiki(document, claim, version)
     return document
 
 

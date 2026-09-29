@@ -159,6 +159,8 @@ def search(query, claim, top_k=5):
     allowed = [
         d for d in allowed if can_read(d, claim) and (not restrictions or d["_id"] in restrictions)
     ]
+    from semibrain_business.wiki_access import wiki_readable
+    allowed = [d for d in allowed if wiki_readable(d, claim)]
     if not allowed:
         return [], {"dense": 0, "sparse": 0, "authorized": 0}
     if len(allowed) > 500:

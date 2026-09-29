@@ -93,6 +93,8 @@ def chunks(document_id: str, version: str, request: Request):
     require_manager(claim)
     document = authorized_document(document_id, claim)
     rows = db().chunks.find({"document_id": document_id, "version": version}).sort("chunk_index", 1).limit(1500)
+    from semibrain_business.wiki_access import validate_wiki
+    validate_wiki(document, claim, version)
     return {"revision": document["revision"], "items": [
         {"id": row["_id"], **{key: row.get(key) for key in ("text", "content_hash", "location", "context_header")}}
         for row in rows]}
@@ -141,6 +143,9 @@ def edit(document_id: str, form: EditChunk, request: Request):
             "source_version": source["_id"], "source_chunk_id": chunk["_id"], "requested_by": claim["subject_id"],
             "allow_external": False, "diff": diff}
         db().ingestion_jobs.insert_one(row, session=session)
+        if document.get("kind") == "wiki":
+            from semibrain_business.wiki_access import inherit_revision
+            inherit_revision(source["_id"], version, document_id, session=session)
         return row
     job = transaction(accept)
     if job["version"] != version:
@@ -157,7 +162,9 @@ def edit(document_id: str, form: EditChunk, request: Request):
 def diff(document_id: str, version: str, request: Request):
     claim = authorize_request(request, "knowledge.manage")
     require_manager(claim)
-    authorized_document(document_id, claim)
+    document = authorized_document(document_id, claim)
+    from semibrain_business.wiki_access import validate_wiki
+    validate_wiki(document, claim, version)
     job = db().ingestion_jobs.find_one({"document_id": document_id, "version": version})
     if not job:
         failure("VERSION_NOT_FOUND", 404)
@@ -189,6 +196,8 @@ def rollback(document_id: str, form: Rollback, request: Request):
         previous = replay(session)
         if previous:
             return previous
+        from semibrain_business.wiki_access import validate_wiki
+        wiki = validate_wiki(document, claim, str(form.version), session=session, fence=True)
         if db().ingestion_jobs.find_one({"document_id": document_id, "generation": form.expected_revision,
                                         "status": {"$in": PENDING}}, session=session):
             failure("REPROCESS_PENDING", 409)
@@ -197,6 +206,9 @@ def rollback(document_id: str, form: Rollback, request: Request):
                       "raw_asset_id": version["raw_asset_id"]}, "$inc": {"revision": 1}}, session=session).modified_count:
             failure("REVISION_CONFLICT", 409)
         result = {"document_id": document_id, "active_version": str(form.version), "revision": form.expected_revision + 1}
+        if wiki:
+            db().documents.update_one({"_id": document_id},
+                {"$set": {"title": wiki["title"], "data_origin": wiki["data_origin"]}}, session=session)
         db().publication_commands.insert_one({"_id": identity, "payload_hash": hashed, "result": result,
             "action": "rollback", "actor_id": claim["subject_id"], "at": now()}, session=session)
         return result

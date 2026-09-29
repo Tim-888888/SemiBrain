@@ -72,6 +72,9 @@ def reprocess(document_id, form, claim):
         if source.get("edited_snapshot_id"):
             job["edited_snapshot_id"] = source["edited_snapshot_id"]
         db().ingestion_jobs.insert_one(job, session=session)
+        if document.get("kind") == "wiki":
+            from semibrain_business.wiki_access import inherit_revision
+            inherit_revision(source_version, job["version"], document_id, session=session)
         return result(job)
 
     return transaction(accept)
