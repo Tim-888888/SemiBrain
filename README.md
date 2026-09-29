@@ -1,21 +1,22 @@
 # SemiBrain
 Semiconductor quality investigation and knowledge collaboration platform.
 
-Stage B adds account registration and login, a knowledge workspace, asynchronous
-PDF/DOCX/Markdown/CSV ingestion, governed hybrid retrieval, read-only business tools,
-streamed Markdown answers and persistent conversation history. The three Python
-services and two Vue applications run against real storage and configured model APIs.
-Stage C adds bounded single-agent investigations with native tool calling, versioned
-runtime prompts, explicit fenced MongoDBSaver checkpoints, shared budgets, cancellation,
-fixed statistics over authorized results, optional public Web Search and static-page
-snapshots. A reviewer checks investigation drafts before Markdown publication.
-Stage C development is closed with known issues at the project owner's request;
-acceptance is partial. The final synthetic batch passed 115/120 task checks and
-60/60 numeric checks. Citation coverage missed its original threshold and two
-offline reviews remained unavailable. Original failures are retained, and repeated
-full-batch evaluations have stopped. This is not production quality certification.
-Text roles default to DeepSeek Flash through its Responses API.
-Multi-agent coordination, sandbox execution and advanced administration remain later-stage work.
+The current demonstration implements quick knowledge/web answers, bounded single-agent
+investigations, and explicitly selected multi-agent coordination. Final answers remain
+ordinary Markdown with authorized citations, images and downloadable artifacts.
+
+Governance features include reviewed Wiki publication, source-backed Neo4j relationships,
+versioned document editing and rollback, multi-format ingestion with manual review,
+reviewed MCP/Skills, opt-in personal memory, worker/queue controls, immutable agent
+configuration and human evaluation records. Report exports produce Markdown, Word or
+PDF from the same persisted answer without another model call. Docker is the only
+supported code sandbox.
+
+This is an interview/demo project, not production quality certification. Finite live
+acceptance found partially completed investigations and some parser/provider limitations;
+execution completion and human quality are reported separately. Detailed private Chinese
+planning, evaluation data, operational credentials and interview notes are intentionally
+not published in this repository. Text roles default to DeepSeek Flash.
 
 ## Repository layout
 
@@ -48,47 +49,13 @@ The shared Markdown renderer supports bracket and dollar math through KaTeX. It
 disables trusted TeX commands, bounds macros and expression size, and sanitizes the
 rendered HTML/MathML. Copying preserves the original Markdown, including formulas.
 
-Investigation runs default to 12 reasoning rounds, 20 tool calls, 80,000 tokens and
-180 seconds. Unknown provider usage remains reserved and visible as unreconciled;
-unknown pricing is never reported as zero. Workers restore only the explicitly committed
-checkpoint ID, reconcile immutable model/tool observations, and reject stale writes.
-The service coordinator commits checkpoints around LangGraph node transitions rather
-than using an unfenced latest-checkpoint lookup. Restarting does not reset the budget.
-The normal loop reserves 12,000 tokens and 30 seconds for tool-free synthesis and review.
-Independent read-only requests may share one model turn; the executor processes their
-native calls sequentially under the same budget. At a soft limit, one closeout attempt
-uses registered observations and still requires review. If that cannot finish, a bounded
-Markdown fallback preserves validated raw counts, their actual query scope and citations.
-Cancellation and lease loss never publish this fallback. Recognized credit exhaustion
-is reported separately from transient transport failure and is not automatically retried.
-
-Measured input usage calibrates subsequent reservations only for matching model, system,
-tool-schema and message-prefix fingerprints. Changed content is still estimated conservatively.
-Unselected library directories are discovered through search instead of repeating opaque IDs
-each turn. Bounded tool views retain citation handles and search URLs; full evidence stays
-available for rereading. A source-gap review can return to authorized retrieval once, while
-an honest but incomplete answer remains partial. These changes keep the same run limits.
-
-Web access is off by default and can be disabled during a run. Search results are URLs,
-not fabricated source excerpts. The static fetcher validates DNS, the connected peer,
-and every redirect, accepts no credentials, and stores private immutable snapshots.
-It does not execute JavaScript, log into websites, or publish pages into the knowledge base.
-
-For enabled public-knowledge investigations, the prompt requires one search in the
-current run. A deterministic check of durable tool observations adds a single search
-if the model selects only local tools or attempts to answer without searching. It uses
-public topic keywords and the existing authorization, outbound-data checks, budgets
-and idempotency journal. Failed or empty searches do not cause mandatory retry loops;
-fetching and using relevant sources still depend on the task. Greetings, transformations
-of supplied content, explicit source-only tasks and internal-only queries are exempt.
-Cancellation, revoked access and execution limits still take precedence; an unattempted
-required search is disclosed rather than reported as successful.
-Langfuse uses the configured regional endpoint and exports allowlisted identifiers,
-status and usage only; business persistence does not depend on the telemetry service.
-
-`.env.example` contains configuration names and public defaults only. Actual credentials,
-source documents, local product and development records, acceptance evidence, and data
-volumes must remain outside this public repository.
+Runs retain bounded model/tool/delegation counts, deadlines, cancellation and fenced
+checkpoint recovery. There is no default cumulative 200,000-token hard cap; actual
+Token receipts and unknown usage remain visible. Per-request context capacity and
+output reservation are separate from task-wide usage. Tool-free closeout uses available
+authorized evidence when time or call limits approach; lease loss and cancellation do
+not publish a successful fallback. Operators should inspect the accepted run's frozen
+limits rather than assuming all execution modes share the same bounds.
 
 ## Local development
 
@@ -208,12 +175,14 @@ cohort time window and ingestion cutoff. Empty cohorts return a null ratio.
 `SEMIBRAIN_ORACLE_MODULE`. It changes and restores one synthetic row to verify the
 HTTP endpoint reads committed SQL data. Never point this test at production data.
 
-The first parser profile covers PDF, Markdown, DOCX and CSV. PDF uses MinerU only with
-explicit external-data permission and a configured key, with local WeKnora fallback.
-The other paths wrap the pinned WeKnora parser subset with compatibility and source
-location adapters. B stores original assets and immutable parsed versions and requires
-preview and explicit publication before retrieval. Expanded formats and OCR enrichment
-remain later-stage work. A parser subprocess is not the D-stage model code sandbox.
+Ingestion covers PDF, Word, images, Excel, XMind, PowerPoint, EPUB, Markdown, CSV,
+JSON, HTML and MHTML. The pinned WeKnora parser subset is wrapped with Python
+compatibility, source-location, image and fallback adapters. MinerU and vision/OCR
+require explicit permission to send source content externally. Legacy Office conversion
+and PDF report rendering use the pinned Docker runtime, never the host shell.
+Original assets and immutable parsed versions are retained. Review warnings (including
+legacy XLS value-only conversion), unsupported/encrypted/corrupt variants and cancellation
+remain explicit; a successful upload does not automatically publish material to retrieval.
 
 `scripts/verify/checkpoint_probe.py` tests the supported MongoDBSaver API with a private
 `SEMIBRAIN_CHECKPOINT_PROBE_URI`. It requires an explicitly selected committed checkpoint,
@@ -255,3 +224,20 @@ This adaptation follows the [DSH compaction design](https://github.com/deepseek-
 See `THIRD_PARTY_NOTICES.md`, `vendor/weknora-docreader/provenance.json`, package license
 inventories and the immutable base image lock. License inventories describe upstream
 components; they do not assign a new license to this repository or to dependencies.
+
+## Governance operations
+
+- [Agent configuration and evaluation](docs/agent-configuration.md)
+- [MCP service governance](docs/mcp-operations.md)
+- [Reviewed Skills](docs/skills-operations.md)
+- [Personal memory](docs/memory-operations.md)
+- [Markdown, Word and PDF exports](docs/report-export.md)
+- [Manual isolated recovery rehearsal](docs/recovery-rehearsal.md)
+
+MongoDB remains authoritative; Milvus and Neo4j are rebuildable projections, and MinIO
+stores source and generated assets. E-stage migrations add indexes and collections without
+destructive conversion of existing documents. Publish configuration explicitly after review;
+new runs pin versions while historical answers retain their original lineage. Application
+rollback restores previous pinned images/configuration; do not drop new data or overwrite
+live storage with a rehearsal. The cold backup tool does not provide a scheduled daily
+backup, off-host protection or an automatic disaster cutover.
