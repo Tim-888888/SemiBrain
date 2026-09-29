@@ -19,6 +19,7 @@ from semibrain_agent.checkpoints import GRAPH_VERSION, STATE_VERSION, Checkpoint
 from semibrain_agent.citations import cited_markers
 from semibrain_agent.client import BusinessClient
 from semibrain_agent.context_policy import project_evidence
+from semibrain_agent.delivery import FILE_TOOLS
 from semibrain_agent.executor import ToolExecutor, extend_catalog, wire_tools
 from semibrain_agent.harness import (
     BudgetExhausted,
@@ -446,7 +447,7 @@ class Investigator:
         )
         from semibrain_agent.delivery import FORMATS, requested_files
         formats = requested_files(state["intent"])
-        if formats and (set(formats) - FORMATS or "sandbox.python" not in
+        if formats and (set(formats) - FORMATS or not FILE_TOOLS &
                         {t["name"] for t in self.catalog["tools"]}):
             reason = ("当前文件工具尚不支持所需格式：" + "、".join(sorted(set(formats) - FORMATS))
                       if set(formats) - FORMATS else
@@ -988,7 +989,7 @@ class Investigator:
         body = state["draft"]
         from semibrain_agent.delivery import missing_files, requested_files
         current_jobs = {r["observation"].get("job_id") for r in self.db.observations.find({
-            "run_id": self.run["_id"], "observation.tool": "sandbox.python"})} - {None} if requested_files(state.get("intent", {})) else set()
+            "run_id": self.run["_id"], "observation.tool": {"$in": sorted(FILE_TOOLS)}})} - {None} if requested_files(state.get("intent", {})) else set()
         missing = missing_files(state.get("intent", {}), evidence, current_jobs)
         if missing:
             state["outcome"] = "partial"

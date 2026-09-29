@@ -42,6 +42,10 @@ def review_units(draft):
                         and not re.search(r"(?m)^\s*(?:[#|`~]|[-*+]\s|\d+[.)]\s)", raw[index])):
                     adjacent.append(raw[index])
         shared = sorted(cited_markers("\n".join(adjacent)))
+        # A following source/explanation paragraph can label the preceding fact.
+        # Do not carry a preceding prose paragraph's references forward implicitly.
+        following = (sorted(cited_markers(raw[group + 1]))
+                     if group + 1 < len(raw) and raw[group + 1] in adjacent else [])
         if table:
             header = "\n".join(lines[:2])
             for line in lines[2:]:
@@ -57,7 +61,7 @@ def review_units(draft):
         else:
             image = bool(re.fullmatch(r"!\[[^\n]*\]\([^\n]+\)", text.strip()))
             units.append({"text": text, "kind": "image" if image else "prose", "group": group,
-                          **({"adjacent_citations": shared} if image else {})})
+                          **({"adjacent_citations": shared if image else following} if not fenced else {})})
     return [{"id": i, **unit} for i, unit in enumerate(units)]
 
 

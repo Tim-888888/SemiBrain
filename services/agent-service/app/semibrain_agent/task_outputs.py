@@ -2,6 +2,7 @@
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from semibrain_agent.delivery import FILE_TOOLS
 from semibrain_agent.multi_policy import Deliverables
 
 
@@ -84,7 +85,7 @@ def bind_arguments(name, arguments, requirement, inputs):
             args["limit"] = requirement.lot_limit
         elif name.startswith("business."):
             raise ValueError("SCOPED_LOT_LIST_USE_SEARCH_LOTS")
-    if name == "sandbox.python" and inputs:
+    if name in FILE_TOOLS and inputs:
         expected = [i["job_id"] for i in inputs]
         supplied = args.get("job_ids", [])
         if not isinstance(supplied, list) or set(supplied) - set(expected):
@@ -98,7 +99,7 @@ def check_outputs(requirement, records, *, input_jobs=(), answer_run_id=None):
     calculations, artifacts = [], []
     for record in records:
         data = record.get("content")
-        if (tool_name(record) != "sandbox.python" or not isinstance(data, dict)
+        if (tool_name(record) not in FILE_TOOLS or not isinstance(data, dict)
                 or data.get("exit_code") != 0):
             continue
         # Check explicit mounted query provenance, not file names or claimed summary text.

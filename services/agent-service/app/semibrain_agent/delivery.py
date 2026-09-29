@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 FORMATS = frozenset({"md", "txt", "csv", "json", "png"})
+FILE_TOOLS = frozenset({"sandbox.python", "skill.execute"})
 
 
 class Delivery(BaseModel):
@@ -48,7 +49,7 @@ def missing_files(intent, records, current_jobs):
         data = record.get("content")
         if (record.get("job_id") not in current_jobs or not isinstance(data, dict)
                 or data.get("exit_code") != 0
-                or record.get("source", {}).get("locator", {}).get("tool") != "sandbox.python"
+                or record.get("source", {}).get("locator", {}).get("tool") not in FILE_TOOLS
                 or (source and data.get("input_answer_run_id") != source)):
             continue
         actual.update(a["name"].rsplit(".", 1)[-1].lower() for a in data.get("artifacts", [])

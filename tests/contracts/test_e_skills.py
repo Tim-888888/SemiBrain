@@ -176,3 +176,18 @@ def test_regular_user_cannot_manage_skills():
             assert client.get("/admin/v1/skills").status_code == 403
     finally:
         app.dependency_overrides.clear()
+
+
+def test_skill_exports_count_only_with_success_and_current_provenance():
+    from semibrain_agent.delivery import missing_files
+    from semibrain_agent.multi_policy import Deliverables
+    from semibrain_agent.task_outputs import check_outputs
+    intent = {"delivery": {"kind": "file", "formats": ["md"]}}
+    record = {"evidence_id": "ev", "job_id": "current", "source": {"locator": {"tool": "skill.execute"}},
+              "content": {"exit_code": 0, "artifacts": [{"name": "结果.md", "asset_id": "asset"}]}}
+    assert not missing_files(intent, [record], {"current"})
+    assert missing_files(intent, [record], {"other"}) == ["md"]
+    outputs, issues = check_outputs(Deliverables(kind="python", artifact_formats=["md"]), [record])
+    assert outputs["artifacts"] and not issues
+    record["content"]["exit_code"] = 1
+    assert missing_files(intent, [record], {"current"}) == ["md"]

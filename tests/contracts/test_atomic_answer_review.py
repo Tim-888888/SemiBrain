@@ -89,6 +89,20 @@ def test_a_source_binding_does_not_silently_authorize_an_uncited_paragraph():
     assert not result["body"] and result["missing"] == ["Fact"] and result["issues"]
 
 
+def test_reviewed_prose_can_use_adjacent_reference_without_false_missing_goal():
+    draft = "4.15 mm equals 4150 um.\n\nThe conversion service returned this result [1]."
+    result = evaluate_answer(draft, verdict(["supported", "supported"], goals=[covered(0, 0)]), {"1"}, ["Convert length"])
+    assert not result["missing"] and not result["issues"]
+    assert "4.15 mm equals 4150 um. [1]" in result["body"]
+    rejected = evaluate_answer(draft, verdict(["unsupported", "supported"], goals=[covered(0, 0)]), {"1"}, ["Convert length"])
+    assert rejected["missing"] == ["Convert length"] and "4150" not in rejected["body"]
+
+
+def test_fenced_code_does_not_inherit_an_adjacent_reference():
+    result = evaluate_answer("```text\nunverified output\n```\n\nOther result [1].", verdict(["supported", "supported"]), {"1"})
+    assert "unverified output" not in result["body"]
+
+
 def test_supported_subset_of_citations_keeps_fact_and_only_reviewed_references():
     result = evaluate_answer("Measured fact [1][2].", verdict(["supported"], goals=[covered(0, 0)]),
                              {"1", "2"}, ["Fact"])

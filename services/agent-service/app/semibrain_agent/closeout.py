@@ -7,6 +7,7 @@ from semibrain_common.runtime import canonical
 
 from semibrain_agent.citations import cited_markers
 from semibrain_agent.context_policy import project_evidence, project_record, source_version
+from semibrain_agent.delivery import FILE_TOOLS
 from semibrain_agent.harness import BudgetExhausted, estimate_reservation, estimate_text
 from semibrain_agent.review_units import render_units, review_units
 
@@ -116,7 +117,7 @@ def final_answer(runner, state):
         state.update(phase="done", outcome="partial", draft=runner.partial_body("没有取得可核验的证据", []))
         return state
     jobs = {r["observation"].get("job_id") for r in runner.db.observations.find({
-        "run_id": runner.run["_id"], "observation.tool": "sandbox.python"})}
+        "run_id": runner.run["_id"], "observation.tool": {"$in": sorted(FILE_TOOLS)}})}
     packet = select_packet(runner.context["input"]["question"], state["intent"], evidence,
                            project_evidence, runner.execution_summary(),
                            missing_files(state["intent"], evidence, jobs))
@@ -141,7 +142,7 @@ def review_answer(runner, state):
     goals = state["intent"].get("goals", [])
     if packet is None:
         jobs = {r["observation"].get("job_id") for r in runner.db.observations.find({
-            "run_id": runner.run["_id"], "observation.tool": "sandbox.python"})}
+            "run_id": runner.run["_id"], "observation.tool": {"$in": sorted(FILE_TOOLS)}})}
         packet = {"question": runner.context["input"]["question"], "intent": state["intent"],
                   "evidence": [project_record(r, budget=estimate_text(canonical(r.get("content"))) + 128)
                                for r in evidence],
@@ -246,7 +247,7 @@ def evaluate_answer(draft, verdict, available_markers, goals=()):
             continue
         if decision.verdict == "supported":
             # No new references are invented: only explicitly reviewed adjacent
-            # labels may move onto their individual rows/items. Missing inline
+            # labels may move onto individually verified rows/items/paragraphs. Missing inline
             # references elsewhere must be repaired and re-reviewed by the model.
             inherited = bound & adjacent if not markers else set()
             if not markers and not inherited:

@@ -15,6 +15,7 @@ from semibrain_agent.closeout import (
 )
 from semibrain_agent.context_policy import project_evidence, source_version
 from semibrain_agent.delivery import (
+    FILE_TOOLS,
     answer_input,
     missing_files,
     requested_files,
@@ -57,7 +58,7 @@ from semibrain_agent.task_outputs import (
     reusable_task,
 )
 
-MULTI_VERSION = "multi-supervisor-v24"
+MULTI_VERSION = "multi-supervisor-v25"
 ROLE_RULES = {
     "sqlbot": "你是 SQLBot。使用授权业务工具核验目标、阶段、程序、时间与分母。原问题已给出必要参数时直接查询，不为重复确认编号先列目录或读上下文；缺失且可自行补足时才查询目录。仅完成分配给自己的目标，不重复其他分支负责的计算。交回引用证据与缺口，不给无证据根因。",
     "rag": "你是 RAG Agent。检索并读取与分配目标相关的授权原文，保留版本、否定和限制。缺少内容明确记录，不用常识填成引用。",
@@ -99,7 +100,7 @@ class MultiPrompts(PromptAssembler):
                     "answer_input给出历史回答的真实文件路径；sandbox.python会自动装入，直接用pathlib读取UTF-8内容。"
                     "纯文件封装可复制原文，无需重新取证；有整理要求则基于文件内容处理，不能只写摘要或占位文字。"
                     "执行成功后用已返回artifacts确认导出，再task__complete。"
-                    "仅可经授权sandbox.python执行代码，不可在宿主执行。")
+                    "仅可经授权sandbox.python或已加载的skill.execute执行代码，不可在宿主执行。")
         if role == "supervisor":
             return (
                 CONTROL_SAFETY_RULES + "\n你是任务协调器，只返回计划控制对象，不输出用户答案。"
@@ -635,7 +636,7 @@ class MultiAgent(Investigator):
         evidence = self.executor.evidence()
         cited = cited_markers(state["draft"])
         current_jobs = {r["observation"].get("job_id") for r in self.db.observations.find({
-            "run_id": self.run["_id"], "observation.tool": "sandbox.python"})} - {None} if requested_files(state["intent"]) else set()
+            "run_id": self.run["_id"], "observation.tool": {"$in": sorted(FILE_TOOLS)}})} - {None} if requested_files(state["intent"]) else set()
         missing = missing_files(state["intent"], evidence, current_jobs)
         progress, branches = {}, []
         if hasattr(self, "investigation"):
@@ -1002,7 +1003,7 @@ class Expert(Investigator):
                     if any(not target["read"] for target in navigation) and not attempted_page:
                         raise ValueError("READ_AVAILABLE_PAGE_FIRST:已有未读网页候选，请先web.fetch")
             args = bind_arguments(name, args, requirement, inputs)
-            if name == "sandbox.python":
+            if name in FILE_TOOLS:
                 source = answer_input(self.intent, self.context)
                 if source:
                     if args.get("answer_run_id") not in {None, source["answer_run_id"]}:
