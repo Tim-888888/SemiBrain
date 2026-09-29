@@ -69,6 +69,8 @@ def reprocess(document_id, form, claim):
                "allow_external": bool(source.get("allow_external", False)),
                "operation": "reprocess", "source_version": source_version,
                "requested_by": claim["subject_id"]}
+        if source.get("edited_snapshot_id"):
+            job["edited_snapshot_id"] = source["edited_snapshot_id"]
         db().ingestion_jobs.insert_one(job, session=session)
         return result(job)
 

@@ -2,6 +2,8 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { api, post } from './api'
 import MarkdownAnswer from './MarkdownAnswer.vue'
+import KnowledgeVersions from './KnowledgeVersions.vue'
+const versionDocument = ref<any>(null)
 import { documentBundle, documentFile } from './knowledge-upload.mjs'
 const props = defineProps<{ manage: boolean }>()
 const items = ref<any[]>([]), error = ref(''), busy = ref(false), preview = ref<any>(null), selected = ref<any>(null)
@@ -100,6 +102,7 @@ onMounted(() => { load(); timer = setInterval(load, 5000) }); onUnmounted(() => 
         </div>
         <span class="status-pill">{{ item.active_version ? '已发布' : statusNames[item.ingestion?.status] || '未发布' }}</span>
         <div v-if="manage" class="row-actions">
+          <button v-if="item.active_version || item.restore_version" class="secondary" @click="versionDocument = item">修订／版本历史</button>
           <button v-if="item.active_version" class="secondary" @click="view(item, item.active_version)">预览当前版本</button>
           <button v-if="['staged', 'unpublished', 'needs_attention'].includes(item.ingestion?.status) && item.ingestion?.version !== item.active_version" class="secondary" @click="view(item)">{{ item.active_version ? '预览新版本' : '预览' }}</button>
           <button v-if="item.reprocess_source_version" class="secondary" :disabled="!!changing || item.reprocess_pending" @click="openRebuild(item)">重新处理／重建版本</button>
@@ -108,6 +111,7 @@ onMounted(() => { load(); timer = setInterval(load, 5000) }); onUnmounted(() => 
         </div>
       </article>
     </div>
+    <KnowledgeVersions v-if="versionDocument" :document="versionDocument" @close="versionDocument = null" @changed="load" />
     <div v-if="preview" class="modal-backdrop" @click.self="preview = null"><section class="preview-modal" role="dialog" aria-modal="true" aria-label="文档预览"><div class="page-title"><h2>{{ selected?.title }}</h2><button class="secondary" @click="preview = null">关闭</button></div><div class="preview-scroll"><MarkdownAnswer :text="preview.body_markdown" :image-refs="preview.image_refs" /><p v-if="preview.truncated" class="muted">预览仅显示部分内容，请核验原文件。</p><p v-if="preview.manifest?.quality_findings?.length" class="notice">内容提示：{{ preview.manifest.quality_findings.join('、') }}</p></div><div class="modal-footer"><span class="muted small">{{ preview.chunk_count }} 个内容片段</span><button v-if="selected?.ingestion?.status === 'staged' && preview.version === selected?.ingestion?.version" class="primary" :disabled="!!changing" @click="publish(selected)">{{ selected?.active_version ? '发布新版本' : '确认发布' }}</button><button v-else-if="!selected?.active_version && selected?.restore_version === preview.version" class="primary" :disabled="!!changing" @click="changePublication(selected, 'republish')">{{ changing ? '正在校验并上架…' : '重新上架' }}</button></div></section></div>
     <div v-if="rebuilding" class="modal-backdrop" @click.self="!changing && (rebuilding = null)">
       <section class="preview-modal" role="dialog" aria-modal="true" aria-label="重新处理文档">

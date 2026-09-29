@@ -10,6 +10,11 @@ export type Message = Partial<Run> & { id: string; role: string; text?: string; 
 let csrf = ''
 export function setCsrf(value: string) { csrf = value }
 const labels: Record<string, string> = {
+  CHUNK_REBUILD_REQUIRED: '此旧版本缺少可靠的片段坐标，请先重新处理并发布后再修订。',
+  CHUNK_COORDINATE_CONFLICT: '片段与原文坐标不一致，请重新处理文档后再编辑。',
+  CHUNK_REVISION_CONFLICT: '片段已经变化，请刷新版本后重试。',
+  EDIT_IMAGE_NOT_REGISTERED: '编辑只能保留已登记的图片引用；新增图片请从资料上传入口添加。',
+  ROLLBACK_VERSION_UNPUBLISHED: '只能回滚到曾经发布且索引完整的版本。',
   LOGIN_FAILED: '账号或密码不正确，或账号已被停用。', CAPTCHA_INVALID: '验证码不正确，请刷新后重试。',
   CAPTCHA_EXPIRED: '验证码已使用或已过期，请刷新后重试。', USERNAME_UNAVAILABLE: '这个用户名已被使用或属于保留账号。',
   RATE_LIMITED: '操作较频繁，请稍后重试。', LOGIN_REQUIRED: '请先登录。', SESSION_REVOKED: '登录已失效，请重新登录。',

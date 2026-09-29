@@ -140,18 +140,27 @@ def process_one():
     try:
         asset = db().assets.find_one({"_id": job["asset_id"]})
         content = read_asset(asset)
-        with tempfile.TemporaryDirectory(prefix="semibrain-parse-") as temporary:
-            path = Path(temporary) / ("input" + Path(asset["filename"]).suffix.lower())
-            path.write_bytes(content)
-            parsed = parse_asset(
-                path,
-                allowed_root=Path(temporary),
-                profile=ParseProfile(allow_external=job["allow_external"], timeout_seconds=180),
-            )
         version = job["version"]
         from semibrain_business.chunking import CHUNKER_VERSION
         from semibrain_business.document_images import bind_images
-        image_refs = bind_images(parsed, document, job, store_asset, read_asset, db().assets)
+        if job.get("edited_snapshot_id"):
+            edited = db().assets.find_one({"_id": job["edited_snapshot_id"], "document_id": document["_id"]})
+            parsed = ParseResult.model_validate_json(read_asset(edited))
+            if job.get("operation") == "reprocess":
+                parsed.image_refs = [{**ref, "version": version} for ref in parsed.image_refs]
+            if any(ref["version"] != version for ref in parsed.image_refs):
+                raise ValueError("EDIT_IMAGE_VERSION_MISMATCH")
+            image_refs = sorted({ref["asset_id"] for ref in parsed.image_refs})
+        else:
+            with tempfile.TemporaryDirectory(prefix="semibrain-parse-") as temporary:
+                path = Path(temporary) / ("input" + Path(asset["filename"]).suffix.lower())
+                path.write_bytes(content)
+                parsed = parse_asset(
+                    path,
+                    allowed_root=Path(temporary),
+                    profile=ParseProfile(allow_external=job["allow_external"], timeout_seconds=180),
+                )
+            image_refs = bind_images(parsed, document, job, store_asset, read_asset, db().assets)
         parsed.parser_manifest["chunker_version"] = CHUNKER_VERSION
         manifest = parsed.model_dump(exclude={"images", "markdown", "blocks", "image_refs"})
         text_asset = store_asset(parsed.markdown.encode(), "text/markdown", document["owner_id"],

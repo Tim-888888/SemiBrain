@@ -266,7 +266,7 @@ def call(service: str, method: str, path: str, *, delegation=None, timeout=30, *
     if response.status_code >= 400:
         if (service == "business" and method == "POST"
                 and path.startswith("/internal/v1/knowledge/documents/")
-                and path.endswith(("/republish", "/reprocess", "/publish"))):
+                and path.endswith(("/republish", "/reprocess", "/publish", "/edit", "/rollback"))):
             # Only fixed, public lifecycle codes may cross the service boundary.
             try:
                 code = response.json().get("detail", {}).get("code")
@@ -276,7 +276,9 @@ def call(service: str, method: str, path: str, *, delegation=None, timeout=30, *
                 409: {"REPROCESS_SOURCE_UNAVAILABLE", "REPROCESS_PENDING", "CONTEXT_DATA_INCOMPLETE",
                       "REPUBLISH_DATA_INCOMPLETE", "REPUBLISH_NEW_VERSION_PENDING",
                       "NO_PUBLISHED_VERSION", "DOCUMENT_ALREADY_PUBLISHED",
-                      "REVISION_CONFLICT", "IDEMPOTENCY_CONFLICT"},
+                      "REVISION_CONFLICT", "IDEMPOTENCY_CONFLICT", "CHUNK_REBUILD_REQUIRED",
+                      "CHUNK_COORDINATE_CONFLICT", "CHUNK_REVISION_CONFLICT", "ROLLBACK_VERSION_UNPUBLISHED"},
+                400: {"EDIT_IMAGE_NOT_REGISTERED"},
                 503: {"REPUBLISH_CHECK_UNAVAILABLE"},
             }
             if isinstance(code, str) and code in allowed.get(response.status_code, set()):
