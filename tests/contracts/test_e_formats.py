@@ -168,3 +168,13 @@ def test_ingestion_cancel_and_revocation_stop_parser(monkeypatch):
     store.ingestion_jobs.find_one.return_value["cancel_requested"] = False
     store.documents.find_one.return_value["revoked"] = True
     assert knowledge.IngestionCancellation(job, "fence").is_set()
+
+
+def test_unplaced_docx_images_are_retained_with_review_not_invented_positions():
+    from semibrain_business.parsing import retain_unplaced_images
+    result = {"content": "Text\n\n![known](images/one.png)",
+              "images": {"images/one.png": "a", "images/two.png": "b"}, "metadata": {}}
+    retain_unplaced_images(result)
+    assert result["content"].count("images/one.png") == 1
+    assert "images/two.png" in result["content"]
+    assert result["metadata"]["quality_findings"] == ["IMAGE_POSITION_REVIEW_REQUIRED"]

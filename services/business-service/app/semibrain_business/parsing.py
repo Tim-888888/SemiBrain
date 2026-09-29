@@ -200,8 +200,14 @@ def _execute_engine(engine: str, content: bytes, extension: str, progress):
         from semibrain_business.office_conversion import convert
         converted, target = convert(content, extension, progress)
         validate_archive(converted)
-        result = _execute_engine("weknora_docx" if target == "docx" else "format_adapter",
-                                 converted, target, progress)
+        if target == "docx":
+            try:
+                result = _execute_engine("weknora_markitdown", converted, target, progress)
+            except Exception:
+                result = _execute_engine("weknora_docx", converted, target, progress)
+                result["metadata"]["conversion_parser_fallback"] = "weknora_docx"
+        else:
+            result = _execute_engine("format_adapter", converted, target, progress)
         result["metadata"]["conversion"] = "docker_libreoffice"
         result["metadata"]["original_format"] = extension
         for item in result["blocks"]:
@@ -244,6 +250,8 @@ def _execute_engine(engine: str, content: bytes, extension: str, progress):
         "metadata": document.metadata,
         "blocks": _source_blocks(content, extension),
     }
+    if extension == "docx":
+        retain_unplaced_images(result)
     if extension == "pdf" and engine == "weknora_pdf":
         native_text = "\n\n".join(block["text"] for block in result["blocks"])
         pattern = r"(?<!\w)[+-]?\d+(?:\.\d+)?(?:[Ee][+-]?\d+)?%?"
@@ -262,6 +270,17 @@ def _execute_engine(engine: str, content: bytes, extension: str, progress):
             raise ValueError("CSV_VALUES_LOST")
         result["blocks"] = native["blocks"]
     return result
+
+
+def retain_unplaced_images(result):
+    """An upstream parser can extract an image but omit its body marker. Never hide that loss."""
+    from semibrain_business.document_images import image_spans
+    references = {span["reference"].replace("\\", "/") for span in image_spans(result["content"])}
+    missing = [key for key in result["images"] if key.replace("\\", "/") not in references]
+    if missing:
+        result["content"] += "\n\n### 需复核位置的原文配图\n\n" + "\n\n".join(
+            "![原文配图，原位置未能确认](" + key + ")" for key in missing)
+        result["metadata"].setdefault("quality_findings", []).append("IMAGE_POSITION_REVIEW_REQUIRED")
 
 
 def _child(pipe, engine, content, extension, memory_bytes):
