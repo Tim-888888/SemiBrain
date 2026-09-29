@@ -59,6 +59,9 @@ class ReadonlyReuse:
     def authorize(self, name, args):
         # Each request receives a fresh role-bound delegation. Empty search results
         # are reusable only under the complete authorized document/version snapshot.
+        if name == "knowledge.graph":
+            # Graph governance may change independently of document publication.
+            return {"cacheable": False}
         if name == "knowledge.search":
             return self.client.request("GET", "/internal/v1/knowledge/snapshot")
         if name.startswith("knowledge."):

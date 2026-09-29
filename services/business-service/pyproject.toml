@@ -17,6 +17,7 @@ dependencies = [
     "jieba>=0.42.1",
     "beautifulsoup4>=4.13,<5",
     "pillow>=11,<13",
+    "neo4j>=6,<7",
 ]
 [build-system]
 requires = ["hatchling>=1.27"]

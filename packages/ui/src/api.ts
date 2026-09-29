@@ -35,6 +35,13 @@ const labels: Record<string, string> = {
   CONTEXT_DATA_INCOMPLETE: '新版本的内容片段或上下文关系不完整，暂不能发布。请重新处理。',
   IDEMPOTENCY_CONFLICT: '操作请求已发生变化，请刷新后重试。',
   INVALID_ARGUMENT: '填写内容不符合要求，请检查后重试。',
+  GRAPH_SOURCE_UNAVAILABLE: '引句必须来自所选原文片段，请保留连续原文并核对版本。',
+  GRAPH_PROJECTION_UNAVAILABLE: '图谱服务暂不可用，知识检索仍可使用；请稍后重建投影。',
+  GRAPH_CHANGED_DURING_REBUILD: '关系在重建期间已更新，请刷新后再次重建。',
+  GRAPH_MERGE_INVALID: '请选择两个不同且类型相同的实体。',
+  GRAPH_NOT_CONFIGURED: '图谱服务尚未配置。',
+  WIKI_SOURCE_UNAVAILABLE: 'Wiki 来源已下架、换版或无权访问，请核对来源。',
+  WIKI_EXPIRED: 'Wiki 已超过设定有效期。',
 }
 export async function api<T = any>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers)

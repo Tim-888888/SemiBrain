@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from semibrain_common.runtime import canonical, digest, now
 from semibrain_common.text_window import read_window
 from semibrain_common.tool_errors import SANDBOX_ARGUMENT_ERRORS
+from semibrain_contracts.graph import GraphQuery
 from semibrain_contracts.models import EvidenceRef, SourceRef, assert_no_credentials
 
 from semibrain_agent.harness import BudgetExhausted, RunStopped
@@ -38,6 +39,10 @@ class EvidenceRead(BaseModel):
 
 
 LOCAL_TOOLS = {
+    "knowledge.graph": (
+        GraphQuery,
+        "沿授权工程实体关系定位文档原文。用于工序、设备、缺陷等关联查询；无图匹配时降级文本检索。共现不表示因果。",
+    ),
     "knowledge.search": (
         Search,
         "检索当前授权知识范围。结果包含有版本的原文片段与引用；不是网络搜索。",
@@ -306,14 +311,15 @@ class ToolExecutor:
             self.harness.reserve_tool(logical_id, name)
             if name in LOCAL_TOOLS:
                 args = LOCAL_TOOLS[name][0].model_validate(args).model_dump(mode="json")
-            if name == "knowledge.search":
+            if name in {"knowledge.search", "knowledge.graph"}:
                 result = self.client.request(
-                    "POST", "/internal/v1/retrieval/search", json=args, timeout=70
+                    "POST", "/internal/v1/graph/search" if name == "knowledge.graph" else "/internal/v1/retrieval/search", json=args, timeout=70
                 )
                 observation = {
                     "status": "succeeded",
                     "evidence": self.documents(result["evidence"]),
                     "retrieval": result["retrieval"],
+                    **({"relationships": result.get("relationships", []), "notice": result.get("notice", "")} if name == "knowledge.graph" else {}),
                 }
             elif name == "knowledge.read":
                 result = self.client.request("POST", "/internal/v1/knowledge/read", json=args)

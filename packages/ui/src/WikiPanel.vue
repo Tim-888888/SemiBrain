@@ -27,6 +27,7 @@ async function view(item: any, draft = false) {
   finally { busy.value = false }
 }
 function edit() {
+  if (busy.value || generating.value) return
   const row = selected.value
   editor.value = { ...row, request_id:crypto.randomUUID(), expected_revision:row.revision,
     source_ids:row.source_refs.map((s:any) => s.document_id), expires:row.valid_until ? row.valid_until.slice(0,10) : '' }
@@ -39,6 +40,7 @@ function bindSources() {
 function changed() { editor.value.request_id = crypto.randomUUID() }
 async function generate() {
   generating.value = true; error.value = ''; notice.value = ''
+  const target = editor.value
   try {
     const request = crypto.randomUUID()
     const conv = await post('/v1/conversations', { request_id:request }, request)
@@ -46,7 +48,7 @@ async function generate() {
     const run = await post(`/v1/conversations/${conv.id}/messages`, {
       request_id:message, expected_revision:0, mode:'quick_qa', allow_web:false,
       resource_restrictions:editor.value.source_ids,
-      text:`请仅根据所选资料起草一页工程 Wiki。主题：${editor.value.title}。适用范围：${editor.value.applicability}。使用有条理的 Markdown，保留来源引用和限制，区分合成示例；证据不足请明确说明。` }, message)
+      text:`请仅根据所选资料起草一页简明工程 Wiki，正文约 500 至 800 字。主题：${editor.value.title}。适用范围：${editor.value.applicability}。使用有条理的 Markdown，保留来源引用和限制，区分合成示例；证据不足请明确说明。` }, message)
     draftRun.value = run.run_id
     let polling = false, ticks = 0
     generationTimer = setInterval(async () => {
@@ -57,10 +59,17 @@ async function generate() {
         if (['succeeded','partial','failed','cancelled'].includes(state.status)) {
           clearInterval(generationTimer); generating.value = false
           if (state.status === 'succeeded') {
-            editor.value.body_markdown = state.body_markdown
+            const citations = state.citations || []
+            if (!citations.length || citations.some((c:any) => !target.source_refs.some((s:any) => s.document_id === c.document_id && s.version === c.version))) {
+              notice.value = '资料版本在起草期间发生变化，或结果缺少有效来源。请重新选择来源后起草。'
+              return
+            }
+            const bibliography = citations.map((c:any) => `[${c.marker}] ${String(c.title).replace(/[\r\n]/g,' ')}；文档 ${c.document_id}；版本 ${c.version}`).join('\n\n')
+            target.body_markdown = state.body_markdown + '\n\n## 引用出处\n\n' + bibliography
+            changed()
             notice.value = '已生成待审阅草稿，请核对来源与适用范围后保存。生成过程可在工作台查看。'
           } else notice.value = '起草任务未完整完成，可在工作台查看结果；请补充资料或手工编写。'
-        } else if (++ticks >= 60) { clearInterval(generationTimer); generating.value = false; notice.value = '起草仍在运行，请到工作台查看进度。' }
+        } else if (++ticks >= 100) { clearInterval(generationTimer); generating.value = false; notice.value = '起草仍在运行，请到工作台查看进度。' }
       } catch (e) { clearInterval(generationTimer); generating.value = false; error.value = (e as Error).message }
       finally { polling = false }
     }, 3000)
@@ -104,7 +113,7 @@ onMounted(() => { load(); timer = setInterval(load,5000) }); onUnmounted(() => {
     </form>
     <div class="document-list"><article v-for="item in items" :key="item.id" class="document-row"><div class="document-detail"><strong>{{ item.title }}</strong><p class="muted small">{{ item.available ? '已发布' : item.active_version ? '来源失效或已过期' : '未发布' }}<span v-if="manage && item.ingestion"> · 最新修订：{{ item.ingestion.status }}</span></p></div><div class="row-actions"><button v-if="item.available" class="secondary" :disabled="busy" @click="view(item)">阅读</button><template v-if="manage"><button v-if="item.ingestion?.status === 'staged'" class="secondary" :disabled="busy" @click="view(item,true)">预览草稿</button><button v-if="item.ingestion?.status === 'staged' && selected?.version === item.ingestion.version" class="primary" :disabled="busy" @click="publication(item,'publish')">发布已预览版本</button><button class="secondary" @click="history = item">版本历史</button><button v-if="item.active_version" class="secondary" :disabled="busy" @click="publication(item,'unpublish')">下架</button></template></div></article></div>
     <p v-if="!items.length" class="muted">暂无可阅读的 Wiki。</p>
-    <article v-if="selected" class="upload-card"><div class="page-title"><h2>{{ selected.title }}</h2><button v-if="manage" class="secondary" @click="edit">修订此页</button></div><p class="muted">适用范围：{{ selected.applicability }} · {{ selected.valid_until ? '有效期至 ' + selected.valid_until : '未设到期日' }}</p><MarkdownAnswer :text="selected.body_markdown" /><details><summary>来源与版本</summary><ul><li v-for="ref in selected.source_refs" :key="ref.document_id">{{ sources.find(s => s.id === ref.document_id)?.title || ref.document_id }} · {{ ref.version }}</li></ul></details></article>
+    <article v-if="selected" class="upload-card"><div class="page-title"><h2>{{ selected.title }}</h2><button v-if="manage" class="secondary" :disabled="busy || generating" @click="edit">修订此页</button></div><p class="muted">适用范围：{{ selected.applicability }} · {{ selected.valid_until ? '有效期至 ' + selected.valid_until : '未设到期日' }}</p><MarkdownAnswer :text="selected.body_markdown" /><details><summary>来源与版本</summary><ul><li v-for="ref in selected.source_refs" :key="ref.document_id">{{ sources.find(s => s.id === ref.document_id)?.title || ref.document_id }} · {{ ref.version }}</li></ul></details></article>
     <KnowledgeVersions v-if="history" :document="history" @close="history = null" @changed="load" />
   </section>
 </template>

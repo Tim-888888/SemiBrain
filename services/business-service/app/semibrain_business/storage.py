@@ -4,6 +4,10 @@ from semibrain_business.security import db
 
 
 def initialize():
+    migrate(db(), "e-graph-001", [
+        ("graph_edges", [("document_id", 1), ("version", 1)], {}),
+        ("graph_commands", [("at", -1)], {}),
+    ])
     migrate(db(), "e-wiki-001", [
         ("wiki_revisions", [("document_id", 1), ("created_at", -1)], {}),
         ("wiki_revisions", [("source_refs.document_id", 1), ("source_refs.version", 1)], {}),

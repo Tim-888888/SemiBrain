@@ -28,7 +28,7 @@ ROLE_TOOLS = {
             "evidence.read",
         }
     ),
-    "rag": frozenset({"knowledge.search", "knowledge.read", "evidence.read"}),
+    "rag": frozenset({"knowledge.search", "knowledge.read", "knowledge.graph", "evidence.read"}),
     "vision": frozenset({"vision.inspect", "evidence.read"}),
     "tool": frozenset(
         {
