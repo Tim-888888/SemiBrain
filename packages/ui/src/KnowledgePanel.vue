@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { documentCatalog } from './document-catalog'
 import { onMounted, onUnmounted, ref } from 'vue'
 import { api, post } from './api'
 import MarkdownAnswer from './MarkdownAnswer.vue'
@@ -11,7 +12,7 @@ const path = ref(''), origin = ref('public'), external = ref(false), files = ref
 const changing = ref(''), notice = ref('')
 const rebuilding = ref<any>(null), reviewText = ref(''), reviewReason = ref(''), reviewing = ref(false)
 let timer: ReturnType<typeof setInterval>
-async function load() { try { items.value = (await api('/v1/knowledge/documents')).items } catch (e) { error.value = (e as Error).message } }
+async function load() { try { items.value = (await documentCatalog()).items } catch (e) { error.value = (e as Error).message } }
 function choose(event: Event) { files.value = Array.from((event.target as HTMLInputElement).files || []); if (files.value.length === 1) path.value = files.value[0].name }
 async function upload() {
   busy.value = true; error.value = ''

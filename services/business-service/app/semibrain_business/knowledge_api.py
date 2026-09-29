@@ -107,14 +107,22 @@ def document_view(row):
 
 
 @router.get("/internal/v1/knowledge/documents")
-def documents(request: Request):
+def documents(request: Request, before: UUID | None = None):
     claim = authorize_request(request, "knowledge.read")
-    rows = (
-        db()
-        .documents.find({"$or": [{"visibility": "demo"}, {"owner_id": claim["subject_id"]}]})
-        .sort("created_at", -1)
-        .limit(200)
-    )
+    query = {"$or": [{"visibility": "demo"}, {"owner_id": claim["subject_id"]}]}
+    if claim.get("document_ids"):
+        query["_id"] = {"$in": claim["document_ids"]}
+    if before:
+        cursor = db().documents.find_one({"$and": [query, {"_id": str(before)}]})
+        if not cursor:
+            failure("DOCUMENT_CURSOR_INVALID", 400)
+        query = {"$and": [query, {"$or": [
+            {"created_at": {"$lt": cursor["created_at"]}},
+            {"created_at": cursor["created_at"], "_id": {"$lt": cursor["_id"]}},
+        ]}]}
+    rows = list(db().documents.find(query).sort([("created_at", -1), ("_id", -1)]).limit(201))
+    next_cursor = rows[199]["_id"] if len(rows) > 200 else None
+    rows = rows[:200]
     items = []
     for row in rows:
         if claim.get("document_ids") and row["_id"] not in claim["document_ids"]:
@@ -158,7 +166,7 @@ def documents(request: Request):
                 view["reprocess_pending"] = (latest.get("generation") == row["revision"]
                     and latest["status"] in {"receiving", "queued", "running", "staged"})
         items.append(view)
-    return {"items": items}
+    return {"items": items, "next_cursor": next_cursor}
 
 
 @router.post("/internal/v1/knowledge/uploads", status_code=202)

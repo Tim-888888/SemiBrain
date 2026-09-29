@@ -55,9 +55,10 @@ def revoke_attachment(asset_id: UUID, user=Depends(current_user)):
 
 
 @router.get("/v1/knowledge/documents")
-def documents(user=Depends(current_user)):
+def documents(user=Depends(current_user), before: UUID | None = None):
     return business(
-        user, "GET", "/internal/v1/knowledge/documents", operation="knowledge.read"
+        user, "GET", "/internal/v1/knowledge/documents", operation="knowledge.read",
+        params={"before": str(before)} if before else {},
     ).json()
 
 

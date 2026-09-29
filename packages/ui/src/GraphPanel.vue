@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { documentCatalog } from './document-catalog'
 import { computed, onMounted, ref } from 'vue'
 import { api, post } from './api'
 import MarkdownAnswer from './MarkdownAnswer.vue'
@@ -15,7 +16,7 @@ function canonical(id:string) { return entity(id)?.canonical_id || id }
 function point(id:string) { const index = nodes.value.findIndex((n:any) => n.id === canonical(id)); const angle = index * Math.PI * 2 / Math.max(1,nodes.value.length); return {x:420+Math.cos(angle)*310,y:220+Math.sin(angle)*170} }
 async function load() {
   catalog.value = await api('/v1/graph/catalog')
-  if (props.manage) docs.value = (await api('/v1/knowledge/documents')).items.filter((d:any) => d.active_version)
+  if (props.manage) docs.value = (await documentCatalog()).items.filter((d:any) => d.active_version)
 }
 async function act(work:() => Promise<void>) { busy.value = true; error.value = ''; notice.value = ''; try { await work() } catch(e) { error.value=(e as Error).message } finally { busy.value=false } }
 function create() { form.value={subject:{name:'',kind:'concept'},object:{name:'',kind:'concept'},relation:'cooccurs',document_id:'',version:'',chunk_id:'',quote:'',verification_note:'',expires:'',enabled:true,request_id:crypto.randomUUID()};chunks.value=[];edit.value=true }

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { documentCatalog } from './document-catalog'
 import { onMounted, onUnmounted, ref } from 'vue'
 import { api, post } from './api'
 import MarkdownAnswer from './MarkdownAnswer.vue'
@@ -11,7 +12,7 @@ let timer: ReturnType<typeof setInterval>
 let generationTimer: ReturnType<typeof setInterval> | undefined
 async function load() {
   try {
-    const [pages, docs] = await Promise.all([api('/v1/wiki/pages'),api('/v1/knowledge/documents')])
+    const [pages, docs] = await Promise.all([api('/v1/wiki/pages'),documentCatalog()])
     items.value = pages.items; sources.value = docs.items.filter((d: any) => d.active_version && d.kind !== 'wiki')
   } catch (e) { error.value = (e as Error).message }
 }

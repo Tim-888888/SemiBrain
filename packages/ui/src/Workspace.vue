@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { documentCatalog } from './document-catalog'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import ComposerAddMenu from './ComposerAddMenu.vue'
 import ResizableSidebar from './ResizableSidebar.vue'
@@ -51,7 +52,7 @@ const denied = computed(() => adminPage.value && user.value?.role !== 'admin')
 const running = computed(() => sending.value || (!!activeRun.value && !['succeeded', 'failed', 'partial', 'cancelled', 'waiting_input'].includes(activeRun.value.status)))
 async function loadLists() {
   const current = generation
-  const [page, documents, capabilities] = await Promise.all([api('/v1/conversations'), api('/v1/knowledge/documents'), api('/v1/capabilities')])
+  const [page, documents, capabilities] = await Promise.all([api('/v1/conversations'), documentCatalog(), api('/v1/capabilities')])
   if (current !== generation) return
   multiAvailable.value = capabilities.multi_agent === true; conversations.value = page.items; conversationsCursor.value = page.next_cursor
   knowledge.value = documents.items.filter((item: any) => item.active_version)

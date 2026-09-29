@@ -58,12 +58,16 @@ b.ingestion_jobs.insert_one({'_id':job_id,'document_id':document['_id'],'asset_i
  'generation':document['revision'],'allow_external':False})
 def own_admission(database,collection,query,update):
  return database[collection].find_one_and_update({'$and':[query,{'_id':job_id}]},update,return_document=ReturnDocument.AFTER)
-def fail_index(*args):raise RuntimeError('RECOVERY_PROBE_VECTOR_OUTAGE')
+index_failure_reached=[]
+def fail_index(*args):
+ index_failure_reached.append(True)
+ raise RuntimeError('RECOVERY_PROBE_VECTOR_OUTAGE')
 original_admission,original_index=knowledge.admission,knowledge.index_chunks
 try:
  knowledge.admission,knowledge.index_chunks=own_admission,fail_index
  knowledge.process_one()
 finally:knowledge.admission,knowledge.index_chunks=original_admission,original_index
+assert index_failure_reached
 assert b.ingestion_jobs.find_one({'_id':job_id})['status']=='failed'
 assert b.documents.find_one({'_id':document['_id']})['active_version']==document['active_version']
 assert not b.document_versions.find_one({'_id':new_version}).get('projection_verified')
@@ -118,7 +122,8 @@ def main():
         checks=json.loads(execute('business',BUSINESS_CHECK,timeout=180))
         finished=datetime.now(timezone.utc)
         result={'verified':True,'snapshot_at':restored['snapshot_at'],'verified_at':finished.isoformat(),
-            'restore_and_verify_seconds':(finished-datetime.fromisoformat(restored['started_at'])).total_seconds(),
+            'post_start_verification_elapsed_seconds':(finished-datetime.fromisoformat(restored['started_at'])).total_seconds(),
+            'snapshot_to_verification_seconds':(finished-datetime.fromisoformat(restored['snapshot_at'])).total_seconds(),
             'verification_seconds':round(time.monotonic()-started,2),'authority_counts':verified,'checks':checks,
             'rpo_scope':'cold snapshot: no accepted write between authority hashes and cold copy; not a daily backup SLA',
             'failure_domain':'separate Docker containers, paths and network on the same ECS; not host-loss recovery',
