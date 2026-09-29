@@ -41,7 +41,8 @@ def sections(text):
 
 def build_chunk_tree(parsed, document_id, version, embedding_version):
     canonical_md = bool(parsed.image_refs) or not parsed.blocks or any(
-        b.location.get("line_start") is not None for b in parsed.blocks)
+        b.location.get("source") == "original" and b.location.get("line_start") is not None
+        for b in parsed.blocks)
     blocks = ([{"text": parsed.markdown, "kind": "markdown", "location": {}}]
               if canonical_md else [b.model_dump() for b in parsed.blocks])
     chunks, parents = [], []

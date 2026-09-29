@@ -39,3 +39,11 @@ def test_revision_shifts_later_provenance_and_marks_changed_source():
     updated = revise(parsed, chunk, 'First revised', 'v2')
     assert updated.source_spans[0]['location']['source'] == 'manual_revision'
     assert updated.markdown[updated.source_spans[1]['start']:updated.source_spans[1]['end']] == 'Second'
+
+
+def test_record_line_numbers_do_not_imply_whole_document_markdown_offsets():
+    parsed = ParseResult(status='staged', source_hash='hash', markdown='| A | B |', blocks=[
+        Block(kind='table_row', text='["A", "B"]', location={'record': 1, 'line_start': 1, 'line_end': 1})])
+    chunks, _ = build_chunk_tree(parsed, 'doc', 'version', 'embedding')
+    assert chunks[0]['location']['record'] == 1
+    assert chunks[0]['location']['coordinate_system'] == 'parser_block'
