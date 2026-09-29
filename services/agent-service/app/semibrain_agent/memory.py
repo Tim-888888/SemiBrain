@@ -168,7 +168,7 @@ def terms(text):
 
 def guard(row, *, session=None):
     binding = row.get("memory_binding")
-    if not binding:
+    if not binding or binding.get("ids") == []:
         return
     from semibrain_agent.harness import RunStopped
     current = settings(binding["owner_id"], session=session)
@@ -217,7 +217,7 @@ def publication(harness, refs, session=None):
         from semibrain_agent.harness import RunStopped
         raise RunStopped("MEMORY_PUBLICATION_STOPPED")
     guard(row, session=session)
-    if session is not None and row.get("memory_binding"):
+    if session is not None and row.get("memory_binding") and row["memory_binding"].get("ids") != []:
         binding = row["memory_binding"]
         # Write-lock the epoch so a concurrent deletion and publication cannot both win.
         changed = db().memory_settings.update_one({"_id": binding["owner_id"], "revision": binding["revision"]},

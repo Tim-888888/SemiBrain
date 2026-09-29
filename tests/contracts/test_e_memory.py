@@ -74,6 +74,20 @@ def test_changed_memory_stops_running_context(monkeypatch):
         memory.guard({"memory_binding": {"owner_id": "u", "revision": 3, "expires_at": now() - timedelta(seconds=1)}})
 
 
+def test_unused_memory_does_not_stop_an_unrelated_run(monkeypatch):
+    settings = Mock(return_value={"revision": 9})
+    monkeypatch.setattr(memory, "settings", settings)
+    row = {"memory_binding": {"owner_id": "u", "revision": 1, "ids": []}}
+    memory.guard(row)
+    settings.assert_not_called()
+    store = SimpleNamespace(runs=Mock(), memory_settings=Mock())
+    store.runs.find_one.return_value = row
+    monkeypatch.setattr(memory, "db", lambda: store)
+    harness = SimpleNamespace(db=store, predicate=lambda: {"_id": "run"})
+    assert memory.publication(harness, ["doc:new"], session=object()) == ["doc:new"]
+    store.memory_settings.update_one.assert_not_called()
+
+
 def test_context_reloads_pinned_ids_and_does_not_copy_into_history(monkeypatch):
     store = SimpleNamespace(memories=Mock(), runs=Mock())
     row = {"memory_binding": {"owner_id": "u", "revision": 1, "ids": ["m"]}}
