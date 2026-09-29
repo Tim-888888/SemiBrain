@@ -9,6 +9,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field
 from pymongo import ReturnDocument
 
+from semibrain_common.event_governance import Recovery, quarantine_items, recover_transport, redrive
 from semibrain_common.runtime import (
     canonical,
     database,
@@ -67,6 +68,7 @@ def queue_snapshot(db, service):
         "queues": queues, "workers": workers,
         "pending_outbox": db.outbox.count_documents({"delivery_state": "pending"}),
         "quarantined_events": db.quarantine.count_documents({"state": "pending"}),
+        "quarantine": quarantine_items(db),
         "authority": "durable_service_records", "observed_at": now()}
 
 
@@ -107,6 +109,16 @@ def router_for(service):
         if service not in {"agent", "business"}:
             failure("DRAIN_NOT_SUPPORTED", 400)
         return set_drain(database(service), form)
+
+    @router.post("/internal/v1/operations/quarantine/{identity}/redrive")
+    def retry_event(identity: str, form: Recovery, request: Request):
+        internal_identity(request, {"conversation"})
+        return redrive(database(service), service, identity, form)
+
+    @router.post("/internal/v1/operations/recover-transport")
+    def recover(form: Recovery, request: Request):
+        internal_identity(request, {"conversation"})
+        return recover_transport(database(service), service, form)
     return router
 
 

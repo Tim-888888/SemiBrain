@@ -169,10 +169,15 @@ def probe(form: Probe, request: Request):
         if previous["provider"] != form.provider:
             failure("IDEMPOTENCY_CONFLICT", 409)
         return {key: previous.get(key) for key in ("status", "error_code", "result_count", "elapsed_ms")}
-    search_providers.select(form.provider)
     row = current()
     started = time.monotonic()
-    reserve(form.provider, identity, revision=row["revision"])
+    try:
+        search_providers.select(form.provider)
+        reserve(form.provider, identity, revision=row["revision"])
+    except WebError as exc:
+        # Admission rejection is not a provider request and must not become a 500.
+        return {"status": "rejected", "error_code": str(exc), "result_count": None,
+                "elapsed_ms": 0}
     try:
         result = search_providers.request(form.provider, "半导体制造", 1,
             timeout=row["policy"]["timeout_seconds"], guard=lambda: None)

@@ -3,6 +3,18 @@ import { onMounted, ref } from 'vue'
 import { api, post } from './api'
 const search = ref<any>(null), queues = ref<any[]>([]), error = ref(''), notice = ref(''), busy = ref(false)
 const names: Record<string, string> = { bocha: '博查', zhipu: '智谱 Search Pro', conversation: '会话服务', agent: 'Agent 服务', business: '业务服务' }
+const recoveryReason = ref(''), recoveryKey = ref('')
+async function recover(service?: string, identity?: string) {
+  busy.value = true; error.value = ''; notice.value = ''
+  if (!recoveryKey.value) recoveryKey.value = crypto.randomUUID()
+  try {
+    await post(service ? `/admin/v1/operations/${service}/quarantine/${encodeURIComponent(identity!)}/redrive` : '/admin/v1/operations/recover-transport',
+      { request_id: recoveryKey.value, reason: recoveryReason.value })
+    notice.value = service ? '事件已重新排队，原事件标识和执行尝试次数保留。' : '各服务已重新投递持久化事件，已消费事件会自动去重。'
+    recoveryKey.value = ''; await refresh()
+  } catch (e) { error.value = (e as Error).message }
+  finally { busy.value = false }
+}
 async function refresh() {
   busy.value = true; error.value = ''
   const results = await Promise.allSettled([api('/admin/v1/search'), api('/admin/v1/operations/queues')])
@@ -43,9 +55,11 @@ onMounted(refresh)
       <details><summary>最近 20 次供应商请求</summary><div class="comparison-scroll"><table class="comparison-table"><thead><tr><th>时间</th><th>供应商 / 配置版本</th><th>状态 / 原因</th><th>候选数</th><th>耗时</th></tr></thead><tbody><tr v-for="(item, index) in search.recent" :key="index"><td>{{ item.created_at }}</td><td>{{ names[item.provider] }} / {{ item.revision }}</td><td>{{ item.status }} {{ item.error_code || '' }}</td><td>{{ item.result_count ?? '—' }}</td><td>{{ item.elapsed_ms ?? '—' }} ms</td></tr></tbody></table></div></details>
     </section>
     <section><h2>队列与 Worker</h2><p class="muted">任务数来自持久记录。暂停只停止领取新任务，在途执行与状态对账继续；恢复不会清空已用次数或创建重复任务。</p>
+      <details><summary>事件恢复操作</summary><p>用于事件中断后的对账恢复。不会重新运行已完成任务；失败后重试沿用同一操作编号。</p><label>操作原因 <input v-model="recoveryReason" maxlength="300" @input="recoveryKey = ''" /></label><button class="secondary" :disabled="busy || recoveryReason.trim().length < 5" @click="recover()">恢复事件传输</button></details>
       <article v-for="item in queues" :key="item.service" class="queue-card"><div class="page-title"><h3>{{ names[item.service] }}</h3><button v-if="item.service !== 'conversation' && !item.unavailable" class="secondary" :disabled="busy" @click="drain(item)">{{ item.draining ? '恢复领取任务' : '暂停领取新任务' }}</button></div>
         <p v-if="item.unavailable" class="error">服务暂时不可达，无法核验状态。</p><template v-else><p>{{ item.draining ? '已暂停领取' : '正常领取' }} · 待投递事件 {{ item.pending_outbox }} · 隔离事件 {{ item.quarantined_events }}</p><p v-for="worker in item.workers" :key="worker.id" class="small muted">Worker {{ worker.id }} · {{ worker.online ? '在线' : '心跳已过期' }} · {{ worker.last_seen }}</p><p v-if="!item.workers.length" class="muted">尚无近期 Worker 心跳，不能确认在线。</p>
           <div v-for="queue in item.queues" :key="queue.name"><h4>{{ queue.name }}</h4><p>排队 {{ queue.counts.queued }} · 在途 {{ queue.counts.running }} · 失败 {{ queue.counts.failed }} · 过期租约 {{ queue.expired_leases }} · 最长等待 {{ queue.oldest_wait_seconds ?? '—' }} 秒</p><details><summary>最近待处理和失败任务</summary><ul><li v-for="job in queue.recent" :key="job.id"><code>{{ job.id }}</code> · {{ job.status }} · 第 {{ job.attempt ?? 0 }} 次尝试</li></ul></details></div>
+          <details v-if="item.quarantine?.length"><summary>隔离事件（最多 100 条）</summary><ul><li v-for="event in item.quarantine" :key="event.id"><code>{{ event.id }}</code> · {{ event.reason }} · {{ event.state }}<button v-if="item.service !== 'business'" class="secondary" :disabled="busy || event.state !== 'pending' || (event.redrives || 0) >= 2 || recoveryReason.trim().length < 5" @click="recover(item.service,event.id)">重新排队</button></li></ul><p class="small muted">请在事件恢复操作中填写原因；每个事件最多人工重试两次，不显示事件正文。</p></details>
         </template></article>
     </section>
   </section>

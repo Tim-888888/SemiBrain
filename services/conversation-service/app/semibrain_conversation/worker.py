@@ -1,3 +1,4 @@
+from semibrain_common.event_governance import consume_redrives
 from semibrain_common.runtime import call, consume, now, relay, uid
 from semibrain_common.worker import PollTask, worker_app
 
@@ -52,6 +53,7 @@ def project(event, session):
 def tick():
     initialize()
     relay(db())
+    consume_redrives(db(), "conversation-agent-events", project)
     consume(db(), "stream:agent", "conversation-agent-events", project)
     for run in (
         db()

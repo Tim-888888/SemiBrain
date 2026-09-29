@@ -120,3 +120,41 @@ def test_configured_complement_is_followed_without_provider_ping_pong():
         "data": {"provider": "zhipu", "complement_provider": "bocha"}}, {"query": "public topic"}, "call")
     assert execute.call_count == 1 and json.loads(execute.call_args.args[1])["provider"] == "bocha"
     assert len(result["search_attempts"]) == 2
+
+
+@pytest.mark.parametrize("code", ["WEB_PROVIDER_UNCONFIGURED", "WEB_PROVIDER_DAILY_LIMIT"])
+def test_search_probe_admission_failure_is_visible_without_provider_request(monkeypatch, code):
+    monkeypatch.setattr(search, "authorize_request", lambda *args: {"subject_id": "owner"})
+    monkeypatch.setattr(search, "require_manager", lambda *args: None)
+    store = Mock()
+    store.search_audits.find_one.return_value = None
+    monkeypatch.setattr(search, "db", lambda: store)
+    monkeypatch.setattr(search, "current", lambda: {"revision": 1})
+    monkeypatch.setattr(search.search_providers, "select", Mock(side_effect=WebError(code)))
+    request = Mock()
+    monkeypatch.setattr(search.search_providers, "request", request)
+    result = search.probe(search.Probe(request_id=uuid4(), provider="bocha"), None)
+    assert result["status"] == "rejected" and result["error_code"] == code
+    request.assert_not_called()
+
+
+def test_quarantine_listing_never_exposes_event_payload_or_delegation():
+    from semibrain_common.event_governance import quarantine_items
+    store = Mock()
+    store.quarantine.find.return_value.sort.return_value.limit.return_value = [
+        {"_id": "event", "state": "pending", "reason": "SCHEMA_VERSION", "event": {"token": "secret"}}]
+    result = quarantine_items(store)
+    assert "secret" not in str(result) and "token" not in str(result)
+
+
+@pytest.mark.parametrize("row", [None, {"redrives": 2}, {"consumer": "other"}])
+def test_event_redrive_rejects_nonpending_exhausted_and_wrong_consumer(monkeypatch, row):
+    from semibrain_common import event_governance as gov
+    store = Mock()
+    store.queue_audits.find_one.return_value = None
+    store.quarantine.find_one.return_value = row
+    monkeypatch.setattr(gov, "transaction", lambda fn: fn(None))
+    with pytest.raises(HTTPException):
+        gov.redrive(store, "agent", "event", gov.Recovery(
+            request_id=uuid4(), actor_id=uuid4(), reason="Synthetic retry acceptance"))
+    store.outbox.insert_one.assert_not_called()
