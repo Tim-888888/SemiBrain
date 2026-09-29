@@ -465,6 +465,8 @@ def execute_one():
         unknown = set(re.findall(r"\[(\d+)\]", body)) - valid
         if unknown:
             body = re.sub(r"\[(\d+)\]", lambda m: m[0] if m[1] in valid else "[来源待核验]", body)
+        from semibrain_agent.memory import publication
+        refs = publication(model.harness, refs)
         client.request("POST", "/internal/v1/lineage/check", json={"refs": refs})
         report = Report(
             report_id=uid(),
@@ -479,6 +481,7 @@ def execute_one():
         ).model_dump(mode="json")
 
         def finish(session):
+            publication(model.harness, refs, session=session)
             changed = db().runs.find_one_and_update(
                 {
                     "_id": run["_id"],
@@ -490,6 +493,7 @@ def execute_one():
                     "$set": {
                         "status": "partial" if unknown or partial_evidence else "succeeded",
                         "report_id": report["report_id"],
+                        "lineage_refs": refs,
                         "body_draft": "",
                         "progress": "完成",
                         "usage": model.usage,
@@ -518,7 +522,8 @@ def execute_one():
         from semibrain_agent.control import acknowledge_stopped
 
         acknowledge_stopped(run["_id"], fence)
-        error_kind = type(exc).__name__
+        memory_stopped = str(exc) in {"MEMORY_CHANGED", "MEMORY_SOURCE_UNAVAILABLE"}
+        error_kind = str(exc) if memory_stopped else type(exc).__name__
 
         def failed(session):
             row = db().runs.find_one_and_update(
@@ -532,7 +537,7 @@ def execute_one():
                     "$set": {
                         "status": "failed",
                         "body_draft": "",
-                        "progress": "本次处理未完成",
+                        "progress": "个人记忆已变更或来源失效，请重新提交问题" if memory_stopped else "本次处理未完成",
                         "error": error_kind,
                         "completed_at": now(),
                     },

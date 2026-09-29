@@ -35,6 +35,11 @@ def request(model, system, user, *, max_tokens, on_text, guard):
 
     def execute(messages, output, current_phase, callback=None, refs=None):
         check()
+        if current_phase != "context.compact" and model.context.get("subject_ref") and model.context.get("auth_version"):
+            from semibrain_agent.memory import prepare
+            memory = prepare(model.harness, model.context)
+            if memory and model.final:
+                messages = [*messages, memory]
         identity = str(uuid5(NAMESPACE_URL, model.harness.run_id + current_phase
                             + digest(canonical([system, messages, model.profile.snapshot(), output]))))
         cached = model.harness.db.model_turns.find_one({"_id": identity, "run_id": model.harness.run_id})

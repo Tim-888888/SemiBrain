@@ -14,7 +14,7 @@ from semibrain_common.runtime import canonical, digest
 from semibrain_agent.delivery import Delivery
 from semibrain_agent.evidence_view import evidence_views
 
-PROMPT_VERSION = "investigator-prompts-v33"
+PROMPT_VERSION = "investigator-prompts-v34"
 CARD_VERSION = "semiconductor-intents-v1"
 INTENT_CARDS = [
     {
@@ -443,6 +443,8 @@ class PromptAssembler:
 
 def redact_preview(value):
     if isinstance(value, dict):
+        if value.get("_context", {}).get("kind") == "memory":
+            return {"role": "user", "content": "[个人记忆按请求即时读取，预览不保存副本]"}
         return {
             key: "[redacted]"
             if re.search(r"password|secret|api_key|token|authorization|cookie", key, re.I)

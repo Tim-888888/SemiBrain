@@ -10,6 +10,12 @@ export type Message = Partial<Run> & { id: string; role: string; text?: string; 
 let csrf = ''
 export function setCsrf(value: string) { csrf = value }
 const labels: Record<string, string> = {
+  MEMORY_CHANGED: '个人记忆已变更，本轮已停止使用旧内容。请重新提交问题。',
+  MEMORY_SOURCE_UNAVAILABLE: '记忆关联的原回答或来源已不可用。',
+  MEMORY_EXCERPT_REQUIRED: '调查摘要请从当前可访问的原回答复制连续原文。',
+  MEMORY_EXPIRY_INVALID: '有效期需晚于当前时间且在一年内。',
+  MEMORY_LIMIT: '最多保存 100 条记忆，请删除不再需要的内容。',
+  MEMORY_NOT_FOUND: '记忆不存在或无权访问。',
   SKILL_REVIEW_REQUIRED: '发布前请确认审核并填写审核说明。',
   SKILL_UNAVAILABLE: '技能已停用、权限变化或版本不适用于本轮。',
   SKILL_SCRIPT_SYNTAX: 'Python 脚本存在语法错误，请检查后再保存。',
