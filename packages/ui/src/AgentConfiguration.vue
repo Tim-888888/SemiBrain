@@ -1,15 +1,15 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, toRaw } from 'vue'
 import { api, post } from './api'
 const data = ref<any>(null), draft = ref<any>(null), selected = ref<any>(null)
 const busy = ref(false), error = ref(''), notice = ref(''), name = ref('配置修订'), reason = ref(''), reviewed = ref(false)
 const roleNames: Record<string,string> = { understanding: '意图理解', investigator: '单 Agent / 快速回答', reviewer: '证据审核', supervisor: '多 Agent 调度', sqlbot: '业务查询', rag: '知识检索', tool: '计算与外部资料', rca: '多 Agent 汇总' }
-async function load() { data.value = await api('/admin/v1/agent-configuration'); if (!draft.value) draft.value = structuredClone(data.value.active.settings) }
+async function load() { data.value = await api('/admin/v1/agent-configuration'); if (!draft.value) draft.value = structuredClone(toRaw(data.value.active.settings)) }
 async function act(action: () => Promise<void>) { busy.value = true; error.value = ''; notice.value = ''; try { await action() } catch (e) { error.value = (e as Error).message } finally { busy.value = false } }
 async function save() { await act(async () => { const result = await post('/admin/v1/agent-configuration/drafts', { request_id: crypto.randomUUID(), expected_revision: data.value.revision, name: name.value, settings: draft.value }); await load(); selected.value = await api('/admin/v1/agent-configuration/versions/' + result.version); reviewed.value = false; notice.value = '草稿已保存，审核发布后用于新任务。' }) }
 async function inspect(version: string) { await act(async () => { selected.value = await api('/admin/v1/agent-configuration/versions/' + encodeURIComponent(version)); reviewed.value = false; reason.value = '' }) }
 async function publish(action: string) { await act(async () => { await post('/admin/v1/agent-configuration/publish', { request_id: crypto.randomUUID(), expected_revision: data.value.revision, version: selected.value._id || selected.value.version, action, reviewed: reviewed.value, reason: reason.value }); await load(); notice.value = action === 'publish' ? '配置已发布。已有任务保持原版本，新任务使用此版本。' : '已回滚，新任务使用恢复的版本。'; selected.value = null }) }
-function useDraft() { draft.value = structuredClone(selected.value.settings); name.value = (selected.value.name || '内置配置') + ' 修订'; selected.value = null }
+function useDraft() { draft.value = structuredClone(toRaw(selected.value.settings)); name.value = (selected.value.name || '内置配置') + ' 修订'; selected.value = null }
 onMounted(() => act(load))
 </script>
 <template>
