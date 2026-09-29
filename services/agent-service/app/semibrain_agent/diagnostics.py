@@ -34,7 +34,7 @@ def call_item(row, kind):
     # Currency is unknown without an explicit price snapshot. Reservation is not usage.
     usage = row.get("usage") or {}
     result["usage"] = {key: value for key, value in usage.items()
-                       if key in {"input_tokens", "output_tokens", "total_tokens", "cached_tokens"}
+                       if key in {"input_tokens", "output_tokens", "total_tokens", "cached_input_tokens"}
                        and isinstance(value, int) and not isinstance(value, bool) and value >= 0}
     result["usage_known"] = "total_tokens" in result["usage"]
     result["currency_cost"] = None
@@ -72,4 +72,6 @@ def diagnostics(run_id: str, request: Request):
             "truncated": any(value > 300 for value in counts.values()),
             "trace": trace_link(run_id), "currency_cost": None,
             "stop_code": run.get("stop_code"), "budget": run.get("budget"),
+            "configuration_version": (run.get("agent_configuration") or {}).get("version"),
+            "version_bundle": run.get("version_bundle"),
             "read_only": True}

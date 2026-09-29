@@ -788,6 +788,181 @@
         }
       }
     },
+    "/admin/v1/evaluations": {
+      "get": {
+        "summary": "Evaluations",
+        "operationId": "evaluations_admin_v1_evaluations_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Evaluate",
+        "operationId": "evaluate_admin_v1_evaluations_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvaluationEdit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/agent-configuration": {
+      "get": {
+        "summary": "Overview",
+        "operationId": "overview_admin_v1_agent_configuration_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/agent-configuration/versions/{version}": {
+      "get": {
+        "summary": "Details",
+        "operationId": "details_admin_v1_agent_configuration_versions__version__get",
+        "parameters": [
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/agent-configuration/drafts": {
+      "post": {
+        "summary": "Draft",
+        "operationId": "draft_admin_v1_agent_configuration_drafts_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigDraft"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/v1/agent-configuration/publish": {
+      "post": {
+        "summary": "Publish",
+        "operationId": "publish_admin_v1_agent_configuration_publish_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/v1/knowledge/jobs/{job_id}/cancel": {
       "post": {
         "summary": "Cancel Ingestion",
@@ -3030,6 +3205,46 @@
   },
   "components": {
     "schemas": {
+      "AgentSettings": {
+        "properties": {
+          "multi_agent_enabled": {
+            "type": "boolean",
+            "title": "Multi Agent Enabled",
+            "default": true
+          },
+          "models": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Models"
+          },
+          "role_notes": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Role Notes"
+          },
+          "intent_cards": {
+            "items": {
+              "$ref": "#/components/schemas/IntentCard"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Intent Cards"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "models",
+          "role_notes",
+          "intent_cards"
+        ],
+        "title": "AgentSettings"
+      },
       "AnswerInput": {
         "properties": {
           "subject_id": {
@@ -3275,6 +3490,88 @@
         ],
         "title": "CheckpointInput"
       },
+      "ConfigChange": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          },
+          "version": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Version"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "publish",
+              "rollback"
+            ],
+            "title": "Action"
+          },
+          "reviewed": {
+            "type": "boolean",
+            "const": true,
+            "title": "Reviewed"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 5,
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "expected_revision",
+          "version",
+          "action",
+          "reviewed",
+          "reason"
+        ],
+        "title": "ConfigChange"
+      },
+      "ConfigDraft": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/AgentSettings"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "expected_revision",
+          "name",
+          "settings"
+        ],
+        "title": "ConfigDraft"
+      },
       "ConversationInput": {
         "properties": {
           "request_id": {
@@ -3438,6 +3735,80 @@
           "name"
         ],
         "title": "Entity"
+      },
+      "EvaluationEdit": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          },
+          "run_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Run Id"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "complete",
+              "partial",
+              "failed"
+            ],
+            "title": "Outcome"
+          },
+          "grounding": {
+            "type": "string",
+            "enum": [
+              "supported",
+              "unsupported",
+              "not_checked"
+            ],
+            "title": "Grounding"
+          },
+          "expected_action": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "greeting",
+                  "knowledge",
+                  "attachment",
+                  "explain",
+                  "rewrite",
+                  "business",
+                  "clarify",
+                  "investigate"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Action"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Note",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "expected_revision",
+          "run_id",
+          "outcome",
+          "grounding"
+        ],
+        "title": "EvaluationEdit"
       },
       "ExecutionAuthorization": {
         "properties": {
@@ -3801,6 +4172,49 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "IntentCard": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,39}$",
+            "title": "Id"
+          },
+          "scope": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Scope"
+          },
+          "slots": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Slots"
+          },
+          "rule": {
+            "type": "string",
+            "maxLength": 1500,
+            "minLength": 1,
+            "title": "Rule"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "scope",
+          "slots",
+          "rule"
+        ],
+        "title": "IntentCard"
       },
       "IntrospectInput": {
         "properties": {

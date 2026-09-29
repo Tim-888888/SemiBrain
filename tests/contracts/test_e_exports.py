@@ -22,6 +22,14 @@ def picture():
     return out.getvalue()
 
 
+def test_portrait_picture_is_fitted_inside_the_printable_page():
+    out = io.BytesIO()
+    Image.new("RGB", (80, 1200), "green").save(out, format="PNG")
+    doc = Document(io.BytesIO(report_rendering.word("![长图](/portrait)\n\n尾句", [], {"/portrait": out.getvalue()})))
+    assert doc.inline_shapes[0].height.inches <= 6.501
+    assert doc.paragraphs[-1].text == "尾句"
+
+
 @pytest.mark.parametrize(
     "data", [{"body_markdown": "forged"}, {"owner_id": str(uuid4())}, {"format": "html"}]
 )

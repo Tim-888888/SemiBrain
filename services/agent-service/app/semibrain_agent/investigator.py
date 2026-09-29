@@ -46,7 +46,6 @@ from semibrain_agent.provider import (
     ModelProfile,
     ModelTurn,
     ProviderAdapter,
-    profile_for,
 )
 from semibrain_agent.review_delivery import draft_blocks, retain_reviewed, reviewed_partial
 
@@ -110,8 +109,9 @@ class Investigator:
             graph_version=self.graph_version, state_version=self.state_version,
         )
         self.state = self.checkpoints.restore()
+        from semibrain_agent.configuration import profile as configured_profile
         runtime_models = {
-            role: profile_for(role).snapshot()
+            role: configured_profile(role, context.get("agent_configuration")).snapshot()
             for role in self.roles
         }
         self.bundle = run.get("version_bundle") or {
@@ -232,6 +232,10 @@ class Investigator:
             stable_tools,
         )
         system = system_override if system_override is not None else self.prompts.system(role)
+        from semibrain_agent.configuration import role_note
+        note = role_note(self.context, role)
+        if note and note not in system:
+            system += note
         if ARCHIVE_RULE not in system:
             system += "\n\n" + ARCHIVE_RULE
         tools = stable_tools(tools)

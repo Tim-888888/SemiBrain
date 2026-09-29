@@ -9,10 +9,11 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt
 from markdown_it import MarkdownIt
+from PIL import Image
 
 from semibrain_business.sandbox import provider
 
-VERSION = "report-markdown-v1"
+VERSION = "report-markdown-v2"
 
 
 def inline(paragraph, children, images, width=5.7):
@@ -38,7 +39,9 @@ def inline(paragraph, children, images, width=5.7):
         elif token.type == "image":
             picture = images.get(token.attrGet("src"))
             if picture:
-                paragraph.add_run().add_picture(io.BytesIO(picture), width=Inches(width))
+                with Image.open(io.BytesIO(picture)) as decoded:
+                    fitted_width = min(width, 6.5 * decoded.width / decoded.height)
+                paragraph.add_run().add_picture(io.BytesIO(picture), width=Inches(fitted_width))
                 if token.content:
                     paragraph.add_run("\n" + token.content)
             else:

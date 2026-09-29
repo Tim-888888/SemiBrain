@@ -31,7 +31,9 @@ router = APIRouter()
 @router.get("/internal/v1/capabilities")
 def capabilities(request: Request):
     internal_identity(request, {"conversation"})
-    return {"multi_agent": os.getenv("SEMIBRAIN_MULTI_AGENT_ENABLED", "false").lower() == "true"}
+    from semibrain_agent.configuration import snapshot
+    enabled = os.getenv("SEMIBRAIN_MULTI_AGENT_ENABLED", "false").lower() == "true"
+    return {"multi_agent": enabled and snapshot()["settings"]["multi_agent_enabled"]}
 
 
 @router.get("/internal/v1/runs/{run_id}/tasks/{task_id}/authorization")
@@ -67,12 +69,14 @@ def accept(command, session):
         if existing["payload_hash"] != payload_hash and not compatible:
             failure("IDEMPOTENCY_CONFLICT", 409)
         return existing
+    from semibrain_agent.configuration import snapshot as configuration_snapshot
     row = {
         "_id": str(command.run_id),
         "command": payload,
         "payload_hash": payload_hash,
         "retention_version": 1,
         "context_compaction": policy_snapshot(),
+        "agent_configuration": configuration_snapshot(session),
         "execution_policy": {
             "context": os.getenv("SEMIBRAIN_DSH_CONTEXT_ENABLED", "true").lower() == "true",
             "efficiency": os.getenv("SEMIBRAIN_DSH_EFFICIENCY_ENABLED", "true").lower() == "true",
@@ -245,6 +249,8 @@ def execute_one():
         return False
     try:
         context = call("conversation", "GET", "/internal/v1/runs/" + run["_id"] + "/context").json()
+        from semibrain_agent.configuration import baseline
+        context["agent_configuration"] = run.get("agent_configuration") or baseline()
         from semibrain_agent.conversation_history import load_history
         context = load_history(run["_id"], context)
         client = BusinessClient(run["_id"], context["task_id"], context["input"]["input_revision"])

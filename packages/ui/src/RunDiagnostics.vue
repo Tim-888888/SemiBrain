@@ -20,6 +20,7 @@ onMounted(refresh)
     <p class="small muted">运行编号：{{ runId }}</p>
     <p v-if="error" class="error" role="alert">{{ error }}</p><p v-if="loading" role="status">正在读取执行记录…</p>
     <template v-if="data">
+      <p v-if="data.configuration_version" class="small muted">任务固定配置版本：{{ data.configuration_version }}</p>
       <p>模型请求 {{ data.counts.model }} 次 · 工具调用 {{ data.counts.tool }} 次<span v-if="data.stop_code"> · 结束原因：{{ data.stop_code }}</span></p>
       <p v-if="data.trace.url"><a :href="data.trace.url" target="_blank" rel="noopener noreferrer">在 Langfuse 查看链路 ↗</a><span class="small muted">（需登录有权访问的 Langfuse 项目；遥测可能延迟）</span></p>
       <p v-else class="small muted">Langfuse 跳转尚未配置。下方显示实际持久化记录，独立于遥测服务。</p>

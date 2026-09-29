@@ -14,7 +14,7 @@ from semibrain_common.runtime import canonical, digest
 from semibrain_agent.delivery import Delivery
 from semibrain_agent.evidence_view import evidence_views
 
-PROMPT_VERSION = "investigator-prompts-v34"
+PROMPT_VERSION = "investigator-prompts-v35"
 CARD_VERSION = "semiconductor-intents-v1"
 INTENT_CARDS = [
     {
@@ -362,7 +362,12 @@ class PromptAssembler:
         if role == "understanding":
             # Classification metadata is only needed while routing. Do not prime
             # execution or review with unrelated example goals and optional slots.
-            sections.insert(2, {"name": "published_intent_cards", "text": canonical(INTENT_CARDS)})
+            from semibrain_agent.configuration import cards
+            sections.insert(2, {"name": "published_intent_cards", "text": canonical(cards(self.context))})
+        from semibrain_agent.configuration import role_note
+        note = role_note(self.context, role)
+        if note:
+            sections.append({"name": "reviewed_role_note", "text": note})
         return sections
 
     def system(self, role="investigator"):
@@ -425,11 +430,13 @@ class PromptAssembler:
         return messages
 
     def snapshot(self):
+        from semibrain_agent.configuration import pinned
         return {
             "prompt_version": PROMPT_VERSION,
             "card_version": CARD_VERSION,
             "prompt_hash": digest(self.system()),
             "tool_version": self.catalog.get("version"),
+            "configuration_version": pinned(self.context)["version"],
         }
 
     def preview(self, role="investigator"):

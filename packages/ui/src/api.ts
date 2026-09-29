@@ -10,6 +10,10 @@ export type Message = Partial<Run> & { id: string; role: string; text?: string; 
 let csrf = ''
 export function setCsrf(value: string) { csrf = value }
 const labels: Record<string, string> = {
+  CONFIG_MODEL_UNAVAILABLE: '所选模型未在当前部署中批准，请重新选择可用模型。',
+  CONFIG_BASELINE_CHANGED: '系统基线已升级，请基于此内容创建新草稿并重新审核。',
+  CONFIG_ROLLBACK_UNPUBLISHED: '只能回滚到曾经发布过的版本。',
+  CONFIG_VERSION_UNAVAILABLE: '配置版本不可用，请刷新或联系管理员。',
   EXPORT_QUEUE_LIMIT: '已有 3 个文件正在转换，请等待完成后再导出。',
   EXPORT_EXPIRED: '导出文件已过期，请从原回答重新生成。',
   EXPORT_SOURCE_CHANGED: '原回答已变化，请刷新后重新导出。',
