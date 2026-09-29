@@ -9,7 +9,7 @@ const edit = ref(false), form = ref<any>({}), from = ref(''), to = ref(''), reas
 const types:Record<string,string> = {product:'产品',process:'工序',equipment:'设备',chamber:'腔体',defect:'缺陷',alarm:'告警',sop:'SOP',action:'维护动作',concept:'概念'}
 const relations:Record<string,string> = {applies_to:'适用于',occurs_in:'发生于',references:'引用',recommended_action:'处理建议',precedes:'先于',cooccurs:'共现／相关',validated_cause:'经验证的因果'}
 const nodes = computed(() => catalog.value.entities.filter((n:any) => n.id === n.canonical_id).slice(0,30))
-const links = computed(() => catalog.value.edges.filter((e:any) => nodes.value.some((n:any) => n.id === canonical(e.subject_id)) && nodes.value.some((n:any) => n.id === canonical(e.object_id))))
+const links = computed(() => catalog.value.edges.filter((e:any) => e.effective && nodes.value.some((n:any) => n.id === canonical(e.subject_id)) && nodes.value.some((n:any) => n.id === canonical(e.object_id))))
 function entity(id:string) { return catalog.value.entities.find((n:any) => n.id === id) }
 function canonical(id:string) { return entity(id)?.canonical_id || id }
 function point(id:string) { const index = nodes.value.findIndex((n:any) => n.id === canonical(id)); const angle = index * Math.PI * 2 / Math.max(1,nodes.value.length); return {x:420+Math.cos(angle)*310,y:220+Math.sin(angle)*170} }
@@ -30,12 +30,10 @@ async function save() { await act(async () => {
   await post('/admin/v1/graph/edges',{...value,expected_revision:catalog.value.revision,valid_until:expires?new Date(expires+'T23:59:59+08:00').toISOString():null})
   edit.value=false;await load();notice.value='关系已保存。请重建图谱投影后用于关联检索。'
 }) }
-async function disable(edge:any) { await act(async () => {
-  await post('/admin/v1/graph/edges',{request_id:crypto.randomUUID(),expected_revision:catalog.value.revision,edge_id:edge.id,
-    subject:{name:entity(edge.subject_id).name,kind:entity(edge.subject_id).kind},object:{name:entity(edge.object_id).name,kind:entity(edge.object_id).kind},
-    relation:edge.relation,document_id:edge.document_id,version:edge.version,chunk_id:edge.chunk_id,quote:edge.quote,
-    verification_note:edge.verification_note,valid_until:edge.valid_until,enabled:false})
-  await load();result.value=null;notice.value='关系已停用，当前检索立即生效。'
+async function toggle(edge:any) { await act(async () => {
+  await post('/admin/v1/graph/state',{request_id:crypto.randomUUID(),expected_revision:catalog.value.revision,edge_id:edge.id,
+    enabled:!edge.enabled,reason:edge.enabled?'管理员手动停用关系':'管理员核验来源后恢复关系'})
+  await load();result.value=null;notice.value=edge.enabled?'关系已停用，当前检索立即生效。':'关系已恢复，请重建图谱投影。'
 }) }
 async function rebuild() { await act(async () => { await post('/admin/v1/graph/rebuild',{request_id:crypto.randomUUID(),expected_revision:catalog.value.revision});await load();notice.value='图谱投影已重建。' }) }
 async function merge() { await act(async () => { await post('/admin/v1/graph/merge',{request_id:crypto.randomUUID(),expected_revision:catalog.value.revision,source_id:from.value,target_id:to.value,reason:reason.value});await load();notice.value='实体已合并，原始名称和映射仍保留。请重建图谱投影。' }) }
@@ -58,7 +56,7 @@ onMounted(() => act(load))
       <label>工程验证说明<textarea v-model="form.verification_note" maxlength="1000" :minlength="form.relation==='validated_cause'?20:0" :required="form.relation==='validated_cause'" placeholder="因果关系必须记录验证依据；其他关系可补充适用边界"/></label><label>有效期至（可留空）<input type="date" v-model="form.expires"/></label>
       <button class="primary">保存关系</button><button class="secondary" type="button" @click="edit=false">取消</button></fieldset></form>
     <details v-if="manage && nodes.length>1" class="upload-card"><summary>合并同名实体</summary><form @submit.prevent="merge"><div class="form-row"><label>原实体<select v-model="from" required><option value="" disabled>请选择</option><option v-for="n in nodes" :value="n.id">{{ n.name }} · {{ types[n.kind] }}</option></select></label><label>合并到<select v-model="to" required><option value="" disabled>请选择</option><option v-for="n in nodes.filter((v:any)=>v.id!==from)" :value="n.id">{{ n.name }} · {{ types[n.kind] }}</option></select></label></div><label>合并依据<input v-model="reason" minlength="5" maxlength="500" required/></label><button class="primary" :disabled="busy">合并并保留映射</button></form></details>
-    <div v-if="catalog.edges.length" class="table-scroll"><table><thead><tr><th>起点 → 终点</th><th>关系</th><th>出处与有效期</th><th v-if="manage">操作</th></tr></thead><tbody><tr v-for="edge in catalog.edges" :key="edge.id"><td>{{ entity(edge.subject_id)?.name }} → {{ entity(edge.object_id)?.name }}</td><td>{{ relations[edge.relation] }}</td><td><details><summary>查看原文与版本</summary><blockquote>{{ edge.quote }}</blockquote><p class="small">文档 {{ edge.document_id }} · 版本 {{ edge.version }} · {{ edge.valid_until || '未设到期日' }}</p><p v-if="edge.verification_note">{{ edge.verification_note }}</p></details></td><td v-if="manage"><button class="secondary" :disabled="busy" @click="disable(edge)">停用</button></td></tr></tbody></table></div>
+    <div v-if="catalog.edges.length" class="table-scroll"><table><thead><tr><th>起点 → 终点</th><th>关系</th><th>出处与有效期</th><th v-if="manage">操作</th></tr></thead><tbody><tr v-for="edge in catalog.edges" :key="edge.id"><td>{{ entity(edge.subject_id)?.name }} → {{ entity(edge.object_id)?.name }}</td><td>{{ relations[edge.relation] }}<p class="small muted">{{ edge.effective ? '有效' : edge.enabled ? '来源或有效期已失效' : '已停用' }}</p></td><td><details><summary>查看原文与版本</summary><blockquote>{{ edge.quote }}</blockquote><p class="small">文档 {{ edge.document_id }} · 版本 {{ edge.version }} · {{ edge.valid_until || '未设到期日' }}</p><p v-if="edge.verification_note">{{ edge.verification_note }}</p></details></td><td v-if="manage"><button class="secondary" :disabled="busy" @click="toggle(edge)">{{ edge.enabled ? '停用' : '恢复' }}</button></td></tr></tbody></table></div>
     <section v-if="result" class="upload-card"><h2>关联原文</h2><p class="muted">{{ result.retrieval.graph_fallback ? '本次使用文本检索补充' : '从授权图谱找到来源，已核验发布状态' }}</p><article v-for="item in result.evidence" :key="item.chunk_id || item._id"><h3>{{ item.title }}</h3><MarkdownAnswer :text="item.text" :image-refs="item.image_refs"/></article><p v-if="!result.evidence.length">未找到当前可读的匹配资料。</p></section>
   </section>
 </template>

@@ -1,7 +1,7 @@
 import MarkdownIt from 'markdown-it'
 
 const md = new MarkdownIt({ html: false })
-export const documentFile = file => /\.(md|pdf|docx|csv)$/i.test(file.name)
+export const documentFile = file => /\.(md|pdf|doc|docx|csv|xlsx|xls|ppt|pptx|epub|xmind|json|html|htm|mhtml|mht|png|jpg|jpeg|webp|gif)$/i.test(file.name)
 const pathOf = file => file.webkitRelativePath || file.name
 
 export function resolveImagePath(documentPath, reference) {
@@ -39,4 +39,12 @@ export async function documentBundle(file, files, documentPath) {
     throw new Error('单篇文档及其配图合计不能超过 32 MB，配图不能超过 50 张。')
   }
   return images
+}
+
+export async function selectedDocuments(files) {
+  const attached = new Set()
+  for (const file of files.filter(f => /\.md$/i.test(f.name))) {
+    for (const image of await documentBundle(file, files, pathOf(file))) attached.add(image.file)
+  }
+  return files.filter(file => documentFile(file) && !attached.has(file))
 }

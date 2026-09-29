@@ -6,7 +6,13 @@ from uuid import NAMESPACE_URL, uuid5
 from fastapi import APIRouter, HTTPException, Request
 from neo4j.exceptions import Neo4jError, ServiceUnavailable, SessionExpired
 from semibrain_common.runtime import canonical, digest, failure, now, transaction, uid
-from semibrain_contracts.graph import GraphCommand, GraphEdge, GraphMerge, GraphQuery
+from semibrain_contracts.graph import (
+    GraphCommand,
+    GraphEdge,
+    GraphEdgeState,
+    GraphMerge,
+    GraphQuery,
+)
 
 from semibrain_business import graph_projection as projection
 from semibrain_business.retrieval import rank_candidates, search
@@ -164,6 +170,34 @@ def save_edge(form: GraphEdge, request: Request):
     return command(form, claim, "save_edge", write)
 
 
+@router.post("/internal/v1/graph/state")
+def change_edge_state(form: GraphEdgeState, request: Request):
+    claim = authorize_request(request, "knowledge.manage")
+    require_manager(claim)
+
+    def write(session):
+        row = db().graph_edges.find_one({"_id": str(form.edge_id)}, session=session)
+        if not row:
+            failure("GRAPH_EDGE_NOT_FOUND", 404)
+        authorized_document(row["document_id"], claim)
+        if form.enabled:
+            source({**row, "enabled": True}, claim)
+            changed = db().documents.update_one(
+                {"_id": row["document_id"], "active_version": row["version"], "revoked": False},
+                {"$inc": {"graph_write_fence": 1}}, session=session,
+            )
+            if not changed.matched_count:
+                failure("SOURCE_VERSION_UNAVAILABLE", 403)
+        db().graph_edges.update_one(
+            {"_id": row["_id"]},
+            {"$set": {"enabled": form.enabled, "revision": form.expected_revision + 1,
+                      "updated_at": now()}}, session=session,
+        )
+        return {"edge_id": row["_id"], "enabled": form.enabled}
+
+    return command(form, claim, "edge_state", write)
+
+
 @router.post("/internal/v1/graph/merge")
 def merge(form: GraphMerge, request: Request):
     claim = authorize_request(request, "knowledge.manage")
@@ -235,6 +269,16 @@ def rebuild(form: GraphCommand, request: Request):
 def catalog(request: Request):
     claim = authorize_request(request, "knowledge.read")
     rows = authorized_edges(claim)
+    effective = {r["_id"] for r in rows}
+    if claim["role"] == "admin":
+        rows = []
+        for row in db().graph_edges.find({}).limit(5000):
+            try:
+                authorized_document(row["document_id"], claim)
+                rows.append(row)
+            except HTTPException as exc:
+                if exc.status_code != 403:
+                    raise
     entities = {r["_id"]: r for r in db().graph_entities.find({})}
     ids = {r[k] for r in rows for k in ("subject_id", "object_id")}
     ids |= {resolve(eid, entities) for eid in ids}
@@ -251,7 +295,10 @@ def catalog(request: Request):
             }
             for eid in sorted(ids)
         ],
-        "edges": [{**{k: v for k, v in r.items() if k != "_id"}, "id": r["_id"]} for r in rows],
+        "edges": [
+            {**{k: v for k, v in r.items() if k != "_id"}, "id": r["_id"],
+             "effective": r["_id"] in effective} for r in rows
+        ],
     }
 
 
@@ -308,6 +355,7 @@ def graph_search(form, claim):
                     )
                     relationships.append(
                         {
+                            "edge_id": row["_id"],
                             "subject": entities[resolve(row["subject_id"], entities)]["name"],
                             "object": entities[resolve(row["object_id"], entities)]["name"],
                             "relation": row["relation"],
@@ -332,11 +380,15 @@ def graph_search(form, claim):
                             if exc.status_code != 403:
                                 raise
                     valid_chunks = {r["chunk_id"] for r in current}
+                    valid_edges = {r["_id"] for r in current}
                     ranked = [r for r in ranked if r["_id"] in valid_chunks]
                     returned = {r["_id"] for r in ranked}
                     return {
                         "evidence": ranked,
-                        "relationships": [r for r in relationships if r["chunk_id"] in returned],
+                        "relationships": [
+                            r for r in relationships
+                            if r["chunk_id"] in returned and r["edge_id"] in valid_edges
+                        ],
                         "retrieval": {"strategy": "authorized_graph", "rerank": ranking},
                         "notice": "关系用于定位原文；共现与处理建议不表示因果。",
                     }

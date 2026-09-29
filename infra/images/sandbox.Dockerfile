@@ -8,7 +8,7 @@ RUN uv sync --frozen --package semibrain-sandbox-runtime --no-dev --no-editable
 FROM ${PYTHON_IMAGE}
 RUN sed -i 's|http://deb.debian.org/debian|https://mirrors.aliyun.com/debian|g' /etc/apt/sources.list.d/debian.sources \
     && apt-get -o Acquire::Retries=2 -o Acquire::https::Timeout=30 update \
-    && apt-get -o Acquire::Retries=2 -o Acquire::https::Timeout=30 install -y --no-install-recommends fonts-noto-cjk=1:20220127+repack1-1 \
+    && apt-get -o Acquire::Retries=2 -o Acquire::https::Timeout=30 install -y --no-install-recommends fonts-noto-cjk=1:20220127+repack1-1 libreoffice-writer libreoffice-impress libreoffice-calc \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /opt/runtime /opt/runtime
 COPY infra/images/configure-matplotlib.py /tmp/configure-matplotlib.py

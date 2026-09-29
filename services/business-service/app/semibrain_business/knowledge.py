@@ -4,6 +4,7 @@ import hashlib
 import io
 import os
 import tempfile
+import time
 from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
@@ -102,6 +103,21 @@ def chunk_blocks(parsed, document_id, version):
     return build_chunk_tree(parsed, document_id, version, EMBEDDING_VERSION)[0]
 
 
+class IngestionCancellation:
+    def __init__(self, job, fence):
+        self.job, self.fence, self.checked, self.cancelled = job, fence, 0.0, False
+
+    def is_set(self):
+        if self.cancelled or time.monotonic() - self.checked < 0.5:
+            return self.cancelled
+        self.checked = time.monotonic()
+        row = db().ingestion_jobs.find_one({"_id": self.job["_id"], "fence": self.fence})
+        doc = db().documents.find_one({"_id": self.job["document_id"]})
+        self.cancelled = bool(not row or row.get("cancel_requested") or not doc
+                              or doc.get("revoked") or doc["revision"] != self.job["generation"])
+        return self.cancelled
+
+
 def process_one():
     expire_exhausted(
         db(),
@@ -138,6 +154,7 @@ def process_one():
         )
         return True
     try:
+        cancellation = IngestionCancellation(job, fence)
         asset = db().assets.find_one({"_id": job["asset_id"]})
         content = read_asset(asset)
         version = job["version"]
@@ -159,6 +176,7 @@ def process_one():
                     path,
                     allowed_root=Path(temporary),
                     profile=ParseProfile(allow_external=job["allow_external"], timeout_seconds=180),
+                    cancel=cancellation,
                 )
             image_refs = bind_images(parsed, document, job, store_asset, read_asset, db().assets)
         parsed.parser_manifest["chunker_version"] = CHUNKER_VERSION
@@ -233,6 +251,8 @@ def process_one():
             )
             return True
         from semibrain_business.chunk_tree import CONTEXT_VERSION, build_chunk_tree, tree_manifest
+        if cancellation.is_set():
+            raise ValueError("INGESTION_CANCELLED")
         if parsed.parser_manifest.get("chunker_version") != CHUNKER_VERSION:
             raise ValueError("CHUNKER_VERSION_CHANGED_REBUILD_REQUIRED")
         chunks, parents = build_chunk_tree(parsed, document["_id"], version, EMBEDDING_VERSION)
@@ -246,6 +266,9 @@ def process_one():
         index_chunks(document, version, chunks)
 
         def staged(session):
+            live_job = db().ingestion_jobs.find_one({"_id": job["_id"]}, session=session)
+            if live_job.get("cancel_requested"):
+                raise ValueError("INGESTION_CANCELLED")
             current = db().documents.find_one(
                 {"_id": document["_id"], "revision": job["generation"]}, session=session
             )
@@ -309,8 +332,8 @@ def process_one():
             {"_id": job["_id"], "fence": fence, "status": "running", "lease_until": {"$gt": now()}},
             {
                 "$set": {
-                    "status": "failed",
-                    "error": "INGESTION_FAILED",
+                    "status": "cancelled" if str(exc) == "INGESTION_CANCELLED" else "failed",
+                    "error": "INGESTION_CANCELLED" if str(exc) == "INGESTION_CANCELLED" else "INGESTION_FAILED",
                     "error_kind": type(exc).__name__,
                     "completed_at": now(),
                 }

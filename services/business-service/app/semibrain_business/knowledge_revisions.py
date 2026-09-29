@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field
 from semibrain_common.runtime import canonical, digest, failure, now, transaction, uid
+from semibrain_contracts.knowledge_review import ReviewParsed
 
 from semibrain_business.document_images import image_spans
 from semibrain_business.knowledge import read_asset, store_asset
@@ -169,6 +170,78 @@ def diff(document_id: str, version: str, request: Request):
     if not job:
         failure("VERSION_NOT_FOUND", 404)
     return {"source_version": job.get("source_version"), "diff": job.get("diff"), "operation": job.get("operation", "upload")}
+
+
+def reviewed_snapshot(parsed, form, version, actor):
+    import re
+    if not re.sub(r"!\[[^\]]*\]\([^)]*\)", "", form.text).strip():
+        failure("REVIEW_TEXT_REQUIRED", 400)
+    result = parsed.model_copy(deep=True)
+    known = {r["url"]: r for r in parsed.image_refs}
+    images = []
+    for span in image_spans(form.text):
+        if span["reference"] not in known:
+            failure("EDIT_IMAGE_NOT_REGISTERED", 400)
+        images.append({**known[span["reference"]], "version": version,
+                       "start": span["start"], "end": span["end"], "alt": span["alt"]})
+    result.markdown, result.blocks, result.image_refs = form.text, [], images
+    result.status = "staged"
+    result.parser_manifest = {**result.parser_manifest, "human_review": {
+        "actor_id": actor, "source_version": str(form.source_version), "reason": form.reason,
+        "findings": parsed.quality_findings, "reviewed_at": now().isoformat()}}
+    result.quality_findings = []
+    return result
+
+
+@router.post("/internal/v1/knowledge/documents/{document_id}/review", status_code=202)
+def review_parse(document_id: str, form: ReviewParsed, request: Request):
+    claim = authorize_request(request, "knowledge.manage")
+    require_manager(claim)
+    document = authorized_document(document_id, claim)
+    identity = digest(claim["subject_id"] + ":review:" + str(form.request_id))
+    hashed = digest(canonical({"document_id": document_id, **form.model_dump(mode="json")}))
+    def replay(session=None):
+        row = db().ingestion_jobs.find_one({"request_key": identity}, session=session)
+        if row and row["payload_hash"] != hashed:
+            failure("IDEMPOTENCY_CONFLICT", 409)
+        return row
+    prior = replay()
+    if prior and prior["status"] != "receiving":
+        return {"job_id": prior["_id"], "version": prior["version"], "status": prior["status"]}
+    source = db().document_versions.find_one({"_id": str(form.source_version), "document_id": document_id})
+    if not source or source["manifest"]["status"] != "needs_attention":
+        failure("VERSION_NOT_REVIEWABLE", 409)
+    parsed = ParseResult.model_validate_json(read_asset(db().assets.find_one({"_id": source["snapshot_asset_id"]})))
+    version = prior["version"] if prior else uid()
+    changed = reviewed_snapshot(parsed, form, version, claim["subject_id"])
+    def accept(session):
+        previous = replay(session)
+        if previous:
+            return previous
+        if source["generation"] != form.expected_revision or db().ingestion_jobs.find_one(
+            {"document_id": document_id, "generation": form.expected_revision, "status": {"$in": PENDING}}, session=session
+        ):
+            failure("REVISION_CONFLICT", 409)
+        if not db().documents.update_one({"_id": document_id, "revision": form.expected_revision, "revoked": False},
+            {"$inc": {"revision": 1}}, session=session).modified_count:
+            failure("REVISION_CONFLICT", 409)
+        row = {"_id": uid(), "request_key": identity, "payload_hash": hashed,
+               "document_id": document_id, "version": version, "source_version": source["_id"],
+               "generation": form.expected_revision + 1, "status": "receiving", "step": "saving_review",
+               "operation": "review", "attempt": 0, "created_at": now(), "asset_id": source["raw_asset_id"],
+               "requested_by": claim["subject_id"], "review_reason": form.reason, "allow_external": False,
+               "diff": "\n".join(difflib.unified_diff(parsed.markdown.splitlines(), form.text.splitlines(),
+                                                      fromfile="parsed", tofile="reviewed", lineterm=""))}
+        db().ingestion_jobs.insert_one(row, session=session)
+        return row
+    job = transaction(accept)
+    if job["version"] != version:
+        changed = reviewed_snapshot(parsed, form, job["version"], claim["subject_id"])
+    asset = store_asset(changed.model_dump_json().encode(), "application/json", document["owner_id"],
+                        "reviewed-snapshot.json", document_id=document_id)
+    db().ingestion_jobs.update_one({"_id": job["_id"], "status": "receiving"},
+        {"$set": {"status": "queued", "step": "queued", "edited_snapshot_id": asset["_id"]}})
+    return {"job_id": job["_id"], "version": job["version"], "status": "queued"}
 
 
 @router.post("/internal/v1/knowledge/documents/{document_id}/rollback")

@@ -54,6 +54,12 @@ class GraphMerge(GraphCommand):
     reason: str = Field(min_length=5, max_length=500)
 
 
+class GraphEdgeState(GraphCommand):
+    edge_id: UUID
+    enabled: bool
+    reason: str = Field(min_length=5, max_length=500)
+
+
 class GraphQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
     query: str = Field(min_length=1, max_length=200)

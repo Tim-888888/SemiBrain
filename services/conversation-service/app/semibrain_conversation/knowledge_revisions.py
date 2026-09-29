@@ -5,11 +5,24 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
+from semibrain_contracts.knowledge_review import ReviewParsed
 
 from semibrain_conversation.access import business
 from semibrain_conversation.auth import admin
 
 router = APIRouter()
+
+
+@router.post("/admin/v1/knowledge/jobs/{job_id}/cancel")
+def cancel_ingestion(job_id: UUID, user=Depends(admin)):
+    return business(user, "POST", f"/internal/v1/knowledge/jobs/{job_id}/cancel",
+                    operation="knowledge.manage").json()
+
+
+@router.post("/admin/v1/knowledge/documents/{document_id}/review", status_code=202)
+def review(document_id: UUID, form: ReviewParsed, user=Depends(admin)):
+    return business(user, "POST", f"/internal/v1/knowledge/documents/{document_id}/review",
+                    operation="knowledge.manage", json=form.model_dump(mode="json")).json()
 
 
 class EditChunk(BaseModel):

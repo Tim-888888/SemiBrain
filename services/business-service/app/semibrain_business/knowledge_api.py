@@ -180,7 +180,8 @@ def upload(
         path = validate_path(document_path)
     except ValueError:
         failure("INVALID_DOCUMENT_PATH")
-    if Path(path).suffix.lower() not in {".pdf", ".docx", ".md", ".csv"}:
+    from semibrain_business.parsing import SUPPORTED
+    if Path(path).suffix.lower().lstrip(".") not in SUPPORTED:
         failure("UNSUPPORTED_FORMAT")
     content = file.file.read(32 * 1024**2 + 1)
     if not content or len(content) > 32 * 1024**2:
@@ -331,6 +332,25 @@ def ingestion_status(job_id: str, request: Request):
             "quality_findings",
         )
     }
+
+
+@router.post("/internal/v1/knowledge/jobs/{job_id}/cancel")
+def cancel_ingestion(job_id: str, request: Request):
+    claim = authorize_request(request, "knowledge.manage")
+    require_manager(claim)
+    def commit(session):
+        job = db().ingestion_jobs.find_one({"_id": job_id}, session=session)
+        if not job:
+            failure("JOB_NOT_FOUND", 404)
+        authorized_document(job["document_id"], claim)
+        if job["status"] not in {"queued", "running"}:
+            return {"status": job["status"], "cancel_requested": bool(job.get("cancel_requested"))}
+        status = "cancelled" if job["status"] == "queued" else "running"
+        db().ingestion_jobs.update_one({"_id": job_id}, {"$set": {
+            "cancel_requested": True, "cancelled_by": claim["subject_id"],
+            "cancel_requested_at": now(), "status": status}}, session=session)
+        return {"status": status, "cancel_requested": True}
+    return transaction(commit)
 
 
 @router.get("/internal/v1/knowledge/documents/{document_id}/preview")

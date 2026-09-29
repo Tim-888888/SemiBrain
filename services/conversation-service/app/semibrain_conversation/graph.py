@@ -1,5 +1,11 @@
 from fastapi import APIRouter, Depends
-from semibrain_contracts.graph import GraphCommand, GraphEdge, GraphMerge, GraphQuery
+from semibrain_contracts.graph import (
+    GraphCommand,
+    GraphEdge,
+    GraphEdgeState,
+    GraphMerge,
+    GraphQuery,
+)
 
 from semibrain_conversation.access import business
 from semibrain_conversation.auth import admin, current_user
@@ -42,6 +48,14 @@ def merge(form: GraphMerge, user=Depends(admin)):
         "POST",
         "/internal/v1/graph/merge",
         operation="knowledge.manage",
+        json=form.model_dump(mode="json"),
+    ).json()
+
+
+@router.post("/admin/v1/graph/state")
+def edge_state(form: GraphEdgeState, user=Depends(admin)):
+    return business(
+        user, "POST", "/internal/v1/graph/state", operation="knowledge.manage",
         json=form.model_dump(mode="json"),
     ).json()
 

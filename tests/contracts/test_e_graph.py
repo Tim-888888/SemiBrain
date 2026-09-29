@@ -187,7 +187,23 @@ def test_graph_mutations_require_admin():
     app.dependency_overrides[current_user] = lambda: {"_id": str(uuid4()), "role": "user"}
     try:
         with TestClient(app) as client:
-            for action in ["edges", "merge", "rebuild"]:
+            for action in ["edges", "merge", "rebuild", "state"]:
                 assert client.post("/admin/v1/graph/" + action, json={}).status_code == 403
     finally:
         app.dependency_overrides.clear()
+
+
+def test_two_edges_share_chunk_only_live_relationship_survives(graph_fixture, monkeypatch):
+    _, edge, _, store, claim, traverse, _ = graph_fixture
+    second = {**edge, "_id": "edge2", "relation": "cooccurs"}
+    store.graph_edges.find.return_value.limit.return_value = [deepcopy(edge), deepcopy(second)]
+    store.graph_edges.find_one.side_effect = lambda query, **kw: next(
+        (r for r in [edge, second] if r["_id"] == query["_id"] and r["enabled"]), None)
+    traverse.return_value = [["edge", "edge2"]]
+    def rank(q, rows, k):
+        edge["enabled"] = False
+        return rows, {}
+    monkeypatch.setattr(graph, "rank_candidates", rank)
+    result = graph.graph_search(GraphQuery(query="alpha"), claim)
+    assert len(result["evidence"]) == 1
+    assert [r["edge_id"] for r in result["relationships"]] == ["edge2"]

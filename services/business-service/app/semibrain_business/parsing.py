@@ -23,6 +23,9 @@ from pydantic import BaseModel, Field
 
 UPSTREAM_COMMIT = "c40a9dd1940f85d85a59787bd532eb0f290cb176"
 SUPPORTED = {"pdf", "docx", "md", "csv"}
+EXTENDED = {"xlsx", "xls", "pptx", "epub", "xmind", "json", "html", "htm", "mhtml", "mht"}
+IMAGE_FORMATS = {"png", "jpg", "jpeg", "webp", "gif"}
+SUPPORTED |= EXTENDED | IMAGE_FORMATS | {"doc", "ppt"}
 
 
 class Block(BaseModel):
@@ -75,6 +78,8 @@ def validate_archive(content: bytes, max_unpacked: int = 128 * 1024**2) -> None:
             if path.is_absolute() or ".." in path.parts or ":" in path.parts[0] or name in names:
                 raise ValueError("UNSAFE_ARCHIVE_PATH")
             names.add(name)
+            if name.lower().endswith("vbaproject.bin"):
+                raise ValueError("OFFICE_MACROS_UNSUPPORTED")
             if info.flag_bits & 1:
                 raise ValueError("ENCRYPTED_ARCHIVE")
             if info.compress_size and info.file_size / info.compress_size > 200:
@@ -190,6 +195,23 @@ def _source_blocks(content: bytes, extension: str) -> list[dict]:
 
 
 def _execute_engine(engine: str, content: bytes, extension: str, progress):
+    if engine == "docker_office":
+        from semibrain_business.office_conversion import convert
+        converted, target = convert(content, extension, progress)
+        validate_archive(converted)
+        result = _execute_engine("weknora_docx" if target == "docx" else "format_adapter",
+                                 converted, target, progress)
+        result["metadata"]["conversion"] = "docker_libreoffice"
+        result["metadata"]["original_format"] = extension
+        for item in result["blocks"]:
+            item["location"]["source"] = "converted_office"
+        return result
+    if engine in {"vision_transcribe", "image_original"}:
+        from semibrain_business.image_ingestion import image_only, transcribe
+        return transcribe(content) if engine == "vision_transcribe" else image_only(content)
+    if engine == "format_adapter":
+        from semibrain_business.format_parsers import parse_format
+        return parse_format(content, extension)
     if engine == "mineru_cloud":
         from semibrain_business.mineru import parse_mineru
 
@@ -308,7 +330,7 @@ def parse_asset(
     try:
         if extension not in SUPPORTED:
             raise ValueError("UNSUPPORTED_FORMAT")
-        if extension == "docx":
+        if extension in {"docx", "xlsx", "pptx", "epub", "xmind"}:
             validate_archive(content)
         if extension == "pdf" and not content.startswith(b"%PDF-"):
             raise ValueError("INVALID_PDF_SIGNATURE")
@@ -322,6 +344,10 @@ def parse_asset(
             "docx": ("weknora_markitdown", "weknora_docx"),
             "md": ("weknora_markdown",),
             "csv": ("weknora_markitdown", "csv_python"),
+            **dict.fromkeys(EXTENDED, ("format_adapter",)),
+            **dict.fromkeys(IMAGE_FORMATS, ("vision_transcribe", "image_original")),
+            "doc": ("docker_office",),
+            "ppt": ("docker_office",),
         }[extension]
     )
     deadline = time.monotonic() + profile.timeout_seconds
@@ -331,10 +357,15 @@ def parse_asset(
             result.status = "cancelled"
             result.quality_findings.append("CANCELLED_BEFORE_EXECUTION")
             break
-        if engine == "mineru_cloud" and not profile.allow_external:
+        if engine in {"mineru_cloud", "vision_transcribe"} and not profile.allow_external:
             result.attempts.append(
                 Attempt(engine=engine, status="skipped", code="EXTERNAL_DATA_DENIED")
             )
+            continue
+        if engine == "vision_transcribe" and not (
+            os.getenv("SEMIBRAIN_VISION_API_KEY") and os.getenv("SEMIBRAIN_VISION_BASE_URL")
+        ):
+            result.attempts.append(Attempt(engine=engine, status="unavailable", code="PROVIDER_NOT_CONFIGURED"))
             continue
         if engine == "mineru_cloud" and not os.getenv("SEMIBRAIN_MINERU_API_KEY"):
             result.attempts.append(
@@ -351,6 +382,7 @@ def parse_asset(
         attempt = Attempt(engine=engine, status="failed")
         result.attempts.append(attempt)
         message = {}
+        sandbox_identity = None
         try:
             while True:
                 if cancel and cancel.is_set():
@@ -367,7 +399,10 @@ def parse_asset(
                         attempt.code = "WORKER_EXITED"
                         break
                     if "progress" in message:
-                        attempt.provider_job_id = message["progress"]
+                        if isinstance(message["progress"], dict):
+                            sandbox_identity = message["progress"].get("sandbox_identity")
+                        else:
+                            attempt.provider_job_id = message["progress"]
                         continue
                     break
                 if not process.is_alive():
@@ -376,6 +411,12 @@ def parse_asset(
         finally:
             _stop(process)
             receiver.close()
+            if sandbox_identity and attempt.code in {"CANCELLED", "DEADLINE_EXCEEDED", "WORKER_EXITED"}:
+                from semibrain_business.sandbox import provider
+                try:
+                    provider().destroy(sandbox_identity)
+                except Exception:
+                    result.quality_findings.append("SANDBOX_CLEANUP_PENDING")
             attempt.elapsed_ms = int((time.monotonic() - started) * 1000)
         if attempt.code in {"CANCELLED", "DEADLINE_EXCEEDED"}:
             result.quality_findings.append(attempt.code)
@@ -399,6 +440,9 @@ def parse_asset(
         result.images = images
         result.blocks = [Block.model_validate(b) for b in output.get("blocks", [])]
         result.parser_manifest.update({"engine": engine, "metadata": meta})
+        if engine == "format_adapter":
+            result.parser_manifest["weknora_adapter_reference"] = "f46c9905677b36a454aa6669a2619f9eecf9fd23"
+        result.quality_findings.extend(meta.get("quality_findings", []))
         if meta.get("numeric_text_mismatch"):
             result.quality_findings.append("NUMERIC_TEXT_MISMATCH")
         if meta.get("text_compatibility_fallback"):
@@ -408,6 +452,8 @@ def parse_asset(
             result.quality_findings.append("OCR_REQUIRED")
         else:
             result.status = "staged"
+        if meta.get("quality_findings"):
+            result.status = "needs_attention"
         if not result.blocks:
             result.quality_findings.append("DETAILED_LOCATIONS_UNAVAILABLE")
         attempt.status = "succeeded"
