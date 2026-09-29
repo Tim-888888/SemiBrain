@@ -1239,6 +1239,164 @@
         }
       }
     },
+    "/v1/runs/{run_id}/exports": {
+      "post": {
+        "summary": "Create",
+        "operationId": "create_v1_runs__run_id__exports_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "List Exports",
+        "operationId": "list_exports_v1_runs__run_id__exports_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/exports/{export_id}": {
+      "get": {
+        "summary": "Status",
+        "operationId": "status_v1_exports__export_id__get",
+        "parameters": [
+          {
+            "name": "export_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Export Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/exports/source": {
+      "post": {
+        "summary": "Source",
+        "operationId": "source_internal_v1_exports_source_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportSource"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/auth/captcha": {
       "get": {
         "summary": "Captcha",
@@ -3332,6 +3490,70 @@
           "auth_version"
         ],
         "title": "ExecutionAuthorization"
+      },
+      "ExportRequest": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "md",
+              "docx",
+              "pdf"
+            ],
+            "title": "Format"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "format"
+        ],
+        "title": "ExportRequest"
+      },
+      "ExportSource": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Run Id"
+          },
+          "owner_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Owner Id"
+          },
+          "auth_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Auth Version"
+          },
+          "content_hash": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Hash"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "run_id",
+          "owner_id",
+          "auth_version"
+        ],
+        "title": "ExportSource"
       },
       "GraphCommand": {
         "properties": {

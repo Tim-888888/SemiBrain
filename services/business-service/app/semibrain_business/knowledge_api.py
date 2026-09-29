@@ -725,6 +725,10 @@ def check(form: LineageInput, request: Request):
 @router.get("/internal/v1/assets/{asset_id}/content")
 def asset_content(asset_id: str, request: Request, preview_version: UUID | None = None):
     claim = authorize_request(request, "asset.read")
+    return asset_response(asset_id, claim, preview_version)
+
+
+def asset_response(asset_id: str, claim, preview_version: UUID | None = None):
     asset = db().assets.find_one({"_id": asset_id})
     if not asset:
         failure("ASSET_NOT_FOUND", 404)
@@ -758,6 +762,9 @@ def asset_content(asset_id: str, request: Request, preview_version: UUID | None 
                         raise
             if not permitted:
                 failure("ASSET_VERSION_UNAVAILABLE", 403)
+    elif asset.get("report_export_id"):
+        from semibrain_business.report_exports import authorize_asset
+        authorize_asset(asset, claim)
     elif asset.get("job_id"):
         job = db().tool_jobs.find_one({"_id": asset["job_id"], "subject_id": claim["subject_id"]})
         if not job or job["status"] not in {"succeeded", "partial"}:

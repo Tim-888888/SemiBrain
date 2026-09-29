@@ -41,7 +41,7 @@ def bucket():
     return os.getenv("SEMIBRAIN_MINIO_BUCKET", "knowledge-assets")
 
 
-def store_asset(content, media_type, owner_id, filename, *, document_id=None, job_id=None, retention_version=None):
+def store_asset(content, media_type, owner_id, filename, *, document_id=None, job_id=None, retention_version=None, report_export_id=None):
     asset_id = uid()
     content_hash = hashlib.sha256(content).hexdigest()
     key = owner_id + "/" + asset_id + "/" + content_hash
@@ -58,12 +58,13 @@ def store_asset(content, media_type, owner_id, filename, *, document_id=None, jo
         "job_id": job_id,
         "created_at": now(),
         **({"retention_version": retention_version} if retention_version else {}),
+        **({"report_export_id": report_export_id} if report_export_id else {}),
     }
     # Track managed object intent before upload so failed uploads remain reclaimable.
-    if retention_version:
+    if retention_version or report_export_id:
         db().assets.insert_one(row)
     objects().put_object(bucket(), key, io.BytesIO(content), len(content), content_type=media_type)
-    if not retention_version:
+    if not retention_version and not report_export_id:
         db().assets.insert_one(row)
     return row
 

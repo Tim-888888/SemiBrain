@@ -18,6 +18,21 @@ def tick():
     ingest.delay()
     sandbox_cleanup.delay()
     evidence_cleanup.delay()
+    export_report.delay()
+    export_cleanup.delay()
+
+
+@app.task(name="business.export_report", base=PollTask)
+def export_report():
+    from semibrain_business.report_exports import process_one
+    if process_one():
+        export_report.delay()
+
+
+@app.task(name="business.export_cleanup", base=PollTask)
+def export_cleanup():
+    from semibrain_business.report_exports import sweep
+    sweep()
 
 
 @app.task(name="business.evidence_cleanup", base=PollTask)

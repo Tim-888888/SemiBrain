@@ -20,7 +20,7 @@ from semibrain_common.runtime import (
     transaction,
 )
 
-QUEUES = {"agent": ["runs"], "business": ["tool_jobs", "ingestion_jobs"], "conversation": []}
+QUEUES = {"agent": ["runs"], "business": ["tool_jobs", "ingestion_jobs", "report_exports"], "conversation": []}
 
 
 def admission(db, collection, query, update):

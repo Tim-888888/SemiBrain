@@ -4,6 +4,12 @@ from semibrain_business.security import db
 
 
 def initialize():
+    migrate(db(), "e-exports-001", [
+        ("report_exports", [("request_key", 1)], {"unique": True}),
+        ("report_exports", [("status", 1), ("lease_until", 1)], {}),
+        ("report_exports", [("expires_at", 1)], {}),
+        ("assets", [("report_export_id", 1)], {}),
+    ])
     migrate(db(), "e-skills-001", [
         ("skill_versions", [("skill_id", 1), ("created_at", -1)], {}),
         ("skill_run_pins", [("expires_at", 1)], {"expireAfterSeconds": 0}),

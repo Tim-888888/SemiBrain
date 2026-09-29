@@ -10,6 +10,11 @@ export type Message = Partial<Run> & { id: string; role: string; text?: string; 
 let csrf = ''
 export function setCsrf(value: string) { csrf = value }
 const labels: Record<string, string> = {
+  EXPORT_QUEUE_LIMIT: '已有 3 个文件正在转换，请等待完成后再导出。',
+  EXPORT_EXPIRED: '导出文件已过期，请从原回答重新生成。',
+  EXPORT_SOURCE_CHANGED: '原回答已变化，请刷新后重新导出。',
+  EXPORT_FINAL_REPORT_REQUIRED: '回答尚未完成，暂不能导出。',
+  EXPORT_UNAVAILABLE: '文件不存在、来源已不可用或当前账号无权访问。',
   MEMORY_CHANGED: '个人记忆已变更，本轮已停止使用旧内容。请重新提交问题。',
   MEMORY_SOURCE_UNAVAILABLE: '记忆关联的原回答或来源已不可用。',
   MEMORY_EXCERPT_REQUIRED: '调查摘要请从当前可访问的原回答复制连续原文。',
