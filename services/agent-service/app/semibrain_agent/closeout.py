@@ -9,6 +9,7 @@ from semibrain_agent.citations import cited_markers
 from semibrain_agent.context_policy import project_evidence, project_record, source_version
 from semibrain_agent.delivery import FILE_TOOLS, registered_artifacts
 from semibrain_agent.harness import BudgetExhausted, estimate_reservation, estimate_text
+from semibrain_agent.prompts import REPORT_DELIVERY_RULE
 from semibrain_agent.review_units import render_units, review_units
 
 # Bound the two closeout requests independently of the cumulative run-token policy.
@@ -78,6 +79,11 @@ def answer_inputs(packet):
 
 def fits(packet, system, output, ceiling):
     return estimate_reservation(system, answer_inputs(packet), None, output) <= ceiling
+
+
+ANSWER_SYSTEM += REPORT_DELIVERY_RULE
+REVIEW_SYSTEM += REPORT_DELIVERY_RULE
+REPAIR_SYSTEM += REPORT_DELIVERY_RULE
 
 
 def select_packet(question, intent, evidence, project, executed, missing_files):

@@ -13,7 +13,7 @@ from PIL import Image
 
 from semibrain_business.sandbox import provider
 
-VERSION = "report-markdown-v2"
+VERSION = "report-markdown-v3"
 
 
 def inline(paragraph, children, images, width=5.7):

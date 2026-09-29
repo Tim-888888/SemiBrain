@@ -442,7 +442,8 @@ class Investigator:
             # A malformed control response is our failure, not missing user information.
             raise ModelError("INTENT_CONTROL_INVALID")
         RoutePolicy().choose(self.context["input"], intent, self.catalog["tools"])
-        state["intent"] = intent.model_dump()
+        from semibrain_agent.delivery import execution_intent
+        state["intent"] = execution_intent(intent)
         self.executor.intent = state["intent"]
         self.restrict_source_tools(state)
         self.notify(
@@ -980,6 +981,9 @@ class Investigator:
         self.finish(state)
 
     def finish(self, state):
+        from semibrain_agent.delivery import report_format
+        automatic = report_format(state.get("intent", {}))
+        export = {"format": automatic, "status": "queued"} if automatic and state["outcome"] in {"succeeded", "partial"} else None
         evidence = self.executor.evidence()
         refs = list(dict.fromkeys(ref for record in evidence for ref in record["lineage_refs"]))
         from semibrain_agent.memory import publication
@@ -1043,6 +1047,7 @@ class Investigator:
                     "$set": {
                         "status": state["outcome"],
                         "report_id": report["report_id"],
+                        "answer_export": export,
                         "body_draft": "",
                         "citations": citations,
                         "lineage_refs": refs,
@@ -1076,7 +1081,8 @@ class Investigator:
                 "stream:agent",
                 "report.ready",
                 self.run["_id"],
-                {"report_id": report["report_id"], "status": changed["status"]},
+                {"report_id": report["report_id"], "status": changed["status"],
+                 "answer_export": export},
                 session,
                 sequence=changed["sequence"],
             )
