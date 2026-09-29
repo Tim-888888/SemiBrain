@@ -51,6 +51,15 @@ def revise(parsed, chunk, text, version):
     if canonical_md:
         result.markdown = changed
         result.blocks = []
+        delta = len(text) - (b - a)
+        for span in result.source_spans:
+            if span['start'] >= b:
+                span['start'] += delta
+                span['end'] += delta
+            elif span['end'] > a:
+                span['start'] = min(span['start'], a)
+                span['end'] = max(a + len(text), span['end'] + delta)
+                span['location']['source'] = 'manual_revision'
     else:
         result.blocks[location["block_index"]].text = changed
         result.markdown = "\n\n".join(block.text for block in result.blocks)
@@ -186,6 +195,8 @@ def reviewed_snapshot(parsed, form, version, actor):
         images.append({**known[span["reference"]], "version": version,
                        "start": span["start"], "end": span["end"], "alt": span["alt"]})
     result.markdown, result.blocks, result.image_refs = form.text, [], images
+    # Full-body review cannot inherit offsets from the pre-review text.
+    result.source_spans = []
     result.status = "staged"
     result.parser_manifest = {**result.parser_manifest, "human_review": {
         "actor_id": actor, "source_version": str(form.source_version), "reason": form.reason,

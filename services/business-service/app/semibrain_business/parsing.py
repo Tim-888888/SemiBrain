@@ -50,6 +50,7 @@ class ParseResult(BaseModel):
     blocks: list[Block] = Field(default_factory=list)
     images: dict[str, str] = Field(default_factory=dict, repr=False)
     image_refs: list[dict[str, Any]] = Field(default_factory=list)
+    source_spans: list[dict[str, Any]] = Field(default_factory=list)
     parser_manifest: dict[str, Any] = Field(default_factory=dict)
     quality_findings: list[str] = Field(default_factory=list)
     attempts: list[Attempt] = Field(default_factory=list)

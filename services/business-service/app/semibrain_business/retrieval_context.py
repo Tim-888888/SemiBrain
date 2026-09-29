@@ -39,6 +39,13 @@ def materialize(anchor, rows, kind):
     if len(text) > ITEM_LIMIT:
         raise ValueError("CONTEXT_TOO_LARGE")
     location = {**anchor["location"], "character_start": start, "character_end": end}
+    source_locations = []
+    for row in ordered:
+        for source in row['location'].get('source_locations', []):
+            if source not in source_locations:
+                source_locations.append(source)
+    if source_locations:
+        location['source_locations'] = source_locations
     # A span's line range comes from its actual boundary children, not its anchor.
     if "line_start" in ordered[0]["location"]:
         location["line_start"] = ordered[0]["location"]["line_start"]

@@ -180,7 +180,7 @@ def process_one():
                 )
             image_refs = bind_images(parsed, document, job, store_asset, read_asset, db().assets)
         parsed.parser_manifest["chunker_version"] = CHUNKER_VERSION
-        manifest = parsed.model_dump(exclude={"images", "markdown", "blocks", "image_refs"})
+        manifest = parsed.model_dump(exclude={"images", "markdown", "blocks", "image_refs", "source_spans"})
         text_asset = store_asset(parsed.markdown.encode(), "text/markdown", document["owner_id"],
                                  "parsed.md", document_id=document["_id"])
         snapshot = store_asset(

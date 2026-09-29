@@ -2,6 +2,7 @@
 
 import base64
 import io
+import json
 import posixpath
 import re
 import xml.etree.ElementTree as ET
@@ -171,11 +172,50 @@ def bind_images(parsed, document, job, store, read, assets):
     parsed.markdown = ''.join(pieces)
     parsed.image_refs = refs
     if refs or cache:
-        # Upstream block text predates resource resolution; use canonical Markdown locations.
+        # Keep native locators while chunk offsets use the resolved Markdown coordinate system.
+        parsed.source_spans = source_spans(parsed.markdown, parsed.blocks, refs)
+        mapped = {span['block_index'] for span in parsed.source_spans}
+        missing = sum(bool(b.text.strip()) and i not in mapped for i, b in enumerate(parsed.blocks))
+        if missing:
+            parsed.quality_findings.append('PARTIAL_SOURCE_MAPPING')
+            parsed.parser_manifest['unmapped_source_blocks'] = missing
         parsed.blocks = []
     if len(refs) > IMAGE_LIMIT:
         raise ValueError('DOCUMENT_IMAGE_COUNT_INVALID')
     return list(dict.fromkeys(ref['asset_id'] for ref in refs))
+
+
+def source_spans(markdown, blocks, refs):
+    """Map only actual matching text; never infer a page/slide from its neighbors."""
+    spans, cursor = [], 0
+    replacements = {r['original_ref']: r['url'] for r in refs}
+    for index, block in enumerate(blocks):
+        text = block.text.strip()
+        for old, new in replacements.items():
+            text = text.replace('](' + old + ')', '](' + new + ')')
+        if not text:
+            continue
+        start = markdown.find(text, cursor)
+        end = start + len(text)
+        if start < 0 and block.kind == 'table_row':
+            # DOCX native table rows are JSON arrays, upstream renders Markdown rows.
+            try:
+                cells = json.loads(text)
+            except (ValueError, TypeError):
+                cells = None
+            if isinstance(cells, list) and all(isinstance(c, str) for c in cells):
+                offset = cursor
+                for line in markdown[cursor:].splitlines(keepends=True):
+                    values = [c.strip() for c in line.strip().strip('|').split('|')]
+                    if values == [c.strip() for c in cells]:
+                        start, end = offset, offset + len(line)
+                        break
+                    offset += len(line)
+        if start >= 0:
+            spans.append({'start': start, 'end': end, 'block_index': index,
+                          'location': block.location, 'kind': block.kind})
+            cursor = end
+    return spans
 
 
 def slice_markdown(content, start, end, refs):
