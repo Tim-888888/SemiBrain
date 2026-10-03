@@ -284,7 +284,10 @@ def execute_one():
         harness.initialize(QUICK_LIMITS)
         model = ModelAdapter()
         model.bind_context(harness, context, run.get("context_compaction"))
-        model.authorize = lambda: client.request("POST", "/internal/v1/lineage/check", json={"refs": []})
+        from semibrain_agent.stream_guard import PeriodicAuthorization
+        model.authorize = PeriodicAuthorization(
+            lambda: client.request("POST", "/internal/v1/lineage/check", json={"refs": []})
+        )
         update(run, fence, {"strategy": "quick_qa", "model_origin": model.profile.model_origin})
         catalog = client.request("GET", "/internal/v1/tools")
         documents = client.request("GET", "/internal/v1/knowledge/documents")["items"]

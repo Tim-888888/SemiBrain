@@ -229,5 +229,6 @@ def test_gateway_passes_only_safe_republication_errors(monkeypatch, code, status
     for key, value in {"SEMIBRAIN_SERVICE": "conversation", "SEMIBRAIN_SERVICE_TOKEN": "test",
                        "SEMIBRAIN_BUSINESS_URL": "http://business"}.items():
         monkeypatch.setenv(key, value)
-    monkeypatch.setattr(httpx, "request", lambda *a, **k: httpx.Response(status, json={"detail": {"code": code}}))
+    monkeypatch.setattr(runtime, "internal_http_client", lambda: SimpleNamespace(
+        request=lambda *a, **k: httpx.Response(status, json={"detail": {"code": code}})))
     assert_error(expected, lambda: runtime.call("business", "POST", "/internal/v1/knowledge/documents/id/" + action), status)

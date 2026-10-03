@@ -157,12 +157,13 @@ class QuickWebRunner:
         self.executor = ToolExecutor(self.harness, self.client)
         self.refs, self.citations, self.limitations = [], [], []
         self.web_activity = {"search": "pending", "pages": [], "reason": ""}
-        self.last_authorized = 0.0
+        from semibrain_agent.stream_guard import PeriodicAuthorization
+        self.authorization = PeriodicAuthorization(
+            lambda: self.client.request("POST", "/internal/v1/lineage/check", json={"refs": self.refs})
+        )
 
     def authorize(self, force=False):
-        if force or time.monotonic() - self.last_authorized >= 1:
-            self.client.request("POST", "/internal/v1/lineage/check", json={"refs": self.refs})
-            self.last_authorized = time.monotonic()
+        self.authorization(force=force)
 
     def tool(self, name, arguments, step):
         row = self.harness.check()

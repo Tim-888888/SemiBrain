@@ -29,7 +29,7 @@ def test_invalid_export_reaches_model_as_safe_actionable_error(monkeypatch, name
         except HTTPException as exc:
             return httpx.Response(exc.status_code, json={'detail': exc.detail})
         pytest.fail('Invalid export must not reach the job queue')
-    monkeypatch.setattr(runtime.httpx, 'request', request)
+    monkeypatch.setattr(runtime, 'internal_http_client', lambda: SimpleNamespace(request=request))
     harness = SimpleNamespace(run_id='fixture', check=lambda: None, reserve_tool=lambda *_: None,
         db=SimpleNamespace(observations=SimpleNamespace(find_one=lambda q: journal.get(q['_id']))),
         save_record=lambda _, key, value: journal.update({key: value}))
@@ -58,7 +58,8 @@ def test_only_known_admission_errors_cross_the_transport_boundary(monkeypatch, s
     monkeypatch.setenv('SEMIBRAIN_SERVICE', 'agent')
     monkeypatch.setenv('SEMIBRAIN_SERVICE_TOKEN', 'test-only')
     monkeypatch.setenv('SEMIBRAIN_' + service.upper() + '_URL', 'http://peer.invalid')
-    monkeypatch.setattr(runtime.httpx, 'request', lambda *_, **kw: httpx.Response(status, json=payload))
+    monkeypatch.setattr(runtime, 'internal_http_client', lambda: SimpleNamespace(
+        request=lambda *_, **kw: httpx.Response(status, json=payload)))
     with pytest.raises(HTTPException) as caught:
         runtime.call(service, 'POST', path)
     assert caught.value.detail['code'] == expected

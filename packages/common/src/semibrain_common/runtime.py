@@ -10,7 +10,6 @@ from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from uuid import uuid4
 
-import httpx
 from fastapi import HTTPException, Request
 from pymongo import MongoClient, ReturnDocument
 from pymongo.errors import DuplicateKeyError
@@ -18,6 +17,8 @@ from pymongo.read_concern import ReadConcern
 from pymongo.write_concern import WriteConcern
 from redis import Redis
 from semibrain_contracts.models import EventEnvelope
+
+from semibrain_common.internal_http import client as internal_http_client
 
 
 def now():
@@ -294,7 +295,7 @@ def call(service: str, method: str, path: str, *, delegation=None, timeout=30, *
     if delegation:
         headers["Authorization"] = "Bearer " + delegation
     url = os.environ[f"SEMIBRAIN_{service.upper()}_URL"] + path
-    response = httpx.request(method, url, headers=headers, timeout=timeout, **kwargs)
+    response = internal_http_client().request(method, url, headers=headers, timeout=timeout, **kwargs)
     if response.status_code >= 400:
         if (service == "business" and method == "POST"
                 and path.startswith("/internal/v1/knowledge/documents/")

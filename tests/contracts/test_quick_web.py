@@ -86,7 +86,10 @@ def runner(
         "history": [],
     }
     r.refs, r.citations, r.limitations, r.executed, r.notices = [], [], [], [], []
-    r.last_authorized = 0
+    from semibrain_agent.stream_guard import PeriodicAuthorization
+    r.authorization = PeriodicAuthorization(
+        lambda: r.client.request("POST", "/internal/v1/lineage/check", json={"refs": r.refs})
+    )
     r.web_activity = {"search": "pending", "pages": [], "reason": ""}
     r.db = SimpleNamespace(observations=Journal())
     r.harness = SimpleNamespace(

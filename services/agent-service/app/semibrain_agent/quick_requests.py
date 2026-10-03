@@ -34,15 +34,16 @@ def request(model, system, user, *, max_tokens, on_text, guard):
     phase = "quick_answer" if model.final else getattr(model, "phase", "quick_understand")
     references = {}
 
-    def check():
+    def check(*, force=False):
         guard()
         model.harness.check()
         authorize = getattr(model, "authorize", None)
         if authorize:
-            authorize()
+            authorize(force=force)
+        guard()  # The consumer may stop while a remote check is in flight.
 
     def execute(messages, output, current_phase, callback=None, refs=None):
-        check()
+        check(force=True)
         if current_phase != "context.compact" and model.context.get("subject_ref") and model.context.get("auth_version"):
             from semibrain_agent.memory import prepare
             memory = prepare(model.harness, model.context)
@@ -75,6 +76,7 @@ def request(model, system, user, *, max_tokens, on_text, guard):
         try:
             turn = ProviderAdapter(model.profile, deadline=model.deadline, guard=check).turn(
                 system, messages, max_tokens=output, on_text=callback, tool_choice="none")
+            check(force=True)
             model.harness.save_record("model_turns", identity, {"phase": current_phase,
                 "task_id": model.context["task_id"], "created_at": now(), "turn": asdict(turn),
                 "profile": model.profile.snapshot(), "token_basis": measurement["token_basis"],
