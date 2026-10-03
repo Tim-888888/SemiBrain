@@ -1,7 +1,7 @@
 export type ContextRequest = { request_id: string; task_id: string; model: string; role: string; phase: string; created_at: string; status: string; context_window_tokens: number; estimated_input_tokens: number; output_reserve_tokens: number; headroom_tokens: number; threshold_tokens: number; breakdown: Record<string, number>; usage?: { input_tokens?: number; output_tokens?: number; cached_input_tokens?: number } | null }
 export type ContextUsage = { version: string; latest: ContextRequest; agents: ContextRequest[]; request_count: number; compaction_count: number; reused_summary_count: number; unknown_usage_requests: number; cache_reported_requests: number; usage: { input_tokens: number; output_tokens: number; cached_input_tokens: number } }
 export type User = { id: string; username: string; role: 'admin' | 'user'; revision: number; enabled: boolean; demo: boolean }
-export type Citation = { body_expired?: boolean; marker: string; title: string; evidence_id: string; asset_id?: string; job_id?: string; location?: Record<string, unknown> }
+export type Citation = { body_expired?: boolean; marker: string; title: string; evidence_id: string; asset_id?: string; job_id?: string; lineage_ref?: string; location?: Record<string, unknown> }
 export type DocumentImage = { asset_id: string; url: string; display_url?: string; alt: string; media_type?: string }
 export type Artifact = { name: string; asset_id: string; media_type?: string }
 export type TaskNode = { task_id: string; role: string; key: string; goals: string[]; depends_on: string[]; plan_version: number; status: string; attempt: number; role_round?: number; error?: string; model_calls?: number; tool_calls?: number; settled_tokens?: number }

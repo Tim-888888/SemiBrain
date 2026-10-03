@@ -941,6 +941,8 @@ class Investigator:
                     else (
                         "本轮任务理解结果未通过校验，请重试"
                         if str(exc) == "INTENT_CONTROL_INVALID"
+                        else "任务规划未通过校验，尚未完成专业 Agent 的任务分配"
+                        if str(exc) == "PLAN_INVALID"
                         else "模型服务额度不足，请联系管理员补充额度后继续"
                         if str(exc) == "MODEL_PAYMENT_REQUIRED"
                         else "模型服务暂时未完成响应"

@@ -22,6 +22,10 @@ function imageFailed(event: Event) {
   }
 }
 async function copy() { await navigator.clipboard.writeText(props.text) }
+function sourceDownload(citation: Citation) {
+  const version = citation.lineage_ref?.startsWith('document:') ? citation.lineage_ref.split(':')[2] : undefined
+  return `/v1/assets/${citation.asset_id}/download` + (version ? `?version=${encodeURIComponent(version)}` : '')
+}
 </script>
 <template>
   <div class="answer-wrap">
@@ -33,7 +37,7 @@ async function copy() { await navigator.clipboard.writeText(props.text) }
     <div v-if="citations?.length" class="citations" aria-label="引用来源">
       <template v-for="citation in citations" :key="citation.evidence_id">
         <span v-if="citation.body_expired" class="citation">▤ {{ citation.marker }} · {{ citation.title }} · 原快照已过期</span>
-        <a v-else-if="citation.asset_id" class="citation" :href="`/v1/assets/${citation.asset_id}/content`" target="_blank" rel="noopener noreferrer">▤ {{ citation.marker }} · {{ citation.title }}</a>
+        <a v-else-if="citation.asset_id" class="citation" :href="sourceDownload(citation)" title="下载来源文档（含图 Markdown 会打包图片，请解压后打开）" target="_blank" rel="noopener noreferrer">▤ {{ citation.marker }} · {{ citation.title }}</a>
         <span v-else class="citation">▦ {{ citation.marker }} · {{ citation.title }}</span>
         <a v-if="typeof citation.location?.url === 'string' && /^https?:\/\//.test(citation.location.url)" class="citation" :href="citation.location.url" target="_blank" rel="noopener noreferrer">原网页 ↗</a>
       </template>

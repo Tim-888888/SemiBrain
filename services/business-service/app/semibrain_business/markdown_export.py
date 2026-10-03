@@ -12,7 +12,7 @@ from semibrain_common.runtime import failure
 from semibrain_business.document_images import image_spans, safe_image
 
 
-def package(report, stem):
+def package(report, stem, *, image_limit=12, byte_limit=12 * 1024**2):
     from semibrain_business.knowledge_api import asset_response
 
     body = report["body_markdown"]
@@ -31,7 +31,7 @@ def package(report, stem):
         response = asset_response(registered[url]["asset_id"], report["claim"])
         raw = response.body
         total += len(raw)
-        if total > 12 * 1024**2 or len(targets) >= 12:
+        if total > byte_limit or len(targets) >= image_limit:
             failure("EXPORT_IMAGES_TOO_LARGE", 413)
         # Use the actual image decoder rather than an extension supplied by the model.
         if getattr(response, "media_type", "") == "image/svg+xml":
@@ -47,6 +47,8 @@ def package(report, stem):
             suffix = ".png"
         name = "images/" + hashlib.sha256(data).hexdigest()[:24] + suffix
         files[name] = data
+        if sum(map(len, files.values())) > byte_limit:
+            failure("EXPORT_IMAGES_TOO_LARGE", 413)
         targets[url] = "./" + name
     replacements, mapped = [], set()
     for span in image_spans(body):

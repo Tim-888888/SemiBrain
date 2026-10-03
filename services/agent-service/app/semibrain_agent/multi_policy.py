@@ -90,11 +90,13 @@ class Plan(BaseModel):
     )
 
 
-def validate_plan(plan, goals, available_roles):
+def validate_plan(plan, goals, available_roles, *, allow_repeated_roles=False):
     if bool(plan.tasks) == plan.finish_with_existing:
         raise ValueError("EMPTY_PLAN_REQUIRES_EXPLICIT_FINISH")
     keys = [task.key for task in plan.tasks]
-    if len(set(keys)) != len(keys) or len({t.role for t in plan.tasks}) != len(keys):
+    if len(set(keys)) != len(keys) or (
+        not allow_repeated_roles and len({t.role for t in plan.tasks}) != len(keys)
+    ):
         raise ValueError("DUPLICATE_TASK_OR_ROLE")
     for task in plan.tasks:
         if task.role not in available_roles:
@@ -135,6 +137,82 @@ def validate_plan(plan, goals, available_roles):
             raise ValueError("CYCLIC_PLAN")
         completed.update(ready)
     return plan
+
+
+def normalize_plan(plan, goals, available_roles):
+    """Contract compatible same-role steps without inventing goals or dropping edges.
+
+    Validate the original DAG first, then the contracted DAG. A cross-role round
+    trip cannot be folded into one worker; reuse identities and conflicting
+    deliverables must be repaired by the planner, not silently weakened.
+    """
+    validate_plan(plan, goals, available_roles, allow_repeated_roles=True)
+    groups = {}
+    for task in plan.tasks:
+        groups.setdefault(task.role, []).append(task)
+    aliases = {task.key: group[0].key for group in groups.values() for task in group}
+    merged = []
+    for group in groups.values():
+        if len(group) == 1:
+            merged.append(group[0].model_copy(deep=True))
+            continue
+        if any(t.reuse_key for t in group):
+            raise ValueError("ROLE_MERGE_REUSE_CONFLICT")
+        kinds = {t.deliverables.kind for t in group}
+        limits = {t.deliverables.lot_limit for t in group if t.deliverables.lot_limit is not None}
+        if (len(kinds) > 1 and not (group[0].role == "sqlbot" and kinds <= {"evidence", "dataset"})) or len(limits) > 1:
+            raise ValueError("ROLE_MERGE_DELIVERABLE_CONFLICT")
+        # Preserve prerequisite order within the combined worker's goals.
+        ordered, pending = [], list(group)
+        local_keys = {t.key for t in group}
+        while pending:
+            done = {t.key for t in ordered}
+            ready = [t for t in pending if set(t.depends_on) & local_keys <= done]
+            ordered.extend(ready)
+            pending = [t for t in pending if t not in ready]
+        requirement = group[0].deliverables.model_dump()
+        requirement.update(
+            kind="dataset" if "dataset" in kinds else group[0].deliverables.kind,
+            lot_limit=next(iter(limits), None),
+            artifact_formats=list(dict.fromkeys(f for t in group for f in t.deliverables.artifact_formats)),
+        )
+        merged.append(PlannedTask(
+            key=group[0].key, role=group[0].role,
+            goal_indices=list(dict.fromkeys(i for t in ordered for i in t.goal_indices)),
+            depends_on=list(dict.fromkeys(d for t in group for d in t.depends_on if d not in local_keys)),
+            deliverables=requirement,
+            gap="；".join(dict.fromkeys(t.gap for t in group if t.gap)),
+            target_refs=list(dict.fromkeys(r for t in group for r in t.target_refs)),
+        ))
+    for task in merged:
+        task.depends_on = list(dict.fromkeys(aliases[d] for d in task.depends_on))
+    result = Plan(tasks=merged, finish_with_existing=plan.finish_with_existing,
+                  synthesis_goal_indices=plan.synthesis_goal_indices)
+    return validate_plan(result, goals, available_roles)
+
+
+def plan_feedback(raw, error, goals):
+    """Repair context includes the failed plan and exact uncovered goal identities."""
+    import json
+
+    try:
+        previous = json.loads(raw)
+    except (ValueError, TypeError):
+        previous = raw[:16000]
+    covered = set()
+    if isinstance(previous, dict):
+        indices = previous.get("synthesis_goal_indices", [])
+        if isinstance(indices, list):
+            covered.update(i for i in indices if type(i) is int)
+        for task in previous.get("tasks", []) if isinstance(previous.get("tasks"), list) else []:
+            if isinstance(task, dict) and isinstance(task.get("goal_indices"), list):
+                covered.update(i for i in task["goal_indices"] if type(i) is int)
+    return {
+        "previous_plan": previous,
+        "validation_feedback": str(error)[:1600],
+        "unassigned_goals": [{"index": i, "goal": goal} for i, goal in enumerate(goals) if i not in covered],
+        "repair_instruction": "在 previous_plan 基础上局部修复，返回完整计划。保留已正确分配的目标和必要依赖；每个角色至多一个任务，可覆盖多个目标。必须取证的遗漏目标要交给可执行的角色，不能仅移入 synthesis_goal_indices。不得扩大原范围或删除交付要求。",
+    }
 
 
 def ready_tasks(tasks):

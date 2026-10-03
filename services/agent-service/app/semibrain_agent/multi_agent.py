@@ -36,7 +36,14 @@ from semibrain_agent.investigation_progress import (
     source_path,
 )
 from semibrain_agent.investigator import GraphState, Investigator
-from semibrain_agent.multi_policy import MULTI_LIMITS, ROLE_TOOLS, Plan, ready_tasks, validate_plan
+from semibrain_agent.multi_policy import (
+    MULTI_LIMITS,
+    ROLE_TOOLS,
+    Plan,
+    normalize_plan,
+    plan_feedback,
+    ready_tasks,
+)
 from semibrain_agent.multi_review import evidence_issues
 from semibrain_agent.prompts import (
     CONTROL_SAFETY_RULES,
@@ -58,7 +65,7 @@ from semibrain_agent.task_outputs import (
     reusable_task,
 )
 
-MULTI_VERSION = "multi-supervisor-v27"
+MULTI_VERSION = "multi-supervisor-v28"
 ROLE_RULES = {
     "sqlbot": "你是 SQLBot。使用授权业务工具核验目标、阶段、程序、时间与分母。原问题已给出必要参数时直接查询，不为重复确认编号先列目录或读上下文；缺失且可自行补足时才查询目录。仅完成分配给自己的目标，不重复其他分支负责的计算。交回引用证据与缺口，不给无证据根因。",
     "rag": "你是 RAG Agent。检索并读取与分配目标相关的授权原文，保留版本、否定和限制。缺少内容明确记录，不用常识填成引用。",
@@ -105,6 +112,7 @@ class MultiPrompts(PromptAssembler):
             return (
                 CONTROL_SAFETY_RULES + "\n你是任务协调器，只返回计划控制对象，不输出用户答案。"
                 "仅从服务器给出的角色和原目标索引分配任务，各角色最多一次。"
+                "同一角色的连续查询步骤合并到一个任务，goal_indices列齐所有目标；例如批次、良率、工艺和告警由一个SQLBot完成。"
                 "独立取证任务不设依赖；计算/绘图依赖提供数据的角色。"
                 "缺图不要规划视觉，纯知识可只用RAG；不能扩大资料权限或联网范围。"
                 "补查仅安排能补足所列缺口的分支，不重复已完成工作。\n"
@@ -349,7 +357,7 @@ class MultiAgent(Investigator):
                 max_tokens=1800,
             )
             try:
-                plan = validate_plan(parse_control(turn.text, Plan), goals, available)
+                plan = normalize_plan(parse_control(turn.text, Plan), goals, available)
                 if plan.finish_with_existing and not state.get("plan_version"):
                     raise ValueError("INITIAL_PLAN_REQUIRES_INVESTIGATION")
                 if not plan.finish_with_existing:
@@ -365,7 +373,7 @@ class MultiAgent(Investigator):
                 break
             except ValueError as exc:
                 plan = None
-                data["validation_feedback"] = str(exc)[:1200]
+                data.update(plan_feedback(turn.text, exc, goals))
         if plan is None:
             if last_progress_plan and str(data.get("validation_feedback", "")).startswith("NO_NEW_PATH:"):
                 plan = last_progress_plan

@@ -736,6 +736,13 @@ def asset_content(asset_id: str, request: Request, preview_version: UUID | None 
     return asset_response(asset_id, claim, preview_version)
 
 
+@router.get("/internal/v1/assets/{asset_id}/download")
+def source_download(asset_id: str, request: Request, version: UUID | None = None):
+    from semibrain_business.source_download import download_source
+
+    return download_source(asset_id, authorize_request(request, "asset.read"), version)
+
+
 def asset_response(asset_id: str, claim, preview_version: UUID | None = None):
     asset = db().assets.find_one({"_id": asset_id})
     if not asset:

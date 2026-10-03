@@ -205,6 +205,16 @@ def download(asset_id: UUID, preview_version: UUID | None = None, user=Depends(c
     )
 
 
+@router.get("/v1/assets/{asset_id}/download")
+def source_download(asset_id: UUID, version: UUID | None = None, user=Depends(current_user)):
+    response = business(user, "GET", f"/internal/v1/assets/{asset_id}/download",
+                        operation="asset.read", params={"version": str(version)} if version else {},
+                        timeout=60)
+    return Response(response.content, headers={name: response.headers[name] for name in (
+        "content-type", "content-disposition", "cache-control", "x-content-type-options",
+        "content-security-policy") if name in response.headers})
+
+
 @router.get("/v1/business/tools")
 def tools(user=Depends(current_user)):
     return business(user, "GET", "/internal/v1/tools", operation="business.catalog").json()
