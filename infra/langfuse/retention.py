@@ -21,6 +21,20 @@ def eligible_ids(rows, cutoff):
     return result
 
 
+def trace_expired(result, cutoff):
+    # Never delete a partially inspected, unfinished, or recently active trace.
+    if result.get("meta", {}).get("cursor") or not result["data"]:
+        return False
+    for row in result["data"]:
+        if not row.get("endTime"):
+            return False
+        for key in ("startTime", "endTime"):
+            stamp = datetime.fromisoformat(row[key].replace("Z", "+00:00"))
+            if stamp.tzinfo is None or stamp >= cutoff:
+                return False
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--env", required=True, type=Path)
@@ -60,18 +74,18 @@ def main():
     ids = list(dict.fromkeys(ids))
     # A trace with an old span and newer activity is not expired as a whole.
     safe = []
-    for trace_id in ids:
-        recent = request("GET", "/api/public/v2/observations?" + urlencode({
-            "traceId": trace_id, "fromStartTime": cutoff.isoformat(),
-            "toStartTime": datetime.now(timezone.utc).isoformat(), "fields": "core", "limit": 1}))
-        if not recent["data"]:
+    for trace_id in ids[:500]:
+        complete = request("GET", "/api/public/v2/observations?" + urlencode({
+            "traceId": trace_id, "fromStartTime": "2020-01-01T00:00:00Z",
+            "toStartTime": datetime.now(timezone.utc).isoformat(), "fields": "core", "limit": 1000}))
+        if trace_expired(complete, cutoff):
             safe.append(trace_id)
     ids = safe
     if args.apply:
         for offset in range(0, len(ids), 100):
             request("DELETE", "/api/public/traces", {"traceIds": ids[offset:offset + 100]})
     print(json.dumps({"retention_days": days, "matched": len(ids), "applied": args.apply,
-                      "cutoff": cutoff.isoformat(), "bounded_to": 5000}))
+                      "cutoff": cutoff.isoformat(), "bounded_to": 500}))
 
 
 if __name__ == "__main__":

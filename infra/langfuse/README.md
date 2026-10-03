@@ -74,7 +74,10 @@ Built-in configurable retention is an Enterprise entitlement in this release;
 the headless retention variable is ignored without that entitlement. The
 community deployment uses `retention.py` and the supported project API to
 delete traces older than 30 days. Run a dry-run first; use `--apply` for the daily
-job. It validates each timestamp and caps a run at 5,000 traces. Only the project
+job. It validates span start/end timestamps, skips unfinished or incompletely
+inspected traces, and caps a run at 500 traces. Discovery scans at most 5,000
+observations; very large traces above 1,000 observations are retained for manual
+review. Only the project
 identified by the credentials is affected. Keep ingestion event objects under a
 separate 7-day S3 lifecycle rule after verifying successful ingestion; this does
 not delete ClickHouse trace records. No media is uploaded by SemiBrain today.
@@ -90,7 +93,12 @@ An on-host archive alone is not disaster recovery.
 
 Restore first into a separate directory and Compose project with an isolated
 network and unused loopback ports. Verify admin membership and a known trace
-before replacing live state. Do not run `docker compose down -v` or extract over
+before replacing live state. Verify the archive SHA-256 and preserve numeric
+owners and permissions when extracting this trusted backup as root (for example,
+GNU tar with `--numeric-owner --same-owner --same-permissions`). ClickHouse runs
+as UID/GID 101; an extractor that resets ownership to root makes its restored
+data unreadable. Keep the restored secrets directory private. Do not run
+`docker compose down -v` or extract over
 live database files. To roll SemiBrain back, restore its saved service env files
 and image references; keep per-run target snapshots, since runs emitted to the
 self-hosted project still belong there.

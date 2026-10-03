@@ -114,3 +114,8 @@ def test_retention_rejects_recent_or_timezone_ambiguous_data():
     for stamp in ["2026-09-01T00:00:00Z", "2026-08-01T00:00:00", "invalid"]:
         with pytest.raises(ValueError):
             module.eligible_ids([{"traceId": "keep", "startTime": stamp}], cutoff)
+    old = {"traceId": "old", "startTime": "2026-08-01T00:00:00Z", "endTime": "2026-08-01T00:00:01Z"}
+    assert module.trace_expired({"data": [old]}, cutoff)
+    assert not module.trace_expired({"data": [old], "meta": {"cursor": "more"}}, cutoff)
+    assert not module.trace_expired({"data": [old, {**old, "endTime": None}]}, cutoff)
+    assert not module.trace_expired({"data": [old, {**old, "endTime": "2026-09-02T00:00:00Z"}]}, cutoff)
