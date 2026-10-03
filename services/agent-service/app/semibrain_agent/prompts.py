@@ -254,6 +254,13 @@ def validate_intent_sources(intent, context, attachments, source_catalog=None):
     }
     errors, grounded_slots = [], []
     delivery = intent.delivery
+    # An inline answer has no file operation. Normalize a redundant model hint
+    # only when there is no file payload to discard; retain the raw intent log.
+    if (delivery.kind == "inline" and delivery.method == "report"
+            and not delivery.formats and not delivery.source_text
+            and not delivery.answer_run_id and not delivery.file_goal_indices):
+        delivery = delivery.model_copy(update={"method": "tool"})
+        intent = intent.model_copy(update={"delivery": delivery})
     if delivery.method == "report":
         indices = delivery.file_goal_indices
         if (delivery.kind != "file" or delivery.formats != ["md"] or not intent.goals

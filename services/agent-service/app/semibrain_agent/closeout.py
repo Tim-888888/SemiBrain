@@ -85,6 +85,35 @@ ANSWER_SYSTEM += REPORT_DELIVERY_RULE
 REVIEW_SYSTEM += REPORT_DELIVERY_RULE
 REPAIR_SYSTEM += REPORT_DELIVERY_RULE
 
+GRAPH_REVIEW_RULE = """\nqueried_graph是本轮已成功查询且与当前有效原文绑定的关系记录，可用于核验“图谱返回了某条边”的声明；source_markers指向支持该边的已登记原文，正文仍须引用它。它只代表本轮查询所见，不代表完整图谱；共现、适用关系和候选原因不能升级为已证实因果。"""
+REVIEW_SYSTEM += GRAPH_REVIEW_RULE
+REPAIR_SYSTEM += GRAPH_REVIEW_RULE
+
+
+def queried_graph(runner, records):
+    """Carry graph observations into review without reviving unavailable sources."""
+    allowed = {r.get("evidence_id"): r for r in records if r.get("evidence_id")}
+    edges = {}
+    for row in runner.db.observations.find({"run_id": runner.run["_id"]}):
+        observation = row.get("observation", {})
+        if observation.get("tool") != "knowledge.graph" or observation.get("status") != "succeeded":
+            continue
+        sources = [allowed[r["evidence_id"]] for r in observation.get("evidence", [])
+                   if r.get("evidence_id") in allowed]
+        for edge in observation.get("relationships", []):
+            quote = edge.get("quote")
+            markers = [r["marker"] for r in sources
+                       if r.get("source", {}).get("source_id") == edge.get("document_id")
+                       and r.get("source", {}).get("source_version") == edge.get("version")
+                       and isinstance(r.get("content"), str) and isinstance(quote, str)
+                       and quote and quote in r["content"]]
+            if markers and edge.get("edge_id"):
+                edges[edge["edge_id"]] = {
+                    **{k: edge[k] for k in ("edge_id", "subject", "object", "relation", "quote")},
+                    "source_markers": sorted(set(markers)),
+                }
+    return list(edges.values())
+
 
 def select_packet(question, intent, evidence, project, executed, missing_files):
     """Shrink only the evidence view; preserve the original task and scope verbatim."""
@@ -157,6 +186,7 @@ def review_answer(runner, state):
     jobs = {r["observation"].get("job_id") for r in runner.db.observations.find({
         "run_id": runner.run["_id"], "observation.tool": {"$in": sorted(FILE_TOOLS)}})}
     packet = {**packet, "registered_artifacts": registered_artifacts(evidence, jobs), "goals": [{"index": i, "text": goal} for i, goal in enumerate(goals)]}
+    packet["queried_graph"] = queried_graph(runner, packet["evidence"])
     valid = {r["marker"] for r in evidence} & {r["marker"] for r in packet["evidence"]}
     original = state["draft"]
     audit = []
