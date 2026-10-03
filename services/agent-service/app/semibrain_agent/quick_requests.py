@@ -70,6 +70,7 @@ def request(model, system, user, *, max_tokens, on_text, guard):
         started, turn = time.monotonic(), None
         span = Observation(model.harness.run_id, current_phase, kind="generation",
                            model=model.profile.model, service="agent", phase=current_phase,
+                           parent_span_id=model.context.get("trace_root_id"),
                            model_origin=model.profile.model_origin)
         try:
             turn = ProviderAdapter(model.profile, deadline=model.deadline, guard=check).turn(

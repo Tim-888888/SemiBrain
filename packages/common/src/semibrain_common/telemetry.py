@@ -64,16 +64,26 @@ class Observation:
         try:
             exporter = client()
             if exporter:
-                self.span = exporter.start_observation(
-                    trace_context={
-                        "trace_id": digest(run_id)[:32],
-                        **({"parent_span_id": parent_span_id} if parent_span_id else {}),
-                    },
-                    name=name,
-                    as_type=kind,
-                    model=model,
-                    metadata=self.metadata,
-                )
+                trace_id = digest(run_id)[:32]
+                kwargs = {"name": name, "as_type": kind, "model": model, "metadata": self.metadata}
+                if parent_span_id:
+                    # SDK v4 marks explicit trace_context observations as roots.
+                    # Propagate a real parent via the public OTel context API so
+                    # remote service children remain children in the v4 UI.
+                    from opentelemetry.trace import (
+                        NonRecordingSpan,
+                        SpanContext,
+                        TraceFlags,
+                        use_span,
+                    )
+
+                    parent = NonRecordingSpan(SpanContext(
+                        trace_id=int(trace_id, 16), span_id=int(parent_span_id, 16),
+                        is_remote=True, trace_flags=TraceFlags(TraceFlags.SAMPLED)))
+                    with use_span(parent, end_on_exit=False):
+                        self.span = exporter.start_observation(**kwargs)
+                else:
+                    self.span = exporter.start_observation(trace_context={"trace_id": trace_id}, **kwargs)
         except Exception:
             pass
 

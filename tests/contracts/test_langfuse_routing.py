@@ -1,4 +1,5 @@
 from unittest.mock import Mock
+from uuid import uuid4
 
 import pytest
 from semibrain_agent.diagnostics import trace_link
@@ -55,3 +56,61 @@ def test_exporter_failure_never_changes_business_control_flow(monkeypatch):
     span.update.side_effect = TimeoutError()
     monkeypatch.setattr(telemetry, "client", Mock(return_value=Mock(start_observation=Mock(return_value=span))))
     telemetry.Observation("run", "test").end(usage={"total_tokens": 10}, status="completed")
+
+
+def test_remote_children_use_otel_parent_instead_of_sdk_v4_root_override(monkeypatch):
+    from opentelemetry.trace import get_current_span
+    from semibrain_common.runtime import digest
+
+    seen = {}
+
+    def start(**kwargs):
+        context = get_current_span().get_span_context()
+        seen.update(kwargs=kwargs, parent=context.span_id, trace=context.trace_id)
+        return Mock()
+
+    monkeypatch.setattr(telemetry, "client", Mock(return_value=Mock(start_observation=start)))
+    telemetry.Observation("run", "child", parent_span_id="1234567890abcdef")
+    assert seen["parent"] == int("1234567890abcdef", 16)
+    assert seen["trace"] == int(digest("run")[:32], 16)
+    assert "trace_context" not in seen["kwargs"]
+
+
+@pytest.mark.parametrize("mode,strategy", [("quick_qa", None), ("investigation", "single_agent"), ("investigation", "multi_agent")])
+def test_admission_freezes_target_without_changing_idempotent_replays(monkeypatch, mode, strategy):
+    from semibrain_agent import configuration, runs
+    from semibrain_contracts.models import InputSnapshot, RunRequest
+
+    store = Mock()
+    store.runs.find_one.return_value = None
+    monkeypatch.setattr(runs, "db", lambda: store)
+    monkeypatch.setattr(runs, "publish", Mock())
+    monkeypatch.setattr(configuration, "snapshot", Mock(return_value={}))
+    configure(monkeypatch, "https://first.example.com", "first")
+    command = RunRequest(request_id=uuid4(), run_id=uuid4(), subject_ref=uuid4(), scope_ref="demo",
+                         policy_version="test", input=InputSnapshot(
+                             conversation_id=uuid4(), turn_id=uuid4(), input_revision=1,
+                             question="test", mode=mode, investigation_strategy=strategy)).model_dump(mode="json")
+    row = runs.accept(command, None)
+    assert row["telemetry_target"] == telemetry.trace_target()
+    store.runs.insert_one.assert_called_once_with(row, session=None)
+    store.runs.find_one.return_value = row
+    configure(monkeypatch, "https://second.example.com", "second")
+    assert runs.accept(command, None)["telemetry_target"]["project_id"] == "first"
+    assert store.runs.insert_one.call_count == 1
+
+
+def test_retention_rejects_recent_or_timezone_ambiguous_data():
+    import importlib.util
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "infra/langfuse/retention.py"
+    spec = importlib.util.spec_from_file_location("langfuse_retention", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    cutoff = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    assert module.eligible_ids([{"traceId": "old", "startTime": "2026-08-01T00:00:00Z", "endTime": "2026-08-01T00:00:01Z"}], cutoff) == ["old"]
+    for stamp in ["2026-09-01T00:00:00Z", "2026-08-01T00:00:00", "invalid"]:
+        with pytest.raises(ValueError):
+            module.eligible_ids([{"traceId": "keep", "startTime": stamp}], cutoff)

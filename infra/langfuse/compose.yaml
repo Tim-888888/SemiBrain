@@ -9,16 +9,16 @@ x-service: &service
   networks: [data]
 
 x-dependencies: &dependencies
-  postgres: {condition: service_healthy}
-  redis: {condition: service_healthy}
-  minio: {condition: service_healthy}
-  clickhouse: {condition: service_healthy}
+  langfuse-postgres: {condition: service_healthy}
+  langfuse-redis: {condition: service_healthy}
+  langfuse-minio: {condition: service_healthy}
+  langfuse-clickhouse: {condition: service_healthy}
 
 services:
-  web:
+  langfuse-web:
     <<: *service
     image: ${LANGFUSE_WEB_IMAGE:?Pin the verified Langfuse web image}
-    env_file: [${LANGFUSE_SECRET_DIR:?Private secret directory}/runtime.env, '${LANGFUSE_SECRET_DIR}/init.env']
+    env_file: ['${LANGFUSE_SECRET_DIR:?Private secret directory}/runtime.env', '${LANGFUSE_SECRET_DIR}/init.env']
     environment: {NODE_OPTIONS: '--max-old-space-size=1536', HOSTNAME: '0.0.0.0'}
     ports: ['127.0.0.1:18811:3000']
     networks:
@@ -32,11 +32,11 @@ services:
       timeout: 5s
       retries: 8
       start_period: 180s
-  worker:
+  langfuse-worker:
     <<: *service
     image: ${LANGFUSE_WORKER_IMAGE:?Pin the matching Langfuse worker image}
     env_file: ['${LANGFUSE_SECRET_DIR}/runtime.env']
-    environment: {NODE_OPTIONS: '--max-old-space-size=1536'}
+    environment: {NODE_OPTIONS: '--max-old-space-size=1536', HOSTNAME: '0.0.0.0'}
     depends_on: *dependencies
     mem_limit: 2g
     healthcheck:
@@ -45,7 +45,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 180s
-  postgres:
+  langfuse-postgres:
     <<: *service
     image: ${LANGFUSE_POSTGRES_IMAGE:?Pin PostgreSQL 17}
     env_file: ['${LANGFUSE_SECRET_DIR}/postgres.env']
@@ -56,7 +56,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
-  redis:
+  langfuse-redis:
     <<: *service
     image: ${LANGFUSE_REDIS_IMAGE:?Pin Redis 7}
     command: [redis-server, /run/private/redis.conf]
@@ -70,7 +70,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
-  minio:
+  langfuse-minio:
     <<: *service
     image: ${LANGFUSE_MINIO_IMAGE:?Pin MinIO}
     entrypoint: sh
@@ -83,7 +83,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
-  clickhouse:
+  langfuse-clickhouse:
     <<: *service
     image: ${LANGFUSE_CLICKHOUSE_IMAGE:?Pin ClickHouse 25.12}
     user: '101:101'

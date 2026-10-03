@@ -6,7 +6,7 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
     client_max_body_size 8m;
     resolver 127.0.0.11 valid=5s ipv6=off;
-    set $langfuse_upstream http://web:3000;
+    set $langfuse_upstream http://langfuse-web:3000;
     location / {
         proxy_pass $langfuse_upstream;
         proxy_set_header Host $http_host;

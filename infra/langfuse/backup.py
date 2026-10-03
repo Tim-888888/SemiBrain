@@ -29,7 +29,7 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         compose = ["docker", "compose", "--env-file", str(args.env), "-f", str(args.compose_dir / "compose.yaml")]
         # Explicit service names constrain the maintenance window to Langfuse.
-        services = ["web", "worker", "postgres", "redis", "minio", "clickhouse"]
+        services = ["langfuse-web", "langfuse-worker", "langfuse-postgres", "langfuse-redis", "langfuse-minio", "langfuse-clickhouse"]
         running = subprocess.check_output(compose + ["ps", "--status", "running", "--services"], text=True).split()
         if not set(services).issubset(running):
             raise RuntimeError("Start and verify the full Langfuse stack before backup")
@@ -37,7 +37,7 @@ def main():
         path = destination / ("langfuse-" + stamp + ".tar.gz")
         partial = path.with_suffix(".partial")
         try:
-            subprocess.run(compose + ["stop", "-t", "45", "web", "worker"], check=True)
+            subprocess.run(compose + ["stop", "-t", "45", "langfuse-web", "langfuse-worker"], check=True)
             subprocess.run(compose + ["stop", "-t", "45", *services[2:]], check=True)
             with tarfile.open(partial, "w:gz", compresslevel=1) as archive:
                 archive.add(data, arcname="data")

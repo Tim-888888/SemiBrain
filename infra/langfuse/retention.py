@@ -11,12 +11,13 @@ from urllib.request import Request, urlopen
 def eligible_ids(rows, cutoff):
     result = []
     for row in rows:
-        stamp = datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00"))
+        stamp = datetime.fromisoformat(row["startTime"].replace("Z", "+00:00"))
         if stamp.tzinfo is None or stamp >= cutoff:
             raise ValueError("Retention query returned a record outside the deletion window")
-        if not isinstance(row["id"], str) or not row["id"]:
+        if not isinstance(row["traceId"], str) or not row["traceId"]:
             raise ValueError("Invalid trace identifier")
-        result.append(row["id"])
+        if row.get("endTime"):
+            result.append(row["traceId"])
     return result
 
 
@@ -44,15 +45,28 @@ def main():
             return json.load(response)
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    query = urlencode({"fromTimestamp": "2020-01-01T00:00:00Z", "toTimestamp": cutoff.isoformat(), "limit": 100})
+    query = {"fromStartTime": "2020-01-01T00:00:00Z", "toStartTime": cutoff.isoformat(),
+             "fields": "core", "limit": 100}
     # Freeze a bounded list before deletion; never page through a changing result set.
     ids = []
-    for page in range(1, 51):
-        rows = request("GET", "/api/public/traces?" + query + "&page=" + str(page))["data"]
+    for _ in range(50):
+        result = request("GET", "/api/public/v2/observations?" + urlencode(query))
+        rows = result["data"]
         ids.extend(eligible_ids(rows, cutoff))
-        if len(rows) < 100:
+        cursor = result.get("meta", {}).get("cursor")
+        if not cursor:
             break
+        query["cursor"] = cursor
     ids = list(dict.fromkeys(ids))
+    # A trace with an old span and newer activity is not expired as a whole.
+    safe = []
+    for trace_id in ids:
+        recent = request("GET", "/api/public/v2/observations?" + urlencode({
+            "traceId": trace_id, "fromStartTime": cutoff.isoformat(),
+            "toStartTime": datetime.now(timezone.utc).isoformat(), "fields": "core", "limit": 1}))
+        if not recent["data"]:
+            safe.append(trace_id)
+    ids = safe
     if args.apply:
         for offset in range(0, len(ids), 100):
             request("DELETE", "/api/public/traces", {"traceIds": ids[offset:offset + 100]})

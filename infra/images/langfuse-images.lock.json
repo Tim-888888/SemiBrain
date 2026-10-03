@@ -1,0 +1,29 @@
+{
+  "langfuse-web": {
+    "source": "registry-1.docker.io/langfuse/langfuse:4.50.0",
+    "index_digest": "sha256:3d2ae888a0e6edb41fdba6e7d5baca5e4baede3a870dac7970dadd9d925b018e",
+    "manifest_digest": "sha256:9e13bc1a6282fddf0d4a129a2fead3e481cb6f285d1a9031abce475b984792fa",
+    "config_digest": "sha256:3e15d9945830fbeca2e47c7b38aa361102868cf07c1eeeecd5df35947f70cacb",
+    "platform": "linux/amd64",
+    "imported_digest": "sha256:9e13bc1a6282fddf0d4a129a2fead3e481cb6f285d1a9031abce475b984792fa",
+    "transport": "digest-verified registry mirror"
+  },
+  "langfuse-worker": {
+    "source": "registry-1.docker.io/langfuse/langfuse-worker:4.50.0",
+    "index_digest": "sha256:52f7fd41ded2f1a6acab13ff7cb1832d36dfe2cbf44adea402b7a09cfa4ce800",
+    "manifest_digest": "sha256:672b48cbfc979f7821b37b1f36aa8ff8872cafa22090c745dcd4ce04ae9b4e06",
+    "config_digest": "sha256:279f37fbf35a21ce96462b5979d7f5d0ace5c27058eebce431db6da2c1405239",
+    "platform": "linux/amd64",
+    "imported_digest": "sha256:672b48cbfc979f7821b37b1f36aa8ff8872cafa22090c745dcd4ce04ae9b4e06",
+    "transport": "digest-verified registry mirror"
+  },
+  "langfuse-clickhouse": {
+    "source": "registry-1.docker.io/clickhouse/clickhouse-server:25.12",
+    "index_digest": "sha256:8a790dd3468db22b1d4e7b18a176f378ff5ff6053b9c48dd4ea1fa71a24c5ba6",
+    "manifest_digest": "sha256:8ecb92fa564142a2bad5fef7b39f89af7265ddbfd782693b15f002ca0f70be14",
+    "config_digest": "sha256:0e76d9807edfac0345554816cd7f54aa9b650892848809932557c46e46bc3450",
+    "platform": "linux/amd64",
+    "imported_digest": "sha256:8ecb92fa564142a2bad5fef7b39f89af7265ddbfd782693b15f002ca0f70be14",
+    "transport": "digest-verified registry mirror"
+  }
+}
