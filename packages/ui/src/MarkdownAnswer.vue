@@ -32,7 +32,7 @@ function sourceDownload(citation: Citation) {
     <article class="markdown" :class="{ streaming }" @click="openImage" @keydown.enter="openImage" @error.capture="imageFailed" v-html="html"></article>
     <div v-if="expanded" class="modal-backdrop image-lightbox" role="dialog" aria-label="查看配图" aria-modal="true" @click.self="expanded = null" @keydown.esc="expanded = null"><button class="secondary" autofocus @click="expanded = null">关闭图片</button><img :src="expanded.url" :alt="expanded.alt" /></div>
     <div v-if="artifacts?.length" class="answer-artifacts" aria-label="分析产物">
-      <figure v-for="artifact in artifacts" :key="artifact.asset_id"><img v-if="artifact.media_type === 'image/png'" :src="`/v1/assets/${artifact.asset_id}/content`" :alt="artifact.name" loading="lazy" /><figcaption><a :href="`/v1/assets/${artifact.asset_id}/content`" target="_blank" rel="noopener noreferrer">下载 {{ artifact.name }}</a></figcaption></figure>
+      <figure v-for="artifact in artifacts" :key="artifact.asset_id"><img v-if="artifact.media_type === 'image/png'" :src="`/v1/assets/${artifact.asset_id}/content`" :alt="artifact.name" loading="lazy" /><figcaption><a :href="`/v1/assets/${artifact.asset_id}/content`" :download="artifact.name">下载 {{ artifact.name }}</a></figcaption></figure>
     </div>
     <div v-if="citations?.length" class="citations" aria-label="引用来源">
       <template v-for="citation in citations" :key="citation.evidence_id">
