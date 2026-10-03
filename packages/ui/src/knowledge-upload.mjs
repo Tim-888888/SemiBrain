@@ -43,8 +43,20 @@ export async function documentBundle(file, files, documentPath) {
 
 export async function selectedDocuments(files) {
   const attached = new Set()
+  const available = new Map(files.map(file => [pathOf(file), file]))
   for (const file of files.filter(f => /\.md$/i.test(f.name))) {
-    for (const image of await documentBundle(file, files, pathOf(file))) attached.add(image.file)
+    // Discover attachments without validating the entire batch. Each document's
+    // bundle is validated at submission, so one missing image cannot block peers.
+    function collect(tokens) {
+      for (const token of tokens) {
+        if (token.type === 'image') {
+          const target = available.get(resolveImagePath(pathOf(file), token.attrGet('src') || ''))
+          if (target && /\.(png|jpe?g|webp|gif|svg)$/i.test(target.name)) attached.add(target)
+        }
+        if (token.children) collect(token.children)
+      }
+    }
+    try { collect(md.parse(await file.text(), {})) } catch { /* Report this file's read error during its own submission. */ }
   }
   return files.filter(file => documentFile(file) && !attached.has(file))
 }

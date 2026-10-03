@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { rememberFilters } from './page-filters'
 import { documentCatalog } from './document-catalog'
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api, post } from './api'
 import MarkdownAnswer from './MarkdownAnswer.vue'
 import KnowledgeVersions from './KnowledgeVersions.vue'
 import ResourceDrawer from './ResourceDrawer.vue'
 const uploadOpen=ref(false), query=ref(''), state=ref(''), format=ref(''), page=ref(1), loading=ref(true), loadError=ref('')
+const uploadDrawer=ref<InstanceType<typeof ResourceDrawer> | null>(null)
 const uploadResults=ref<{name:string;status:string;error?:string}[]>([])
 const previewTab=ref('body'), chunks=ref<any[]>([]), chunksBusy=ref(false)
 const previewOpen=computed({get:()=>!!preview.value,set:(value:boolean)=>{if(!value)preview.value=null}})
@@ -47,7 +48,7 @@ async function upload() {
       } catch(e) {progress.status='上传失败';progress.error=(e as Error).message}
     }
     const count=uploadResults.value.filter(row=>row.status==='上传失败').length
-    files.value=[];notice.value=count ? `已处理 ${documents.length} 份资料，其中 ${count} 份上传失败，请查看上传任务记录并单独重选失败文件。` : `已提交 ${documents.length} 份资料，解析完成后请预览并发布。`; await load()
+    files.value=[];notice.value=count ? `已处理 ${documents.length} 份资料，其中 ${count} 份上传失败，请查看上传任务记录并单独重选失败文件。` : `已提交 ${documents.length} 份资料，解析完成后请预览并发布。`; await load(); await nextTick(); uploadDrawer.value?.markClean()
   } catch (e) { error.value = (e as Error).message }
   finally { busy.value = false }
 }
@@ -123,7 +124,7 @@ rememberFilters('KnowledgePanel', {query,state,format})
 <template>
   <section class="resource-panel">
     <div class="page-title"><div><p class="eyebrow">KNOWLEDGE LIBRARY</p><h1>知识库</h1><p class="muted">文档与来源放在一起，回答更容易核验。</p></div><button v-if="manage" class="primary" :disabled="busy" @click="uploadOpen=true">＋ 上传文档</button><span v-else class="badge">{{ items.length }} 份资料</span></div>
-    <ResourceDrawer v-model="uploadOpen" title="上传知识资料" :busy="busy" :snapshot="{files: files.map(f=>({name:f.name,size:f.size})),path,origin,external}" :error="error">
+    <ResourceDrawer ref="uploadDrawer" v-model="uploadOpen" title="上传知识资料" :busy="busy" :snapshot="{files: files.map(f=>({name:f.name,size:f.size})),path,origin,external}" :error="error">
       <h3>添加资料</h3><p class="muted small">支持 PDF、DOC/DOCX、XLS/XLSX、PPT/PPTX、Markdown、CSV、JSON、XMind、EPUB、HTML/MHTML 和图片。含图片的 Markdown 请连同配图选择文件夹，单篇及配图合计最大 32 MB。解析完成后预览并发布。</p>
       <input type="file" multiple accept=".pdf,.doc,.docx,.ppt,.md,.csv,.xlsx,.xls,.pptx,.epub,.xmind,.json,.html,.htm,.mhtml,.mht,.png,.jpg,.jpeg,.webp,.gif,.svg" @change="choose" aria-label="选择知识库文件" />
       <label class="small">或选择文件夹<input type="file" webkitdirectory multiple @change="choose" aria-label="选择资料文件夹" /></label><div class="form-row"><label>文档路径<input v-model="path" placeholder="例如 工艺规范/文档名称.pdf" :disabled="files.length !== 1" /></label><label>资料来源<select v-model="origin"><option value="public">公开资料</option><option value="synthetic">合成演示资料</option><option value="authorized_business">已授权业务资料</option></select></label></div>
