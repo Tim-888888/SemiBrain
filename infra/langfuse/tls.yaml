@@ -1,0 +1,16 @@
+# Optional HTTPS edge. Configure DNS/certificate and public access before changing UI_URL.
+services:
+  edge:
+    image: ${LANGFUSE_NGINX_IMAGE:?Pin nginx}
+    restart: unless-stopped
+    ports: ['${LANGFUSE_TLS_BIND:-127.0.0.1}:9443:443']
+    environment:
+      LANGFUSE_SERVER_NAME: ${LANGFUSE_SERVER_NAME:?Set the certificate hostname}
+    volumes:
+      - './nginx.conf.template:/etc/nginx/templates/default.conf.template:ro'
+      - '${LANGFUSE_TLS_DIR:?Private TLS directory}:/etc/nginx/tls:ro'
+    networks: [data]
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: '3'}

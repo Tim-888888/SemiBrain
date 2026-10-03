@@ -1,0 +1,105 @@
+name: semibrain-langfuse
+
+x-service: &service
+  restart: unless-stopped
+  security_opt: [no-new-privileges:true]
+  logging:
+    driver: json-file
+    options: {max-size: 10m, max-file: '3'}
+  networks: [data]
+
+x-dependencies: &dependencies
+  langfuse-postgres: {condition: service_healthy}
+  langfuse-redis: {condition: service_healthy}
+  langfuse-minio: {condition: service_healthy}
+  langfuse-clickhouse: {condition: service_healthy}
+
+services:
+  langfuse-web:
+    <<: *service
+    image: ${LANGFUSE_WEB_IMAGE:?Pin the verified Langfuse web image}
+    env_file: ['${LANGFUSE_SECRET_DIR:?Private secret directory}/runtime.env', '${LANGFUSE_SECRET_DIR}/init.env']
+    environment: {NODE_OPTIONS: '--max-old-space-size=1536', HOSTNAME: '0.0.0.0'}
+    ports: ['127.0.0.1:18811:3000']
+    networks:
+      data: {}
+      core: {aliases: [langfuse-web]}
+    depends_on: *dependencies
+    mem_limit: 2g
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/api/public/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 180s
+  langfuse-worker:
+    <<: *service
+    image: ${LANGFUSE_WORKER_IMAGE:?Pin the matching Langfuse worker image}
+    env_file: ['${LANGFUSE_SECRET_DIR}/runtime.env']
+    environment: {NODE_OPTIONS: '--max-old-space-size=1536', HOSTNAME: '0.0.0.0'}
+    depends_on: *dependencies
+    mem_limit: 2g
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3030/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 180s
+  langfuse-postgres:
+    <<: *service
+    image: ${LANGFUSE_POSTGRES_IMAGE:?Pin PostgreSQL 17}
+    env_file: ['${LANGFUSE_SECRET_DIR}/postgres.env']
+    volumes: ['${LANGFUSE_DATA_DIR:?Persistent data directory}/postgres:/var/lib/postgresql/data']
+    mem_limit: 768m
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U langfuse -d langfuse']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  langfuse-redis:
+    <<: *service
+    image: ${LANGFUSE_REDIS_IMAGE:?Pin Redis 7}
+    command: [redis-server, /run/private/redis.conf]
+    env_file: ['${LANGFUSE_SECRET_DIR}/redis.env']
+    volumes:
+      - '${LANGFUSE_SECRET_DIR}/redis.conf:/run/private/redis.conf:ro'
+      - '${LANGFUSE_DATA_DIR}/redis:/data'
+    mem_limit: 512m
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  langfuse-minio:
+    <<: *service
+    image: ${LANGFUSE_MINIO_IMAGE:?Pin MinIO}
+    entrypoint: sh
+    command: [-c, 'mkdir -p /data/langfuse && exec minio server --address :9000 --console-address :9001 /data']
+    env_file: ['${LANGFUSE_SECRET_DIR}/minio.env']
+    volumes: ['${LANGFUSE_DATA_DIR}/minio:/data']
+    mem_limit: 768m
+    healthcheck:
+      test: [CMD, curl, -f, http://localhost:9000/minio/health/live]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  langfuse-clickhouse:
+    <<: *service
+    image: ${LANGFUSE_CLICKHOUSE_IMAGE:?Pin ClickHouse 25.12}
+    user: '101:101'
+    env_file: ['${LANGFUSE_SECRET_DIR}/clickhouse.env']
+    volumes:
+      - '${LANGFUSE_DATA_DIR}/clickhouse:/var/lib/clickhouse'
+      - '${LANGFUSE_DATA_DIR}/clickhouse-logs:/var/log/clickhouse-server'
+      - './clickhouse.xml:/etc/clickhouse-server/config.d/semibrain.xml:ro'
+    mem_limit: 4g
+    ulimits: {nofile: {soft: 262144, hard: 262144}}
+    healthcheck:
+      test: [CMD, wget, --quiet, --spider, http://localhost:8123/ping]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+networks:
+  data: {internal: true}
+  core: {external: true, name: '${SEMIBRAIN_CORE_NETWORK:-semibrain-platform_core}'}
