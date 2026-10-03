@@ -2,6 +2,8 @@
 import { documentCatalog } from './document-catalog'
 import { computed, defineAsyncComponent, inject, provide, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import ComposerAddMenu from './ComposerAddMenu.vue'
+import ConversationStarters from './ConversationStarters.vue'
+import type { ConversationStarter } from './conversation-starters'
 import ResizableSidebar from './ResizableSidebar.vue'
 import { clipboardImages, imageError, ScrollFollow } from './composer.mjs'
 import AuthPanel from './AuthPanel.vue'
@@ -69,6 +71,17 @@ let uploadController: AbortController | null = null
 const submittedStrategy = computed(() => mode.value === 'investigation' ? (multiAgent.value ? 'multi_agent' : 'single_agent') : undefined)
 const cancelling = ref(false), promptPreview = ref('')
 const knowledge = ref<any[]>([]), selectedDocuments = ref<string[]>([]), sending = ref(false), scrollArea = ref<HTMLElement | null>(null)
+const questionInput = ref<HTMLTextAreaElement | null>(null)
+const starterNotice = ref('')
+async function useStarter(starter: ConversationStarter) {
+  if (running.value || uploading.value || (starter.multiAgent && !multiAvailable.value)) return
+  text.value = starter.prompt
+  mode.value = starter.mode; multiAgent.value = starter.multiAgent; allowWeb.value = starter.allowWeb
+  selectedDocuments.value = []; attached.value = []; clearImages(); pending = null; error.value = ''
+  starterNotice.value = `已填入「${starter.title}」。资料范围：全部可访问的已发布资料；可修改后发送。`
+  if (sourceMenu.value) sourceMenu.value.open = false
+  await nextTick(); questionInput.value?.focus({ preventScroll: true })
+}
 const messageColumn = ref<HTMLElement | null>(null), followLatest = ref(true), loadingOlder = ref(false)
 const scrollFollow = new ScrollFollow(() => scrollArea.value, value => { followLatest.value = value })
 let touchY = 0
@@ -116,9 +129,10 @@ function clearImages() {
   uploadController?.abort(); uploadController = null; uploading.value = false
   uploadingPreview.value = ''; imageUploads.value = []
 }
-function newChat() { mobileNav.value = false; rememberChat(); multiAgent.value = false; clearImages(); scrollFollow.reset(); allowWeb.value = false; generation++; closeStream(); conversation.value = null; messages.value = []; activeRun.value = null; error.value = ''; pending = null; selectedDocuments.value = []; attached.value = []; messagesCursor.value = null; view.value = 'chat' }
+function newChat() { mobileNav.value = false; rememberChat(); multiAgent.value = false; clearImages(); scrollFollow.reset(); allowWeb.value = false; starterNotice.value = ''; generation++; closeStream(); conversation.value = null; messages.value = []; activeRun.value = null; error.value = ''; pending = null; selectedDocuments.value = []; attached.value = []; messagesCursor.value = null; view.value = 'chat' }
 async function openChat(item: any) {
   mobileNav.value = false
+  starterNotice.value = ''
   const current = ++generation; clearImages(); scrollFollow.reset(); closeStream(); view.value = 'chat'; error.value = ''; pending = null
   try {
     const result = await api(`/v1/conversations/${item.id}/messages`)
@@ -215,6 +229,7 @@ function subscribe(runId: string, current = generation) {
 }
 async function send() {
   if (!text.value.trim() || running.value || uploading.value) return
+  starterNotice.value = ''
   if (sourceMenu.value) sourceMenu.value.open = false
   sending.value = true; error.value = ''; const current = generation
   try {
@@ -299,7 +314,7 @@ onUnmounted(() => { closeStream(); clearImages() })
       <SkillsPanel v-else-if="view === 'skills'" /><MCPPanel v-else-if="view === 'mcp'" /><GraphPanel v-else-if="view === 'graph'" :manage="adminPage && user.role === 'admin'" /><WikiPanel v-else-if="view === 'wiki'" :manage="adminPage && user.role === 'admin'" /><OperationsPanel v-else-if="view === 'operations'" /><UsersPanel v-else-if="view === 'users'" /><RunComparison v-else-if="view === 'comparison'" />
       <template v-else>
         <div ref="scrollArea" class="conversation-scroll" tabindex="0" aria-label="对话记录" @scroll.passive="scrollFollow.scrolled()" @wheel.passive="$event.deltaY < 0 && scrollFollow.pause()" @keydown="scrollKey" @touchstart.passive="touchY = $event.touches[0]?.clientY || 0" @touchmove.passive="scrollTouch">
-          <div v-if="!messages.length && !activeRun" class="welcome"><span class="welcome-symbol">✳</span><p class="eyebrow">SEMI BRAIN / KNOWLEDGE ASSISTANT</p><h1>从一个问题开始</h1><p>查阅资料，理解工艺，核验每一条来源。</p><div class="starter-grid"><button @click="text = '知识库中有哪些关于测试良率的资料？'">▤ 查找专业资料<span>从已发布文档中寻找证据 ↗</span></button><button @click="text = '请列出可查询的合成演示批次。'">▦ 查询演示数据<span>了解批次与测试上下文 ↗</span></button></div></div>
+          <ConversationStarters v-if="!messages.length && !activeRun" :multi-available="multiAvailable" :disabled="running || uploading" @select="useStarter" />
           <div ref="messageColumn" class="message-column"><button v-if="messagesCursor" class="text-button" :disabled="loadingOlder" @click="olderMessages">{{ loadingOlder ? '正在加载…' : '加载更早消息' }}</button><section v-for="message in messages" :key="message.id" :data-message-id="message.id" :class="['message', message.role]"><div v-if="message.role === 'user'" class="question-bubble">{{ message.text }}</div><template v-else><div class="assistant-label"><span class="mini-brand">S</span> SemiBrain<span v-if="message.status === 'failed'" class="muted">处理未完成</span></div><RunDetails :run="message" /><button v-if="user.role === 'admin'" class="text-button" @click="diagnosticRun = message.run_id">查看运行详情</button><button v-if="user.role === 'admin' && ['single_agent', 'multi_agent'].includes(message.strategy || '')" class="text-button" @click="showPrompt(message.run_id)">查看脱敏提示词</button><p v-if="message.historical_source_refs?.length" class="muted" role="note">此回答引用了当时已发布的历史版本，资料目前已有更新。</p><MarkdownAnswer :text="message.body_markdown || (message.status === 'failed' ? '本次处理未完成，请稍后重试。' : message.status === 'cancelled' ? '本次执行已停止。' : '')" :citations="message.citations" :artifacts="message.artifacts" :image-refs="message.image_refs" /><ReportExport v-if="message.run_id && message.body_markdown && ['succeeded', 'partial'].includes(message.status || '')" :run-id="message.run_id" :automatic="message.answer_export" /></template></section>
             <section v-if="activeRun" class="message assistant"><div class="assistant-label"><span class="mini-brand">S</span> SemiBrain</div><div class="run-progress" role="status"><span class="pulse-dot"></span>{{ activeRun.progress || '正在处理' }}</div><RunDetails :run="activeRun" /><button v-if="allowWeb" class="text-button" @click="disableWeb">关闭本次联网</button><button class="text-button" :disabled="cancelling || activeRun.status === 'cancelling'" @click="cancelRun">{{ activeRun.status === 'cancelling' ? '正在停止…' : '停止回答' }}</button><MarkdownAnswer :text="activeRun.body_markdown" :citations="activeRun.citations" :artifacts="activeRun.artifacts" :image-refs="activeRun.image_refs" streaming /></section>
           </div>
@@ -307,6 +322,7 @@ onUnmounted(() => { closeStream(); clearImages() })
         <div class="composer-area">
           <button v-if="!followLatest && (messages.length || activeRun)" type="button" class="latest-button" @click="bottom(true)">↓ 回到最新</button>
           <p v-if="error" class="error" role="alert">{{ error }}</p>
+          <p v-if="starterNotice" class="starter-notice" role="status">{{ starterNotice }}</p>
           <div class="composer">
             <div v-if="imageUploads.some(image => attached.includes(image.asset_id)) || uploading" class="composer-images" aria-label="本轮图片附件">
               <div v-for="image in imageUploads.filter(image => attached.includes(image.asset_id))" :key="image.asset_id" class="composer-image">
@@ -315,7 +331,7 @@ onUnmounted(() => { closeStream(); clearImages() })
               </div>
               <div v-if="uploading" class="composer-image is-uploading" role="status"><img v-if="uploadingPreview" :src="uploadingPreview" alt="正在上传的图片" /><span>正在上传…</span></div>
             </div>
-            <textarea v-model="text" :disabled="running" placeholder="向 SemiBrain 提问…" aria-label="问题输入框" rows="2" @keydown="keydown" @paste="pasteImages"></textarea>
+            <textarea ref="questionInput" v-model="text" :disabled="running" placeholder="向 SemiBrain 提问…" aria-label="问题输入框" rows="2" @keydown="keydown" @paste="pasteImages"></textarea>
             <input ref="imageInput" class="image-file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple :disabled="running || uploading || !imageEnabled" tabindex="-1" aria-label="选择图片文件" @change="pickImages" />
             <div class="composer-toolbar">
               <ComposerAddMenu :disabled="running || uploading" :actions="addActions" @select="addContent" />
