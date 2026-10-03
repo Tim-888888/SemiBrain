@@ -26,10 +26,10 @@ defineEmits<{ select: [starter: ConversationStarter] }>()
 </template>
 
 <style scoped>
-.feature-welcome{max-width:880px;width:100%;margin:clamp(20px,5vh,60px) auto 0;padding:0 30px 22px}
-.feature-welcome .welcome-symbol{font-size:36px;line-height:1.2}.feature-welcome h1{font-size:28px;margin:12px 0 8px}.feature-welcome>.eyebrow{margin:14px 0 0}.feature-welcome>p:not(.eyebrow){font-size:13px}
-.feature-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:24px;text-align:left}
-.feature-card{display:flex;flex-direction:column;gap:10px;min-width:0;padding:17px 20px;border:1px solid var(--border);border-radius:12px;background:#fcfdfc;text-align:left;transition:background .15s,border-color .15s,box-shadow .15s}
+.feature-welcome{max-width:880px;width:100%;margin:20px auto 0;padding:0 30px 15px}
+.feature-welcome .welcome-symbol{font-size:28px;line-height:1.2;margin-bottom:8px}.feature-welcome h1{font-size:26px;margin:10px 0 6px}.feature-welcome>.eyebrow{margin:8px 0 0}.feature-welcome>p:not(.eyebrow){font-size:13px}
+.feature-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:18px;text-align:left}
+.feature-card{display:flex;flex-direction:column;gap:7px;min-width:0;padding:12px 16px;border:1px solid var(--border);border-radius:12px;background:#fcfdfc;text-align:left;transition:background .15s,border-color .15s,box-shadow .15s}
 .feature-card:hover:not(:disabled){background:#f4faf7;border-color:#a6cabb;box-shadow:0 3px 12px #21594109}.feature-card:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .feature-heading{display:flex;gap:10px;align-items:center}.feature-heading strong{font-size:14px;font-weight:600;color:#294a40}.feature-icon{display:grid;place-items:center;width:30px;height:30px;border-radius:8px;background:#edf5f0;color:var(--accent);flex-shrink:0}.feature-arrow{margin-left:auto;color:#88a397;flex-shrink:0}
 .feature-description{font-size:12px;color:#76877f;line-height:1.6}.feature-tags{display:flex;flex-wrap:wrap;gap:6px}.feature-tags>span{font-size:10px;line-height:1.5;border:1px solid #e4ece7;border-radius:5px;padding:2px 7px;color:#6b8277;background:white}
