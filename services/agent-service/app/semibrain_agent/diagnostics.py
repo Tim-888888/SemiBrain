@@ -1,25 +1,35 @@
 """Read-only, allowlisted run diagnostics. Never returns prompts or tool payloads."""
 
-import os
 import re
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Request
 from semibrain_common.runtime import digest, internal_identity
+from semibrain_common.telemetry import trace_target
 
 from semibrain_agent.runs import db
 
 router = APIRouter()
 
 
-def trace_link(run_id):
-    host = os.getenv("LANGFUSE_BASE_URL", os.getenv("LANGFUSE_HOST", "")).rstrip("/")
-    project = os.getenv("SEMIBRAIN_LANGFUSE_PROJECT_ID", "")
-    parsed = urlsplit(host)
-    enabled = os.getenv("SEMIBRAIN_LANGFUSE_ENABLED", "false").lower() == "true"
-    valid = (parsed.scheme == "https" and parsed.hostname and not parsed.username
+def trace_link(run_id, target=None):
+    target = trace_target() if target is None else target
+    if not isinstance(target, dict):
+        target = {}
+    host = str(target.get("ui_url", "")).rstrip("/")
+    project = str(target.get("project_id", ""))
+    enabled = target.get("enabled") is True
+    try:
+        parsed = urlsplit(host)
+        # HTTP is limited to explicit loopback SSH tunnels. Remote UIs need TLS.
+        scheme_ok = parsed.scheme == "https" or (
+            parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"})
+        valid = (scheme_ok and parsed.hostname and not parsed.username
              and not parsed.password and not parsed.query and not parsed.fragment
-             and parsed.path in {"", "/"} and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", project))
+             and parsed.path in {"", "/"} and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", project)
+             and not any(c.isspace() or ord(c) < 32 for c in host) and parsed.port != 0)
+    except ValueError:
+        valid = False
     return {"enabled": enabled, "trace_id": digest(run_id)[:32],
             "url": f"{host}/project/{project}/traces/{digest(run_id)[:32]}" if enabled and valid else None,
             "delivery_status": "not_verified"}
@@ -75,7 +85,8 @@ def diagnostics(run_id: str, request: Request):
     items.sort(key=lambda item: str(item.get("created_at", "")))
     return {"run_id": run_id, "status": run["status"], "items": items, "counts": counts,
             "truncated": any(value > 300 for value in counts.values()),
-            "trace": trace_link(run_id), "currency_cost": None,
+            "trace": trace_link(run_id, run.get("telemetry_target", trace_target(legacy=True))),
+            "currency_cost": None,
             "stop_code": run.get("stop_code"), "budget": run.get("budget"),
             "configuration_version": (run.get("agent_configuration") or {}).get("version"),
             "version_bundle": run.get("version_bundle"),

@@ -31,6 +31,23 @@ def safe_metadata(values):
     }
 
 
+def trace_target(*, legacy=False):
+    """Persist only public routing metadata, never ingestion credentials.
+
+    The browser URL may differ from the SDK's private Docker endpoint. Legacy
+    settings preserve cloud links for records created before target snapshots.
+    """
+    prefix = "SEMIBRAIN_LANGFUSE_LEGACY_" if legacy else "SEMIBRAIN_LANGFUSE_"
+    host = os.getenv(prefix + "UI_URL")
+    if host is None:
+        host = "" if legacy else os.getenv("LANGFUSE_BASE_URL", os.getenv("LANGFUSE_HOST", ""))
+    return {
+        "enabled": os.getenv(prefix + "ENABLED", "false").lower() == "true",
+        "ui_url": host.rstrip("/"),
+        "project_id": os.getenv(prefix + "PROJECT_ID", ""),
+    }
+
+
 @lru_cache(maxsize=1)
 def client():
     if os.getenv("SEMIBRAIN_LANGFUSE_ENABLED", "false").lower() != "true":

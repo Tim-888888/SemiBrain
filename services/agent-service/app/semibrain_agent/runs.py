@@ -19,6 +19,7 @@ from semibrain_common.runtime import (
     transaction,
     uid,
 )
+from semibrain_common.telemetry import trace_target
 from semibrain_contracts.models import CitationBinding, EvidenceRef, Report, RunRequest, SourceRef
 
 from semibrain_agent.client import BusinessClient
@@ -75,6 +76,7 @@ def accept(command, session):
         "command": payload,
         "payload_hash": payload_hash,
         "retention_version": 1,
+        "telemetry_target": trace_target(),
         "context_compaction": policy_snapshot(),
         "agent_configuration": configuration_snapshot(session),
         "execution_policy": {
