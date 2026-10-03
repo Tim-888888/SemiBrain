@@ -1,6 +1,13 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { api, post } from './api'
+import ResourceDrawer from './ResourceDrawer.vue'
+import { confirmDiscard } from './editor-state'
+import { ElMessageBox } from 'element-plus'
+const opened=ref(true)
+const dirty=computed(()=>!!chunk.value && edited.value!==chunk.value.text)
+async function changeVersion(event:Event){if(busy.value || (dirty.value && !await confirmDiscard())){(event.target as HTMLSelectElement).value=version.value;return}version.value=(event.target as HTMLSelectElement).value;await select()}
+async function confirmRollback(){try{await ElMessageBox.confirm('将检索和引用切换到所选的历史发布版本。现有版本仍保留。','回滚文档版本？',{confirmButtonText:'确认回滚',cancelButtonText:'取消',type:'warning'});await rollback()}catch{}}
 const props = defineProps<{ document: any }>()
 const emit = defineEmits<{ close: []; changed: [] }>()
 const list = ref<any>(null), version = ref(''), chunks = ref<any[]>([]), chunk = ref<any>(null)
@@ -19,7 +26,7 @@ async function select() {
   } catch (e) { error.value = (e as Error).message }
   finally { busy.value = false }
 }
-function choose(item: any) { chunk.value = item; edited.value = item.text; notice.value = '' }
+async function choose(item: any) { if(dirty.value && !await confirmDiscard()) return; chunk.value = item; edited.value = item.text; notice.value = '' }
 async function save() {
   busy.value = true; error.value = ''
   try {
@@ -43,16 +50,16 @@ async function rollback() {
 onMounted(async () => { try { await load() } catch (e) { error.value = (e as Error).message } })
 </script>
 <template>
-  <div class="modal-backdrop"><section class="diagnostics-modal" role="dialog" aria-modal="true" aria-label="文档修订与历史版本">
-    <div class="page-title"><h2>{{ document.title }} · 修订与版本</h2><button class="secondary" :disabled="busy" @click="emit('close')">关闭</button></div>
+  <ResourceDrawer v-model="opened" :title="document.title + ' · 修订与版本'" width="1100px" :busy="busy" :snapshot="dirty ? edited : ''" :error="error" @update:model-value="!$event && emit('close')">
+
     <p class="muted">修改内容会生成新的待审核版本，并重建片段关系与检索索引。可回滚到曾经发布且资产完整的版本。</p>
-    <p v-if="error" class="error" role="alert">{{ error }}</p><p v-if="notice" role="status">{{ notice }}</p>
-    <template v-if="list"><div class="row-actions"><select v-model="version" :disabled="busy" @change="select" aria-label="文档版本"><option v-for="item in list.items" :key="item.version" :value="item.version">第 {{ item.generation }} 代 · {{ item.created_at }} {{ item.version === list.active_version ? '（当前）' : item.published ? '（历史发布）' : '（草稿）' }}</option></select><button v-if="version !== list.active_version && list.items.some((item: any) => item.version === version && item.published && item.ready)" class="secondary" :disabled="busy" @click="rollback">回滚到此版本</button></div>
+    <p v-if="notice" role="status">{{ notice }}</p>
+    <template v-if="list"><div class="row-actions"><select :value="version" :disabled="busy" @change="changeVersion" aria-label="文档版本"><option v-for="item in list.items" :key="item.version" :value="item.version">第 {{ item.generation }} 代 · {{ item.created_at }} {{ item.version === list.active_version ? '（当前）' : item.published ? '（历史发布）' : '（草稿）' }}</option></select><button v-if="version !== list.active_version && list.items.some((item: any) => item.version === version && item.published && item.ready)" class="secondary" :disabled="busy" @click="confirmRollback">回滚到此版本</button></div>
     <details v-if="diff"><summary>修订差异</summary><pre class="revision-diff">{{ diff }}</pre></details>
     <div class="revision-layout"><div class="revision-chunks"><button v-for="(item, index) in chunks" :key="item.id" class="secondary" @click="choose(item)" :disabled="busy">片段 {{ index + 1 }} · {{ item.context_header || item.text.slice(0, 60) }}</button></div>
-      <div v-if="chunk"><label>片段内容（Markdown）<textarea v-model="edited" rows="18" :disabled="busy || version !== list.active_version" /></label><p class="small muted">保留已有图片引用即可继续显示图片；新增图片请通过资料上传入口添加。</p><button v-if="version === list.active_version" class="primary" :disabled="busy || !edited.trim() || edited === chunk.text" @click="save">保存修订并重建</button></div>
+      <div v-if="chunk"><label>片段内容（Markdown）<textarea v-model="edited" rows="18" :disabled="busy || version !== list.active_version" /></label><p class="small muted">保留已有图片引用即可继续显示图片；新增图片请通过资料上传入口添加。</p></div>
     </div></template>
-  </section></div>
+  <template #footer><button v-if="chunk && version === list?.active_version" class="primary" :disabled="busy || !edited.trim() || !dirty" @click="save">保存修订并重建</button></template></ResourceDrawer>
 </template>
 <style scoped>
 .revision-layout { display: grid; grid-template-columns: minmax(150px, 25%) 1fr; gap: 20px; margin-top: 20px; }

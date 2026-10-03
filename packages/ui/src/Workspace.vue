@@ -1,30 +1,61 @@
 <script setup lang="ts">
 import { documentCatalog } from './document-catalog'
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, inject, provide, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import ComposerAddMenu from './ComposerAddMenu.vue'
 import ResizableSidebar from './ResizableSidebar.vue'
 import { clipboardImages, imageError, ScrollFollow } from './composer.mjs'
 import AuthPanel from './AuthPanel.vue'
-import KnowledgePanel from './KnowledgePanel.vue'
-import WikiPanel from './WikiPanel.vue'
-import GraphPanel from './GraphPanel.vue'
-import MCPPanel from './MCPPanel.vue'
-import SkillsPanel from './SkillsPanel.vue'
-import MemoryPanel from './MemoryPanel.vue'
-import AgentConfiguration from './AgentConfiguration.vue'
-import EvaluationPanel from './EvaluationPanel.vue'
+import ResourceDrawer from './ResourceDrawer.vue'
+import PanelLoadError from './PanelLoadError.vue'
+const lazyPanel=(loader:any)=>defineAsyncComponent({loader,delay:150,timeout:20000,errorComponent:PanelLoadError,loadingComponent:{render:()=>h('div',{class:'loading-state',role:'status'},'正在加载页面…')}})
+const KnowledgePanel = lazyPanel(() => import('./KnowledgePanel.vue'))
+const WikiPanel = lazyPanel(() => import('./WikiPanel.vue'))
+const GraphPanel = lazyPanel(() => import('./GraphPanel.vue'))
+const MCPPanel = lazyPanel(() => import('./MCPPanel.vue'))
+const SkillsPanel = lazyPanel(() => import('./SkillsPanel.vue'))
+const MemoryPanel = lazyPanel(() => import('./MemoryPanel.vue'))
+const AgentConfiguration = lazyPanel(() => import('./AgentConfiguration.vue'))
+const EvaluationPanel = lazyPanel(() => import('./EvaluationPanel.vue'))
 import ReportExport from './ReportExport.vue'
 import MarkdownAnswer from './MarkdownAnswer.vue'
 import RunDetails from './RunDetails.vue'
-import RunDiagnostics from './RunDiagnostics.vue'
+const RunDiagnostics = lazyPanel(() => import('./RunDiagnostics.vue'))
 const diagnosticRun = ref('')
-import RunComparison from './RunComparison.vue'
-import OperationsPanel from './OperationsPanel.vue'
-import UsersPanel from './UsersPanel.vue'
+const RunComparison = lazyPanel(() => import('./RunComparison.vue'))
+const OperationsPanel = lazyPanel(() => import('./OperationsPanel.vue'))
+const UsersPanel = lazyPanel(() => import('./UsersPanel.vue'))
 import { api, post, setCsrf, type Message, type Run, type User } from './api'
 import './style.css'
+import './experience.css'
+import UiIcon from './UiIcon.vue'
+import { routerKey } from 'vue-router'
+import { adminGroups, adminPages } from './admin-navigation'
+import { confirmNavigation } from './editor-state'
+const router = inject(routerKey, undefined)
+const mobileNav = ref(false), narrow=ref(false), mobileMenu=ref<HTMLButtonElement|null>(null)
+const media=window.matchMedia('(max-width:650px)')
+function resizeNavigation(){narrow.value=media.matches;if(!narrow.value)mobileNav.value=false}
+function escapeNavigation(event:KeyboardEvent){if(event.key==='Escape' && mobileNav.value){mobileNav.value=false;mobileMenu.value?.focus()}}
+onMounted(()=>{resizeNavigation();media.addEventListener('change',resizeNavigation);window.addEventListener('keydown',escapeNavigation)})
+onUnmounted(()=>{media.removeEventListener('change',resizeNavigation);window.removeEventListener('keydown',escapeNavigation)})
+const collapsed = ref(false)
+try { collapsed.value = localStorage.getItem('semibrain:admin:collapsed') === 'true' } catch {}
+watch(collapsed, value => { try { localStorage.setItem('semibrain:admin:collapsed', String(value)) } catch {} })
+const userPages = [['chat','对话工作台'],['knowledge','知识库'],['wiki','工程 Wiki'],['graph','工程图谱'],['memory','我的记忆']]
+const pageTitle = computed(() => view.value === 'chat' ? conversation.value?.title || '对话工作台' : adminPages.find(page => page.id === view.value)?.title || '')
+async function navigate(id: string) {
+  if (router) await router.push('/' + id)
+  else if (await confirmNavigation()) view.value = id
+  mobileNav.value = false
+}
+if (router) watch(() => router.currentRoute.value.name, name => { if (name) view.value = String(name); mobileNav.value = false })
+
 const props = defineProps<{ audience: 'admin' | 'user' }>()
 const user = ref<User | null>(null), loading = ref(true), view = ref('chat'), error = ref(''), text = ref('')
+provide('filter-account', computed(()=>user.value?.id || ''))
+const diagnosticOpen=computed({get:()=>!!diagnosticRun.value,set:(v:boolean)=>{if(!v)diagnosticRun.value=''}})
+const promptOpen=computed({get:()=>!!promptPreview.value,set:(v:boolean)=>{if(!v)promptPreview.value=''}})
+const passwordBusy=ref(false)
 const conversations = ref<any[]>([]), conversation = ref<any>(null), messages = ref<Message[]>([]), activeRun = ref<Run | null>(null)
 const attached = ref<string[]>([])
 const mode = ref<'quick_qa' | 'investigation'>('quick_qa'), allowWeb = ref(false)
@@ -42,6 +73,7 @@ const messageColumn = ref<HTMLElement | null>(null), followLatest = ref(true), l
 const scrollFollow = new ScrollFollow(() => scrollArea.value, value => { followLatest.value = value })
 let touchY = 0
 const settings = ref(false), oldPassword = ref(''), newPassword = ref('')
+watch(settings,open=>{if(!open){oldPassword.value='';newPassword.value=''}})
 const conversationsCursor = ref<string | null>(null), messagesCursor = ref<number | null>(null)
 const sourceMenu = ref<HTMLDetailsElement | null>(null)
 let source: EventSource | null = null
@@ -59,7 +91,7 @@ async function loadLists() {
   const updated = page.items.find((item: any) => item.id === conversation.value?.id)
   if (updated) conversation.value = updated
 }
-async function signedIn(value: User) { user.value = value; if (adminPage.value) view.value = 'knowledge'; await loadLists() }
+async function signedIn(value: User) { user.value = value; if (adminPage.value) view.value = String(router?.currentRoute.value.name || 'knowledge'); await loadLists() }
 function rememberChat(id?: string) {
   if (!user.value) return
   try { const key = `semibrain:${props.audience}:${user.value.id}:conversation`; if (id) sessionStorage.setItem(key, id); else sessionStorage.removeItem(key) } catch { /* Storage-disabled browsers can still use the workspace. */ }
@@ -84,8 +116,9 @@ function clearImages() {
   uploadController?.abort(); uploadController = null; uploading.value = false
   uploadingPreview.value = ''; imageUploads.value = []
 }
-function newChat() { rememberChat(); multiAgent.value = false; clearImages(); scrollFollow.reset(); allowWeb.value = false; generation++; closeStream(); conversation.value = null; messages.value = []; activeRun.value = null; error.value = ''; pending = null; selectedDocuments.value = []; attached.value = []; messagesCursor.value = null; view.value = 'chat' }
+function newChat() { mobileNav.value = false; rememberChat(); multiAgent.value = false; clearImages(); scrollFollow.reset(); allowWeb.value = false; generation++; closeStream(); conversation.value = null; messages.value = []; activeRun.value = null; error.value = ''; pending = null; selectedDocuments.value = []; attached.value = []; messagesCursor.value = null; view.value = 'chat' }
 async function openChat(item: any) {
+  mobileNav.value = false
   const current = ++generation; clearImages(); scrollFollow.reset(); closeStream(); view.value = 'chat'; error.value = ''; pending = null
   try {
     const result = await api(`/v1/conversations/${item.id}/messages`)
@@ -223,8 +256,10 @@ async function olderMessages() {
 }
 async function logout() { try { await post('/v1/auth/logout', {}); closeStream(); user.value = null; setCsrf(''); newChat() } catch (e) { error.value = (e as Error).message } }
 async function changePassword() {
+  if(passwordBusy.value)return;passwordBusy.value=true
   try { await post('/v1/auth/password', { old_password: oldPassword.value, new_password: newPassword.value }); settings.value = false; closeStream(); user.value = null; setCsrf(''); oldPassword.value = ''; newPassword.value = '' }
   catch (e) { error.value = (e as Error).message }
+  finally{passwordBusy.value=false}
 }
 async function cancelRun() {
   if (!activeRun.value || cancelling.value) return
@@ -243,21 +278,22 @@ async function showPrompt(runId: string) {
   catch (e) { error.value = (e as Error).message }
 }
 function keydown(event: KeyboardEvent) { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); send() } }
-onMounted(async () => { try { const result = await api('/v1/auth/me'); setCsrf(result.csrf); await signedIn(result.user); await restoreChat() } catch { user.value = null } finally { loading.value = false } })
+onMounted(async () => { try { const result = await api('/v1/auth/me'); setCsrf(result.csrf); await signedIn(result.user); if (!adminPage.value) await restoreChat() } catch { user.value = null } finally { loading.value = false } })
 onUnmounted(() => { closeStream(); clearImages() })
 </script>
 <template>
   <div v-if="loading" class="loading-page">正在打开 SemiBrain…</div>
   <AuthPanel v-else-if="!user" @signed-in="signedIn" />
   <div v-else-if="denied" class="loading-page"><h1>此账号没有管理权限</h1><p><a href="/">返回工作台</a></p></div>
-  <div v-else class="workspace">
-    <ResizableSidebar><a class="wordmark" href="/"><span class="brand-icon">S</span> SemiBrain</a><span v-if="adminPage" class="admin-caption">管理控制台</span>
+  <div v-else class="workspace" :class="{ 'admin-workspace': adminPage, 'is-collapsed': collapsed, 'mobile-nav-open': mobileNav }"><button v-if="mobileNav" class="sidebar-scrim" aria-label="关闭导航" @click="mobileNav = false" />
+    <component :inert="narrow && !mobileNav" :is="adminPage ? 'aside' : ResizableSidebar" :class="{ 'admin-sidebar': adminPage }"><a class="wordmark" href="/"><span class="brand-icon">S</span> SemiBrain</a><span v-if="adminPage" class="admin-caption">管理控制台</span>
       <button v-if="!adminPage" class="new-chat" @click="newChat">＋ 新会话</button>
-      <nav><button v-if="adminPage" :class="{ active: view === 'evaluations' }" @click="view = 'evaluations'">评测与用量</button><button v-if="adminPage" :class="{ active: view === 'agent-config' }" @click="view = 'agent-config'">Agent 配置</button><button :class="{ active: view === 'memory' }" @click="view = 'memory'">我的记忆</button><button v-if="!adminPage" :class="{ active: view === 'chat' }" @click="view = 'chat'">◈ 对话工作台</button><button :class="{ active: view === 'knowledge' }" @click="view = 'knowledge'">▤ 知识库</button><button :class="{ active: view === 'wiki' }" @click="view = 'wiki'">工程 Wiki</button><button :class="{ active: view === 'graph' }" @click="view = 'graph'">工程图谱</button><button v-if="adminPage" :class="{ active: view === 'skills' }" @click="view = 'skills'">Skills 技能</button><button v-if="adminPage" :class="{ active: view === 'mcp' }" @click="view = 'mcp'">MCP 服务</button><button v-if="adminPage" :class="{ active: view === 'users' }" @click="view = 'users'">♙ 用户管理</button><button v-if="adminPage" :class="{ active: view === 'comparison' }" @click="view = 'comparison'">运行对照</button><button v-if="adminPage" :class="{ active: view === 'operations' }" @click="view = 'operations'">运行治理</button></nav>
+      <nav v-if="adminPage" class="admin-navigation" aria-label="管理导航"><section v-for="group in adminGroups" :key="group.label" class="nav-group"><p class="nav-group-label">{{ group.label }}</p><button v-for="[id,label] in group.items" :key="id" :class="{ active: view === id }" :aria-current="view === id ? 'page' : undefined" :title="label" @click="navigate(id)"><UiIcon :name="id" /><span class="nav-label">{{ label }}</span></button></section></nav>
+      <nav v-else aria-label="工作台导航"><button v-for="[id,label] in userPages" :key="id" :class="{ active: view === id }" @click="navigate(id)"><UiIcon :name="id" />{{ label }}</button></nav>
       <div v-if="!adminPage" class="history"><p class="eyebrow">最近会话</p><button v-for="item in conversations" :key="item.id" :title="item.title" :class="{ selected: conversation?.id === item.id }" @click="openChat(item)">{{ item.title }}</button><button v-if="conversationsCursor" @click="olderChats">加载更早会话</button><p v-if="!conversations.length" class="small muted">你的会话会保存在这里</p></div>
       <div class="sidebar-bottom"><a v-if="user.role === 'admin' && !adminPage" class="admin-link" href="/admin/">管理控制台 ↗</a><a v-if="adminPage" class="admin-link" href="/">返回工作台 ↗</a><div class="profile"><span class="avatar">{{ user.username.slice(0, 1).toUpperCase() }}</span><div><strong>{{ user.username }}</strong><small>{{ user.role === 'admin' ? '管理员' : '普通用户' }}</small></div><button class="text-button" @click="settings = true" aria-label="账号设置">⚙</button></div><button class="text-button logout" @click="logout">退出登录</button></div>
-    </ResizableSidebar>
-    <main class="main-panel"><header class="topbar"><span>{{ view === 'chat' ? conversation?.title || '对话工作台' : view === 'evaluations' ? '评测与用量' : view === 'agent-config' ? 'Agent 配置' : view === 'knowledge' ? '知识库' : view === 'wiki' ? '工程 Wiki' : view === 'graph' ? '工程图谱' : view === 'memory' ? '我的记忆' : view === 'skills' ? 'Skills 技能' : view === 'mcp' ? 'MCP 服务' : view === 'comparison' ? '运行对照' : view === 'operations' ? '运行治理' : '用户管理' }}</span><span class="workspace-tag">半导体知识空间</span></header>
+    </component>
+    <main class="main-panel"><header class="topbar"><div class="topbar-title"><button ref="mobileMenu" class="icon-button mobile-menu-button" @click="mobileNav = !mobileNav" aria-label="打开导航" :aria-expanded="mobileNav"><UiIcon name="menu" /></button><button v-if="adminPage" class="icon-button desktop-collapse" :title="collapsed ? '展开侧栏' : '收起侧栏'" :aria-label="collapsed ? '展开侧栏' : '收起侧栏'" @click="collapsed = !collapsed"><UiIcon name="collapse" /></button><span><template v-if="adminPage"><span class="breadcrumb-root">管理控制台</span><span class="breadcrumb-divider">/</span></template>{{ pageTitle }}</span></div><span class="workspace-tag">半导体知识空间</span></header>
       <EvaluationPanel v-if="view === 'evaluations'" /><AgentConfiguration v-else-if="view === 'agent-config'" /><MemoryPanel v-else-if="view === 'memory'" />
       <KnowledgePanel v-else-if="view === 'knowledge'" :manage="adminPage && user.role === 'admin'" />
       <SkillsPanel v-else-if="view === 'skills'" /><MCPPanel v-else-if="view === 'mcp'" /><GraphPanel v-else-if="view === 'graph'" :manage="adminPage && user.role === 'admin'" /><WikiPanel v-else-if="view === 'wiki'" :manage="adminPage && user.role === 'admin'" /><OperationsPanel v-else-if="view === 'operations'" /><UsersPanel v-else-if="view === 'users'" /><RunComparison v-else-if="view === 'comparison'" />
@@ -294,8 +330,8 @@ onUnmounted(() => { closeStream(); clearImages() })
         </div>
       </template>
     </main>
-    <div v-if="diagnosticRun" class="modal-backdrop"><section class="diagnostics-modal" role="dialog" aria-modal="true" aria-label="运行详情"><button class="secondary" @click="diagnosticRun = ''">关闭</button><RunDiagnostics :run-id="diagnosticRun" /></section></div>
-    <div v-if="promptPreview" class="modal-backdrop"><section class="small-modal" role="dialog" aria-modal="true" aria-label="脱敏提示词预览"><h2>只读装配预览</h2><p>仅显示本账号且来源仍可访问的已执行模型输入；不包含密钥或隐藏推理。</p><pre class="prompt-preview">{{ promptPreview }}</pre><button class="secondary" @click="promptPreview = ''">关闭</button></section></div>
-    <div v-if="settings" class="modal-backdrop"><section class="small-modal" role="dialog" aria-modal="true" aria-label="账号设置"><h2>账号设置</h2><p class="muted">修改密码后需要重新登录。</p><form @submit.prevent="changePassword"><label>当前密码<input v-model="oldPassword" type="password" autocomplete="current-password" required /></label><label>新密码<input v-model="newPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" required /></label><p v-if="error" class="error">{{ error }}</p><div class="row-actions"><button type="button" class="secondary" @click="settings = false">取消</button><button class="primary">保存密码</button></div></form></section></div>
+    <ResourceDrawer v-model="diagnosticOpen" title="运行详情" width="1100px"><RunDiagnostics v-if="diagnosticRun" :run-id="diagnosticRun" /></ResourceDrawer>
+    <ResourceDrawer v-model="promptOpen" title="脱敏提示词预览" width="1000px"><p>仅显示本账号且来源仍可访问的已执行模型输入；不包含密钥或隐藏推理。</p><pre class="prompt-preview">{{promptPreview}}</pre></ResourceDrawer>
+    <ResourceDrawer v-model="settings" title="账号设置" width="480px" :snapshot="{oldPassword,newPassword}" :busy="passwordBusy" :error="error"><p class="muted">修改密码后需要重新登录。</p><form id="password-editor" @submit.prevent="changePassword"><label>当前密码<input v-model="oldPassword" type="password" autocomplete="current-password" required :disabled="passwordBusy"/></label><label>新密码<input v-model="newPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" required :disabled="passwordBusy"/></label></form><template #footer><button type="submit" form="password-editor" class="primary" :disabled="passwordBusy">保存密码</button></template></ResourceDrawer>
   </div>
 </template>

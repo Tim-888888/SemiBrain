@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { renderMarkdown } from '../src/markdown.mjs'
-import { documentBundle, resolveImagePath } from '../src/knowledge-upload.mjs'
+import { documentBundle, resolveImagePath, selectedDocuments } from '../src/knowledge-upload.mjs'
 
 const url='/v1/assets/12345678-1234-1234-1234-123456789012/content'
 test('only registered same-origin resources render in ordinary markdown', () => {
@@ -11,6 +11,16 @@ test('only registered same-origin resources render in ordinary markdown', () => 
   assert.doesNotMatch(renderMarkdown('![图](https://tracking.example/x)',[{url:'https://tracking.example/x'}]),/<img/)
   assert.doesNotMatch(renderMarkdown('<img src=x onerror=alert(1)>'),/<img/)
   assert.match(renderMarkdown(source,[{url,display_url:url+'?preview_version=12345678-1234-1234-1234-123456789012'}]),/preview_version=/)
+})
+
+test('a missing image fails its document without blocking valid peers or importing their images separately', async () => {
+  const good={name:'有效.md',size:100,text:async()=> '![图](晶圆.svg)'}
+  const bad={name:'缺图.md',size:100,text:async()=> '![图](晶圆.svg)\n![图](missing.png)'}
+  const image={name:'晶圆.svg',size:100}
+  const files=[bad,good,image]
+  assert.deepEqual(await selectedDocuments(files),[bad,good])
+  await assert.rejects(documentBundle(bad,files,bad.name),/图片未找到/)
+  assert.equal((await documentBundle(good,files,good.name))[0].file,image)
 })
 test('folder upload resolves Chinese relative images and reference definitions',async () => {
   const doc={name:'文档.md',webkitRelativePath:'目录/章节/文档.md',size:200,text:async()=> '![工艺图][p]\n\n[p]: <../配图/晶圆 图.svg>'}
