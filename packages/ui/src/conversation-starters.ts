@@ -47,6 +47,6 @@ export const conversationStarters: ConversationStarter[] = [
     id: 'illustrated-note', title: '生成图文工程笔记', icon: 'wiki',
     description: '引用知识库原图，交付带配图的 Markdown 笔记。',
     tags: ['单 Agent', '图文 · 文件下载'], mode: 'investigation', multiAgent: false, allowWeb: false,
-    prompt: '请根据已发布知识库，整理一份简明的半导体刻蚀图文工程笔记，说明湿法与干法刻蚀、各向同性与各向异性，以及掩膜和轮廓控制。请检索并读取包含相关配图的原文，把至少一张内容相符、已授权的知识库原图插在相关段落之间，附图注和来源引用，不能只列出图片地址，也不要虚构图片。请在网页展示图文，并生成带配图的 Markdown 文件供下载；含图时将 Markdown 与 images 资源一起打包为 ZIP，图片使用相对路径，便于解压后本地阅读。若确实没有可用配图，请明确说明缺少什么，不声称已经交付含图文件。',
+    prompt: '请根据知识库整理一份半导体刻蚀图文笔记，介绍湿法与干法、各向同性与各向异性、掩膜与轮廓控制。请查阅带配图的原文，在相关段落之间插入至少一张知识库原图，附图注和来源；找不到合适配图时如实说明，不虚构图片。最后把这份图文笔记生成 Markdown 文件供下载，保留配图。',
   },
 ]
