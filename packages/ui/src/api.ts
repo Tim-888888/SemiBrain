@@ -62,6 +62,7 @@ const labels: Record<string, string> = {
   GRAPH_NOT_CONFIGURED: '图谱服务尚未配置。',
   WIKI_SOURCE_UNAVAILABLE: 'Wiki 来源已下架、换版或无权访问，请核对来源。',
   WIKI_EXPIRED: 'Wiki 已超过设定有效期。',
+  WIKI_ARCHIVE_CONFLICT: '页面状态已变化，或仍在发布中。请先下架并刷新，再归档。',
 }
 export async function api<T = any>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers)

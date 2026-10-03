@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from semibrain_business import wiki, wiki_access
 from semibrain_common.runtime import now
-from semibrain_contracts.wiki import WikiDraft
+from semibrain_contracts.wiki import WikiArchive, WikiDraft
 from semibrain_conversation.auth import current_user
 from semibrain_conversation.main import app
 
@@ -107,5 +107,49 @@ def test_regular_user_cannot_mutate_or_preview_wiki_drafts():
         with TestClient(app) as client:
             assert client.post('/admin/v1/wiki/drafts', json={}).status_code == 403
             assert client.get(f'/admin/v1/wiki/pages/{uuid4()}/revisions/{uuid4()}').status_code == 403
+            assert client.post(f'/admin/v1/wiki/pages/{uuid4()}/archive', json={}).status_code == 403
     finally:
         app.dependency_overrides.clear()
+
+
+def test_archive_and_restore_preserve_draft_generation_and_are_auditable(monkeypatch):
+    store = SimpleNamespace(wiki_archive_commands=Mock(), documents=Mock())
+    store.wiki_archive_commands.find_one.return_value = None
+    store.documents.update_one.return_value = SimpleNamespace(matched_count=1)
+    monkeypatch.setattr(wiki, "db", lambda: store)
+    monkeypatch.setattr(wiki, "authorized_document", lambda *a: {"kind": "wiki"})
+    monkeypatch.setattr(wiki, "transaction", lambda fn: fn("transaction"))
+    claim = {"subject_id": "admin", "role": "admin"}
+    for archived, revision in [(True, 0), (False, 1)]:
+        form = WikiArchive(request_id=uuid4(), expected_revision=3,
+                           expected_archive_revision=revision, archived=archived)
+        result = wiki.archive_page("wiki", form, claim)
+        assert result["archived"] is archived
+        assert result["archive_revision"] == revision + 1
+        query, update = store.documents.update_one.call_args.args
+        assert query["active_version"] is None and query["revision"] == 3
+        assert "revision" not in update.get("$inc", {})
+        assert update["$set"]["wiki_archived"] is archived
+        assert store.documents.update_one.call_args.kwargs["session"] == "transaction"
+    assert store.wiki_archive_commands.insert_one.call_count == 2
+
+
+def test_archive_rejects_stale_or_published_page_and_replays_idempotently(monkeypatch):
+    store = SimpleNamespace(wiki_archive_commands=Mock(), documents=Mock())
+    store.wiki_archive_commands.find_one.return_value = None
+    store.documents.update_one.return_value = SimpleNamespace(matched_count=0)
+    monkeypatch.setattr(wiki, "db", lambda: store)
+    monkeypatch.setattr(wiki, "authorized_document", lambda *a: {"kind": "wiki"})
+    monkeypatch.setattr(wiki, "transaction", lambda fn: fn(None))
+    form = WikiArchive(request_id=uuid4(), expected_revision=1, archived=True)
+    claim = {"subject_id": "admin", "role": "admin"}
+    with pytest.raises(HTTPException) as raised:
+        wiki.archive_page("wiki", form, claim)
+    assert raised.value.detail["code"] == "WIKI_ARCHIVE_CONFLICT"
+    store.wiki_archive_commands.insert_one.assert_not_called()
+    store.documents.update_one.return_value = SimpleNamespace(matched_count=1)
+    expected = wiki.archive_page("wiki", form, claim)
+    store.wiki_archive_commands.find_one.return_value = store.wiki_archive_commands.insert_one.call_args.args[0]
+    store.documents.update_one.reset_mock()
+    assert wiki.archive_page("wiki", form, claim) == expected
+    store.documents.update_one.assert_not_called()

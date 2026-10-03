@@ -7,8 +7,8 @@ import MarkdownAnswer from './MarkdownAnswer.vue'
 import KnowledgeVersions from './KnowledgeVersions.vue'
 import ResourceDrawer from './ResourceDrawer.vue'
 const loading=ref(true)
-const query=ref(''), sourceQuery=ref(''), previewMode=ref(false)
-const filtered=computed(()=>items.value.filter(item=>item.title.toLowerCase().includes(query.value.toLowerCase())))
+const query=ref(''), sourceQuery=ref(''), previewMode=ref(false), showArchived=ref(false)
+const filtered=computed(()=>items.value.filter(item=>!!item.archived===showArchived.value && item.title.toLowerCase().includes(query.value.toLowerCase())))
 const readable=computed({get:()=>!!selected.value && !editing.value,set:(open:boolean)=>{if(!open)selected.value=null}})
 const reader=ref<HTMLElement|null>(null)
 const headings=computed(()=>{let fence=false;return String(selected.value?.body_markdown || '').split('\n').filter(line=>{if(/^\s*(```|~~~)/.test(line)){fence=!fence;return false}return !fence && /^#{1,6}\s+/.test(line)}).map(line=>line.replace(/^#+\s+/,''))})
@@ -23,14 +23,14 @@ let timer: ReturnType<typeof setInterval>
 let generationTimer: ReturnType<typeof setInterval> | undefined
 async function load() {
   try {
-    const [pages, docs] = await Promise.all([api('/v1/wiki/pages'),documentCatalog()])
+    const [pages, docs] = await Promise.all([api('/v1/wiki/pages' + (props.manage ? '?include_archived=true' : '')),documentCatalog()])
     items.value = pages.items; sources.value = docs.items.filter((d: any) => d.active_version && d.kind !== 'wiki')
   } catch (e) { error.value = (e as Error).message } finally{loading.value=false}
 }
 function create() {
   editor.value = { title:'', body_markdown:'', applicability:'', visibility:'demo', document_id:null,
     expected_revision:0, source_ids:[], source_refs:[], expires:'', request_id:crypto.randomUUID() }
-  editing.value = true; selected.value = null; error.value = ''; notice.value = ''
+  editing.value = true; selected.value = null; error.value = ''; notice.value = ''; previewMode.value=false
 }
 async function view(item: any, draft = false) {
   busy.value = true; error.value = ''
@@ -108,6 +108,17 @@ async function publication(item:any, action:'publish'|'unpublish') {
   } catch (e) { error.value = (e as Error).message }
   finally { busy.value = false }
 }
+async function archive(item:any, archived:boolean) {
+  busy.value=true; error.value=''; notice.value=''
+  try {
+    await post(`/admin/v1/wiki/pages/${item.id}/archive`, {request_id:crypto.randomUUID(),
+      expected_revision:item.revision, expected_archive_revision:item.archive_revision || 0, archived})
+    selected.value=null
+    await load()
+    notice.value=archived ? '已移到归档列表，正文与版本保留，可随时恢复。' : '已恢复到主列表，仍保持未发布状态。'
+  } catch(e) {error.value=(e as Error).message}
+  finally {busy.value=false}
+}
 onMounted(() => { load(); timer = setInterval(load,5000) }); onUnmounted(() => { clearInterval(timer); clearInterval(generationTimer) })
 rememberFilters('WikiPanel', {query})
 </script>
@@ -115,7 +126,7 @@ rememberFilters('WikiPanel', {query})
   <section class="resource-panel wiki-panel">
     <div class="page-title"><div><h1>工程 Wiki</h1><p class="muted">把已发布来源整理成工程知识。草稿审核发布后可用于快速问答和智能调查。</p></div><button v-if="manage" class="primary" :disabled="busy || generating" @click="create">编写草稿</button></div>
     <p v-if="error" class="error" role="alert">{{ error }}</p><p v-if="notice" role="status">{{ notice }}</p>
-    <p v-if="loading" class="loading-state">正在加载 Wiki…</p><div class="page-toolbar"><input v-model="query" type="search" placeholder="搜索 Wiki 标题" aria-label="搜索 Wiki"/><span class="result-count">{{filtered.length}} 篇文章</span></div>
+    <p v-if="loading" class="loading-state">正在加载 Wiki…</p><div class="page-toolbar"><input v-model="query" type="search" placeholder="搜索 Wiki 标题" aria-label="搜索 Wiki"/><label v-if="manage" class="checkbox"><input v-model="showArchived" type="checkbox" :disabled="busy"/>查看已归档</label><span class="result-count">{{filtered.length}} 篇文章</span></div>
     <ResourceDrawer v-model="editing" title="编辑 Wiki 草稿" width="960px" :snapshot="editor" :busy="busy || generating" :error="error"><form id="wiki-editor" @input="changed" @submit.prevent="save"><h2>Wiki 草稿</h2><fieldset :disabled="busy || generating">
       <label>标题<input v-model="editor.title" maxlength="180" required /></label>
       <label>适用范围<input v-model="editor.applicability" maxlength="500" placeholder="说明适用对象和边界" required /></label>
@@ -125,7 +136,7 @@ rememberFilters('WikiPanel', {query})
       <div class="tabs"><button type="button" :aria-selected="!previewMode" @click="previewMode=false">编辑正文</button><button type="button" :aria-selected="previewMode" @click="previewMode=true">预览</button></div><MarkdownAnswer v-if="previewMode" :text="editor.body_markdown || '暂无正文'"/><label v-else>正文（Markdown）<textarea v-model="editor.body_markdown" rows="16" minlength="10" maxlength="100000" required /></label>
       </fieldset><p v-if="generating" role="status">正在根据所选资料起草…</p>
     </form><template #footer><button form="wiki-editor" class="primary" :disabled="busy || generating || !editor.source_ids?.length || !editor.body_markdown?.trim() || editor.source_ids.length>12">保存草稿并建立索引</button></template></ResourceDrawer>
-    <div class="document-list"><article v-for="item in filtered" :key="item.id" class="document-row"><div class="document-detail"><strong>{{ item.title }}</strong><p class="muted small">{{ item.available ? '已发布' : item.active_version ? '来源失效或已过期' : '未发布' }}<span v-if="manage && item.ingestion"> · 最新修订：{{ statusNames[item.ingestion.status] || item.ingestion.status }}</span></p></div><div class="row-actions"><button v-if="item.available" class="secondary" :disabled="busy" @click="view(item)">阅读</button><template v-if="manage"><button v-if="item.ingestion?.status === 'staged'" class="secondary" :disabled="busy" @click="view(item,true)">预览草稿</button><button v-if="item.ingestion?.status === 'staged' && selected?.version === item.ingestion.version" class="primary" :disabled="busy" @click="publication(item,'publish')">发布已预览版本</button><button class="secondary" @click="history = item">版本历史</button><button v-if="item.active_version" class="secondary" :disabled="busy" @click="publication(item,'unpublish')">下架</button></template></div></article></div>
+    <div class="document-list"><article v-for="item in filtered" :key="item.id" class="document-row"><div class="document-detail"><strong>{{ item.title }}</strong><p class="muted small">{{ item.available ? '已发布' : item.active_version ? '来源失效或已过期' : '未发布' }}<span v-if="manage && item.ingestion"> · 最新修订：{{ statusNames[item.ingestion.status] || item.ingestion.status }}</span></p></div><div class="row-actions"><button v-if="item.available" class="secondary" :disabled="busy" @click="view(item)">阅读</button><template v-if="manage"><button v-if="!item.active_version" class="secondary" :disabled="busy" @click="archive(item,!item.archived)">{{item.archived ? '恢复到主列表' : '归档'}}</button><button v-if="!item.archived && item.ingestion?.status === 'staged'" class="secondary" :disabled="busy" @click="view(item,true)">预览草稿</button><button v-if="!item.archived && item.ingestion?.status === 'staged' && selected?.version === item.ingestion.version" class="primary" :disabled="busy" @click="publication(item,'publish')">发布已预览版本</button><button class="secondary" @click="history = item">版本历史</button><button v-if="item.active_version" class="secondary" :disabled="busy" @click="publication(item,'unpublish')">下架</button></template></div></article></div>
     <div v-if="!filtered.length && !error" class="empty-card">{{items.length ? '没有匹配的 Wiki' : '暂无可阅读的 Wiki'}}</div>
     <ResourceDrawer v-model="readable" :title="selected?.title || '阅读 Wiki'" width="1000px"><article v-if="selected"><div class="page-title"><h2>{{ selected.title }}</h2><button v-if="manage" class="secondary" :disabled="busy || generating" @click="edit">修订此页</button></div><p class="muted">适用范围：{{ selected.applicability }} · {{ selected.valid_until ? '有效期至 ' + selected.valid_until : '未设到期日' }}</p><details v-if="headings.length" open><summary>文章目录</summary><div class="wiki-toc"><button v-for="(title,i) in headings" :key="i" class="text-button" @click="jump(i)">{{title}}</button></div></details><div ref="reader"><MarkdownAnswer :text="selected.body_markdown" /></div><details><summary>来源与版本</summary><ul><li v-for="ref in selected.source_refs" :key="ref.document_id">{{ sources.find(s => s.id === ref.document_id)?.title || ref.document_id }} · {{ ref.version }}</li></ul></details></article><template #footer><button v-if="manage && items.find(item=>item.ingestion?.version===selected?.version && item.ingestion?.status==='staged')" class="primary" :disabled="busy" @click="publication(items.find(item=>item.ingestion?.version===selected?.version),'publish')">发布已预览版本</button></template></ResourceDrawer>
     <KnowledgeVersions v-if="history" :document="history" @close="history = null" @changed="load" />

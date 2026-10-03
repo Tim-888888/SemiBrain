@@ -17,7 +17,11 @@ const busy = ref(false), error = ref(''), notice = ref(''), query = ref(''), res
 const edit = ref(false), form = ref<any>({}), from = ref(''), to = ref(''), reason = ref('')
 const types:Record<string,string> = {product:'产品',process:'工序',equipment:'设备',chamber:'腔体',defect:'缺陷',alarm:'告警',sop:'SOP',action:'维护动作',concept:'概念'}
 const relations:Record<string,string> = {applies_to:'适用于',occurs_in:'发生于',references:'引用',recommended_action:'处理建议',precedes:'先于',cooccurs:'共现／相关',validated_cause:'经验证的因果'}
-const nodes = computed(() => catalog.value.entities.filter((n:any) => n.id === n.canonical_id).slice(0,30))
+const nodes = computed(() => {
+  const active = new Set(catalog.value.edges.filter((e:any) => e.effective)
+    .flatMap((e:any) => [canonical(e.subject_id), canonical(e.object_id)]))
+  return catalog.value.entities.filter((n:any) => n.id === n.canonical_id && active.has(n.id)).slice(0,30)
+})
 const links = computed(() => catalog.value.edges.filter((e:any) => e.effective && nodes.value.some((n:any) => n.id === canonical(e.subject_id)) && nodes.value.some((n:any) => n.id === canonical(e.object_id))))
 function entity(id:string) { return catalog.value.entities.find((n:any) => n.id === id) }
 function canonical(id:string) { return entity(id)?.canonical_id || id }

@@ -23,3 +23,11 @@ class WikiDraft(BaseModel):
     source_refs: list[WikiSource] = Field(min_length=1, max_length=12)
     applicability: str = Field(min_length=1, max_length=500)
     valid_until: AwareDatetime | None = None
+
+
+class WikiArchive(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: UUID
+    expected_revision: int = Field(ge=0)
+    expected_archive_revision: int = Field(default=0, ge=0)
+    archived: bool
