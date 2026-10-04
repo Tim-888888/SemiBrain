@@ -43,6 +43,7 @@ context：纯标题、过渡、来源标签或明确的资料缺口，没有新�
 不因没列举所有细节、没复述来源的全部内容而否定正确概括。来源有产品或场景范围，不将其泛化成行业唯一标准。
 对goals输入的每个index恰好返回一次判断：covered仅在保留supported单元之后，正文仍完整回答该目标时为true；block_ids只列共同回答该目标的最小必要supported单元，不列重复或可选补充内容，不能用标题、缺口说明或unsupported单元凑数。
 每个goal必填布尔covered；部分有据时为false，保留正确内容。missing_goals只放字符串，不放对象，描述实质缺口，不要求调查。
+条件式要求只在条件成立时才要求对应动作；条件未触发且正文符合约束时不判缺失。supported必须有实际支持来源，纯资料缺口或下一步建议应判context，不把没有来源的单元标supported。
 合成数据须标明；projection省略内容不作依据。文件仅以registered_artifacts或证据中登记artifacts为准，下载入口由前端提供。reason简短，不输出正文。"""
 
 REPAIR_SYSTEM = """你是SemiBrain的答案修订助手。调查已结束，只用输入的已登记证据修订original_draft。
@@ -90,7 +91,9 @@ factual_units是已经通过证据核对且会保留的事实单元；context_un
 block_ids必须包含支撑答案的事实单元，可辅以报告结构或限制说明；不能仅靠标题、过渡或缺口声明覆盖目标。
 必须从全部保留事实重新判断，不沿用旧覆盖判断。复合目标的每一部分均有答案才covered=true。
 block_ids只列共同答全该目标的必要事实单元；只有部分回答或没有事实时covered=false。
+条件式要求未触发时不要求执行该分支；对已找到配图等情形，核对实际相关内容是否满足约束，而非强制补写“找不到时”的说明。
 不得补充事实、改写正文或发起调查。"""
+GOAL_COVERAGE_SYSTEM += REPORT_DELIVERY_RULE
 
 
 def answer_inputs(packet):
@@ -263,6 +266,10 @@ def review_answer(runner, state):
             system_override=REVIEW_SYSTEM, reservation_ceiling=ceiling)
         try:
             verdict = parse_control(turn.text, CloseoutReview)
+            texts = {b["id"]: b["text"] for b in payload["draft_blocks"]}
+            if normal and any(b.verdict == "supported" and not b.source_markers
+                              and not cited_markers(texts.get(b.id, "")) for b in verdict.blocks):
+                raise ValueError("CLOSEOUT_SUPPORT_BINDING")
             result = evaluate_answer(draft, verdict, valid, goals)
         except ValueError as exc:
             if not normal or control_repaired:
@@ -289,11 +296,11 @@ def review_answer(runner, state):
         # A model can mistakenly include headings or discarded units in a goal's
         # dependency list. Reassess against surviving facts instead of silently
         # intersecting IDs (which could turn a partial answer into a full one).
-        if (normal and not result["issues"] and result["invalid_goal_bindings"]
+        if (normal and not result["issues"] and result["missing"]
                 and result["facts"] and not coverage_rechecked):
             coverage_rechecked = True
             units = closeout_blocks(draft)
-            coverage_packet = {"goals": packet["goals"],
+            coverage_packet = {"goals": packet["goals"], "intent": state["intent"],
                 "factual_units": [u for u in units if u["id"] in result["facts"]],
                 "context_units": [u for u in units if u["id"] in result["kept"]
                                   and u["id"] not in result["facts"]]}
@@ -309,7 +316,7 @@ def review_answer(runner, state):
                                              or not set(g.block_ids) <= set(result["kept"]))
                                for g in coverage.goals)):
                     raise ValueError("CLOSEOUT_GOAL_COVERAGE")
-                verdict = verdict.model_copy(update={"goals": coverage.goals})
+                verdict = verdict.model_copy(update={"goals": coverage.goals, "missing_goals": []})
                 result = evaluate_answer(draft, verdict, valid, goals, rechecked_goals=True)
                 state["goal_coverage_rechecked"] = True
             except (ValueError, ModelError, BudgetExhausted) as exc:

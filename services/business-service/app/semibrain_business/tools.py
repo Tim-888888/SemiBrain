@@ -527,12 +527,7 @@ def execute_one():
                 job_id=job["_id"],
             )
             assets = [asset["ref"]]
-            data = {
-                "row_count": data.get("row_count"),
-                "truncated": True,
-                "rows": [],
-                "data_origin": "synthetic",
-            }
+            data = spilled_result_summary(data, job["tool"])
             warnings.append("RESULT_STORED_AS_ASSET")
         data["result_state"] = result_state(data)
         source = SourceRef(
@@ -631,6 +626,27 @@ def execute_one():
 
     transaction(complete)
     return True
+
+
+def spilled_result_summary(data, tool):
+    """Keep search navigation usable when verbose snippets spill to an asset."""
+    summary = {"row_count": data.get("row_count"), "truncated": True,
+               "rows": [], "data_origin": data.get("data_origin", "unknown")}
+    if tool != "web.search":
+        return summary
+    summary.update({k: data[k] for k in ("query", "provider", "complement_provider",
+        "configuration_revision", "usage", "notice", "summary_kind") if k in data})
+    summary.update(sources=[], source_text_available=False)
+    for item in data.get("sources", [])[:10]:
+        source = {k: item[k] for k in ("url", "published_at", "provider", "fetchable") if k in item}
+        source.update(title=str(item.get("title", ""))[:240],
+                      snippet=str(item.get("snippet", ""))[:600],
+                      content_kind="search_excerpt", fact_evidence=False)
+        candidate = {**summary, "sources": [*summary["sources"], source]}
+        if len(canonical(candidate).encode()) > 45000:
+            break  # Never cut a URL in half to fit a transport limit.
+        summary = candidate
+    return summary
 
 
 def result_state(data):

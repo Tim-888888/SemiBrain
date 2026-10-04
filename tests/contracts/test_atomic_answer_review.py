@@ -322,3 +322,29 @@ def test_invalid_coverage_repair_never_approves_title_missing_or_unknown_ids(map
     result = review_answer(runner, state)
     assert result["outcome"] == "partial" and result["review"]["missing_goals"] == ["Order"]
     assert result["review"]["goal_coverage_error"] == "ValueError"
+
+
+def test_server_report_delivery_is_rechecked_without_hiding_content_requirements():
+    draft = "A comes before B [1]."
+    initial = verdict(["supported"], goals=[{"index": 0, "covered": False}]).model_dump()
+    initial["missing_goals"] = ["File has not yet been exported"]
+    runner, state = runner_for(Investigator, [initial, {"goals": [covered(0, 0)]}])
+    state.update(draft=draft, intent={"goals": ["Explain the order and save it as Markdown"],
+        "delivery": {"kind": "file", "method": "report", "formats": ["md"]}})
+    result = review_answer(runner, state)
+    assert result["outcome"] == "succeeded" and not result["review"]["missing_goals"]
+    payload = json.loads(runner.model_call.call_args.kwargs["inputs"][0]["content"])
+    assert payload["intent"]["delivery"]["method"] == "report"
+    assert [u["text"] for u in payload["factual_units"]] == [draft]
+
+
+def test_supported_without_source_gets_control_repair_not_automatic_approval():
+    draft = "No baseline was available.\n\nA precedes B [1]."
+    invalid = verdict(["supported", "supported"], goals=[covered(0, 1)]).model_dump()
+    invalid["blocks"][0]["source_markers"] = []
+    fixed = verdict(["context", "supported"], goals=[covered(0, 1)]).model_dump()
+    runner, state = runner_for(MultiAgent, [invalid, fixed])
+    state.update(draft=draft, intent={"goals": ["Order"]})
+    result = review_answer(runner, state)
+    assert result["outcome"] == "succeeded" and result["review"]["control_repaired"]
+    assert result["draft"] == draft
