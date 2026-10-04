@@ -7,7 +7,7 @@ import os
 import re
 import threading
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Callable
 
 import httpx
@@ -37,12 +37,14 @@ class ModelProfile:
     role_implementation: str = "prompt_role"
     context_window_tokens: int = 128000
     context_headroom_tokens: int = 8192
+    provider: str = "default"
 
     def snapshot(self):
-        return {key: value for key, value in asdict(self).items() if key != "credential_prefix"}
+        return {key: value for key, value in asdict(self).items()
+                if key != "credential_prefix" and not (key == "provider" and value == "default")}
 
 
-def profile_for(role="investigator"):
+def profile_for(role="investigator", *, model=None):
     if role == "vision":
         return ModelProfile(
             role=role,
@@ -58,8 +60,8 @@ def profile_for(role="investigator"):
                     "supervisor", "sqlbot", "rag", "tool"}:
         raise ModelError("UNKNOWN_MODEL_ROLE")
     default = os.getenv("SEMIBRAIN_LLM_DEFAULT_MODEL", "deepseek-flash")
-    model = os.getenv("SEMIBRAIN_LLM_" + role.upper() + "_MODEL", default)
-    return ModelProfile(
+    model = model or os.getenv("SEMIBRAIN_LLM_" + role.upper() + "_MODEL", default)
+    profile = ModelProfile(
         role=role,
         model=model,
         protocol=os.getenv("SEMIBRAIN_LLM_API_MODE", "responses"),
@@ -70,6 +72,18 @@ def profile_for(role="investigator"):
         context_window_tokens=int(os.getenv("SEMIBRAIN_LLM_CONTEXT_WINDOW_TOKENS", "128000")),
         context_headroom_tokens=int(os.getenv("SEMIBRAIN_LLM_CONTEXT_HEADROOM_TOKENS", "8192")),
     )
+    from semibrain_agent.model_catalog import credential_prefix, text_models
+    values = text_models().get(model, {})
+    profile = replace(profile, **values, credential_prefix=credential_prefix(values.get("provider", "default")))
+    if profile.context_headroom_tokens >= profile.context_window_tokens:
+        raise ModelError("MODEL_CATALOG_INVALID")
+    return profile
+
+
+def profile_from_snapshot(value):
+    """Keep pinned capabilities/provider; only resolve its server-side credentials now."""
+    from semibrain_agent.model_catalog import credential_prefix
+    return ModelProfile(**value, credential_prefix=credential_prefix(value.get("provider", "default")))
 
 
 @dataclass
@@ -159,8 +173,10 @@ def parse_response(response: dict) -> ModelTurn:
 class ProviderAdapter:
     def __init__(self, profile: ModelProfile, *, deadline=None, guard: Callable | None = None):
         self.profile = profile
-        self.base = os.environ[profile.credential_prefix + "_BASE_URL"].rstrip("/")
-        self.key = os.environ[profile.credential_prefix + "_API_KEY"]
+        self.base = os.getenv(profile.credential_prefix + "_BASE_URL", "").rstrip("/")
+        self.key = os.getenv(profile.credential_prefix + "_API_KEY", "")
+        if not self.base or not self.key:
+            raise ModelError("MODEL_ROUTE_UNAVAILABLE")
         self.deadline = deadline if deadline is not None else time.monotonic() + 180
         self.guard = guard or (lambda: None)
 

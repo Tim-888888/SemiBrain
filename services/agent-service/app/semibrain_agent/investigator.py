@@ -43,9 +43,9 @@ from semibrain_agent.prompts import (
 )
 from semibrain_agent.provider import (
     ModelError,
-    ModelProfile,
     ModelTurn,
     ProviderAdapter,
+    profile_from_snapshot,
 )
 from semibrain_agent.review_delivery import draft_blocks, retain_reviewed, reviewed_partial
 
@@ -222,7 +222,7 @@ class Investigator:
         cached = self.db.model_turns.find_one({"_id": identity, "run_id": self.run["_id"]})
         if cached:
             return ModelTurn(**cached["turn"]), identity
-        profile = ModelProfile(**self.bundle["models"][role], credential_prefix="SEMIBRAIN_LLM")
+        profile = profile_from_snapshot(self.bundle["models"][role])
         default_history = inputs is None
         inputs = self.messages(state) if default_history else inputs
         from semibrain_agent.request_context import (

@@ -42,9 +42,11 @@ def baseline():
 
 def model_choices():
     # The deployment remains the authority for endpoints, credentials and protocols.
-    # UI changes can only select models already approved on the same text provider.
+    # UI selects an approved name; per-model routes stay in the deployment catalog.
+    from semibrain_agent.model_catalog import text_models
     models = set(baseline()["settings"]["models"].values())
     models.update(value.strip() for value in os.getenv("SEMIBRAIN_APPROVED_TEXT_MODELS", "").split(",") if value.strip())
+    models.update(text_models())
     return sorted(models)
 
 
@@ -53,6 +55,8 @@ def state(session=None):
 
 
 def snapshot(session=None):
+    from semibrain_agent.provider import profile_for
+
     base = baseline()
     active = state(session)
     if active["active_version"]:
@@ -67,7 +71,7 @@ def snapshot(session=None):
     if any(model not in choices for model in base["settings"]["models"].values()):
         failure("CONFIG_MODEL_UNAVAILABLE", 503)
     for role, model in base["settings"]["models"].items():
-        base["profiles"][role]["model"] = model
+        base["profiles"][role] = profile_for(role, model=model).snapshot()
     return base
 
 
@@ -76,10 +80,10 @@ def pinned(context):
 
 
 def profile(role, config):
-    from semibrain_agent.provider import ModelProfile, profile_for
+    from semibrain_agent.provider import profile_for, profile_from_snapshot
     if not config or role not in config.get("profiles", {}):
         return profile_for(role)
-    return ModelProfile(**config["profiles"][role], credential_prefix="SEMIBRAIN_LLM")
+    return profile_from_snapshot(config["profiles"][role])
 
 
 def role_note(context, role):
