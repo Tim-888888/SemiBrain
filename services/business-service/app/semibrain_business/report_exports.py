@@ -11,6 +11,7 @@ from semibrain_common.operations import admission
 from semibrain_common.runtime import call, canonical, digest, failure, now, transaction, uid
 from semibrain_contracts.exports import ExportCommand
 
+from semibrain_business.export_images import prepare
 from semibrain_business.knowledge import bucket, objects, store_asset
 from semibrain_business.report_rendering import VERSION, pdf, word
 from semibrain_business.security import authorize_request, db
@@ -162,26 +163,32 @@ def authorize_asset(asset, claim):
 def report_images(report):
     from semibrain_business.knowledge_api import asset_response
 
-    result, total = {}, 0
+    result, assets, total = {}, {}, 0
+    parser = MarkdownIt("commonmark").enable("table")
     used = {
         child.attrGet("src")
-        for token in MarkdownIt("commonmark").enable("table").parse(report["body_markdown"])
+        for token in parser.parse(report["body_markdown"])
         for child in token.children or []
         if child.type == "image"
     }
     for image in report.get("image_refs") or []:
         # Only service-registered images qualify. Never fetch URLs from Markdown text.
-        if image.get("asset_id") and image.get("url") in used and image["url"] not in result:
-            raw = asset_response(image["asset_id"], report["claim"]).body
+        url = parser.normalizeLink(image.get("url") or "")
+        if image.get("asset_id") and url in used and url not in result:
+            asset_id = image["asset_id"]
+            if asset_id in assets:
+                result[url] = assets[asset_id]
+                continue
+            raw = asset_response(asset_id, report["claim"]).body
             total += len(raw)
-            if total > 12 * 1024**2 or len(result) >= 12:
+            if total > 12 * 1024**2 or len(assets) >= 12:
                 failure("EXPORT_IMAGES_TOO_LARGE", 413)
             with Image.open(io.BytesIO(raw)) as decoded:
                 if decoded.width * decoded.height > 16000000:
                     failure("EXPORT_IMAGES_TOO_LARGE", 413)
                 out = io.BytesIO()
                 decoded.convert("RGB").save(out, format="PNG")
-                result[image["url"]] = out.getvalue()
+                assets[asset_id] = result[url] = out.getvalue()
     return result
 
 
@@ -225,6 +232,7 @@ def process_one():
             from semibrain_business.markdown_export import package
             raw, filename, media = package(report, stem)
         else:
+            report = prepare(report)
             raw = word(
                 report["body_markdown"], report.get("citations") or [], report_images(report)
             )

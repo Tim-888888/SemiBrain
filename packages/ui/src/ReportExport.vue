@@ -7,6 +7,17 @@ const open = ref(false), busy = ref(false), error = ref(''), rows = ref<ExportRo
 const automatic = ref(props.automatic)
 const names: Record<string, string> = { md: 'Markdown', docx: 'Word', pdf: 'PDF' }
 const states: Record<string, string> = { queued: '等待转换', running: '正在转换', succeeded: '可下载', failed: '转换未完成' }
+const failures: Record<string, string> = {
+  EXPORT_IMAGE_UNREGISTERED: '本次导出未能匹配回答中的图片。请重新生成；若仍出现此提示，请反馈图片引用问题。',
+  EXPORT_IMAGE_REFERENCE_UNSUPPORTED: '回答中的图片引用格式暂不支持导出，请反馈此问题。',
+  EXPORT_IMAGES_TOO_LARGE: '图片数量或大小超过导出限制，请减少配图后重新生成。',
+  ASSET_NOT_FOUND: '源图片已不存在，请重新生成相关图表或回答。',
+  ASSET_UNAVAILABLE: '源文件当前无权访问，请检查来源状态或联系管理员。',
+  ASSET_VERSION_UNAVAILABLE: '源图片版本已不可用，请重新查询资料并生成回答。',
+  EXPORT_EXPIRED: '导出文件已过期，请重新生成。',
+  EXPORT_OWNER_REVOKED: '当前账号权限已变化，请重新登录后检查访问权限。',
+  EXPORT_SOURCE_CHANGED: '回答来源已变化，请刷新页面后重新导出。',
+}
 let timer: ReturnType<typeof setTimeout> | undefined, disposed = false, until = 0
 async function load() {
   try {
@@ -48,7 +59,7 @@ onMounted(() => { if (props.automatic) { open.value = true; until = Date.now() +
       <div v-for="row in rows" :key="row.export_id" class="export-row">
         <span>{{ names[row.format] }} · {{ states[row.status] || row.status }}</span>
         <a v-if="row.status === 'succeeded' && row.asset_id" :href="'/v1/assets/' + row.asset_id + '/content'" :download="row.filename">下载 {{ row.filename }}</a>
-        <span v-if="row.status === 'failed'" class="small muted">请重试；若来源已不可用，请重新调查。</span>
+        <span v-if="row.status === 'failed'" class="small muted">{{ failures[row.error || ''] || '转换未完成，请稍后重试；若持续失败，请反馈此问题。' }}</span>
       </div>
     </div>
   </div>

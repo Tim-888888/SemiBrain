@@ -10,11 +10,13 @@ from PIL import Image
 from semibrain_common.runtime import failure
 
 from semibrain_business.document_images import image_spans, safe_image
+from semibrain_business.export_images import prepare
 
 
 def package(report, stem, *, image_limit=12, byte_limit=12 * 1024**2):
     from semibrain_business.knowledge_api import asset_response
 
+    report = prepare(report)
     body = report["body_markdown"]
     parser = MarkdownIt("commonmark").enable("table")
     env = {}
@@ -26,12 +28,16 @@ def package(report, stem, *, image_limit=12, byte_limit=12 * 1024**2):
                   if item.get("url") and item.get("asset_id")}
     if used - registered.keys():
         failure("EXPORT_IMAGE_UNREGISTERED", 409)
-    files, targets, total = {}, {}, 0
+    files, targets, assets, total = {}, {}, {}, 0
     for url in sorted(used):
-        response = asset_response(registered[url]["asset_id"], report["claim"])
+        asset_id = registered[url]["asset_id"]
+        if asset_id in assets:
+            targets[url] = assets[asset_id]
+            continue
+        response = asset_response(asset_id, report["claim"])
         raw = response.body
         total += len(raw)
-        if total > byte_limit or len(targets) >= image_limit:
+        if total > byte_limit or len(assets) >= image_limit:
             failure("EXPORT_IMAGES_TOO_LARGE", 413)
         # Use the actual image decoder rather than an extension supplied by the model.
         if getattr(response, "media_type", "") == "image/svg+xml":
@@ -50,6 +56,7 @@ def package(report, stem, *, image_limit=12, byte_limit=12 * 1024**2):
         if sum(map(len, files.values())) > byte_limit:
             failure("EXPORT_IMAGES_TOO_LARGE", 413)
         targets[url] = "./" + name
+        assets[asset_id] = targets[url]
     replacements, mapped = [], set()
     for span in image_spans(body):
         # Escaped image syntax remains literal even if a real image shares its URL.

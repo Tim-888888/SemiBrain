@@ -122,6 +122,7 @@ def source(form: ExportSource, request: Request):
                 "content_hash",
                 "citations",
                 "image_refs",
+                "artifacts",
                 "lineage_refs",
             )
         },
