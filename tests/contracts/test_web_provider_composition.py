@@ -140,3 +140,18 @@ def test_shared_schema_preserves_old_arguments_and_allows_content_selection():
     form = WebSearch(query="public process")
     assert form.provider == "auto" and form.content is False
     assert WebSearch(query="public process", provider="zhipu", content=True).content
+
+
+def test_prefetch_allows_queue_and_extractor_time_but_remains_inside_investigation():
+    remaining_times = []
+
+    def execute(*_):
+        remaining_times.append(tool_seconds(runner, 65))
+        return {"status": "succeeded", "evidence": [{"marker": "1"}]}
+
+    runner = executor(execute)
+    prefetch(runner, ["https://example.org/public"], "longer-queue")
+    assert 40 < remaining_times[-1] <= 45
+    runner.harness.investigation_seconds = lambda: 8
+    prefetch(runner, ["https://example.org/public"], "near-reserve")
+    assert 0 < remaining_times[-1] <= 8

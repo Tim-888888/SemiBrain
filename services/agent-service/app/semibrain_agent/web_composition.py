@@ -12,6 +12,9 @@ FALLBACK_ERRORS = {"WEB_PROVIDER_UNCONFIGURED", "WEB_PROVIDER_FAILED", "WEB_PROV
                    "WEB_PROVIDER_PROTOCOL_FAILED", "WEB_RATE_LIMITED", "WEB_AUTH_FAILED",
                    "WEB_PAYMENT_REQUIRED", "TOOL_DEADLINE", "TOOL_REQUEST_FAILED"}
 _INIT_LOCK = threading.Lock()
+# Includes queue admission, static fetch and bounded extraction fallback. The old
+# 15 seconds could expire before a worker even started a child job.
+PREFETCH_SECONDS = 45
 
 
 class WebState:
@@ -86,7 +89,7 @@ def compose_search(executor, observation, args, logical_id):
 def prefetch(executor, urls, logical_id):
     if not urls:
         return []
-    deadline = time.monotonic() + tool_seconds(executor, 15)
+    deadline = time.monotonic() + tool_seconds(executor, PREFETCH_SECONDS)
 
     def read(url):
         child = str(uuid5(NAMESPACE_URL, logical_id + ":page:" + url))

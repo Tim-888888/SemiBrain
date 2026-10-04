@@ -224,3 +224,43 @@ def test_exhausted_closeout_does_not_spend_additional_repair_calls():
     result = review_answer(runner, state)
     assert runner.model_call.call_count == 1 and result["outcome"] == "partial"
     assert "Different stages" in result["draft"] and "Order" in result["review"]["missing_goals"]
+
+
+@pytest.mark.parametrize("agent_type", [Investigator, MultiAgent])
+def test_context_in_goal_mapping_is_reassessed_using_surviving_facts(agent_type):
+    draft = "## Difference\n\nDifferent stages [1].\n\n## Order\n\nA precedes B [1]."
+    initial = verdict(["context", "supported", "context", "supported"],
+                      goals=[covered(0, 0, 1), covered(1, 2, 3)]).model_dump()
+    runner, state = runner_for(agent_type, [initial, {"goals": [covered(0, 1), covered(1, 3)]}])
+    state["draft"] = draft
+    result = review_answer(runner, state)
+    assert result["outcome"] == "succeeded" and result["draft"] == draft
+    assert result["review"]["goal_coverage_rechecked"]
+    assert not result["review"]["repair_attempted"] and runner.model_call.call_count == 2
+    payload = json.loads(runner.model_call.call_args.kwargs["inputs"][0]["content"])
+    assert [u["id"] for u in payload["factual_units"]] == [1, 3]
+    assert [u["id"] for u in payload["context_units"]] == [0, 2]
+
+
+def test_context_plus_one_fact_does_not_silently_satisfy_compound_goal():
+    draft = "## Difference and order\n\nDifferent stages [1]."
+    initial = verdict(["context", "supported"], goals=[covered(0, 0, 1)]).model_dump()
+    runner, state = runner_for(Investigator, [initial,
+        {"goals": [{"index": 0, "covered": False, "block_ids": [1]}]},
+        ModelError("REPAIR_UNAVAILABLE")])
+    state.update(draft=draft, intent={"goals": ["Difference and order"]})
+    result = review_answer(runner, state)
+    assert result["outcome"] == "partial" and result["review"]["missing_goals"] == ["Difference and order"]
+    assert "Different stages [1]" in result["draft"]
+
+
+@pytest.mark.parametrize("mapping", [[covered(0, 0)], [covered(0, 99)], [], [covered(0, 1), covered(0, 1)]])
+def test_invalid_coverage_repair_never_approves_title_missing_or_unknown_ids(mapping):
+    draft = "## Order\n\nDifferent stages [1]."
+    runner, state = runner_for(Investigator, [
+        verdict(["context", "supported"], goals=[covered(0, 0)]).model_dump(),
+        {"goals": mapping}, ModelError("REPAIR_UNAVAILABLE")])
+    state.update(draft=draft, intent={"goals": ["Order"]})
+    result = review_answer(runner, state)
+    assert result["outcome"] == "partial" and result["review"]["missing_goals"] == ["Order"]
+    assert result["review"]["goal_coverage_error"] == "ValueError"

@@ -589,6 +589,10 @@ class Investigator:
                 "不得扩大原问题范围或重复已失败且条件未变的操作。\n"
                 + canonical(state["retrieval_feedback"]),
             })
+        if state.get("web_evidence_supplement"):
+            result.append({"role": "user", "content":
+                "结束调查前的一次补查已完成。以下为真实观察数据；结合所有已登记正文回答原目标，"
+                "若仍缺依据则说明缺口，不扩大调查范围。\n" + canonical(state["web_evidence_supplement"])})
         fallback = self.db.observations.find_one({
             "_id": self.call_id(self.run["_id"], "required-web-search"),
             "run_id": self.run["_id"],
@@ -689,6 +693,8 @@ class Investigator:
         elif turn.text.strip():
             if self.ensure_web_search(state):
                 # Give the model the real observation so it can fetch sources before review.
+                state["phase"] = "model"
+            elif self.supplement_web_evidence(state):
                 state["phase"] = "model"
             else:
                 state.update(draft=turn.text, phase="review")
@@ -797,6 +803,10 @@ class Investigator:
         reason = self.harness.request_closeout("ANSWER_READY")
         state.update(closing=True, closeout_reason=reason)
         return state
+
+    def supplement_web_evidence(self, state):
+        from semibrain_agent.web_readiness import supplement_web_evidence
+        return supplement_web_evidence(self, state)
 
     def finalize(self, state):
         from semibrain_agent.closeout import final_answer
