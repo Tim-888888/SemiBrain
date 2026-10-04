@@ -14,7 +14,7 @@ from semibrain_common.runtime import canonical, digest
 from semibrain_agent.delivery import Delivery
 from semibrain_agent.evidence_view import evidence_views
 
-PROMPT_VERSION = "investigator-prompts-v39"
+PROMPT_VERSION = "investigator-prompts-v40"
 CARD_VERSION = "semiconductor-intents-v1"
 INTENT_CARDS = [
     {

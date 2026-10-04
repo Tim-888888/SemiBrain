@@ -1,5 +1,6 @@
 """Provider navigation, scoped excerpts, fallback boundaries and metered failures."""
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -124,3 +125,21 @@ def test_fetch_failure_usage_is_settled_and_replay_is_free(usage):
     first = executor.execute("web.fetch", '{"url":"' + URL + '"}', "call")
     assert first == executor.execute("web.fetch", '{"url":"' + URL + '"}', "call")
     assert first["status"] == "failed" and settlements == [("call", usage)]
+
+
+@pytest.mark.parametrize("name,field,limit", [("web.fetch", "pages", 5), ("web.search", "searches", 3)])
+def test_web_subquota_preserves_opportunity_to_answer_from_existing_sources(name, field, limit):
+    records = {}
+    harness = SimpleNamespace(
+        db=SimpleNamespace(observations=SimpleNamespace(find_one=lambda q: records.get(q.get("_id")))),
+        run_id="run", check=lambda: {"budget": {field: limit, "limits": {field: limit}}},
+        reserve_tool=lambda *_: pytest.fail("subquota must not initiate new work or close whole run"),
+        save_record=lambda _, identity, value: records.update({identity: value}),
+    )
+    client = SimpleNamespace(tool=lambda *a, **k: pytest.fail("no external call"))
+    executor = ToolExecutor(harness, client)
+    executor.evidence = lambda: []
+    args = {"url": URL} if name == "web.fetch" else {"query": "public research"}
+    first = executor.execute(name, json.dumps(args), "subquota")
+    assert first["error"]["code"] == ("WEB_PAGE_LIMIT" if field == "pages" else "WEB_SEARCH_LIMIT")
+    assert executor.execute(name, json.dumps(args), "subquota") == first

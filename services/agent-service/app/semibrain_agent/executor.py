@@ -308,6 +308,19 @@ class ToolExecutor:
                                    "notice": "复用本运行相同范围的成功查询，未再次访问业务数据。"}
                     self.harness.save_record("observations", logical_id, {"observation": observation})
                     return observation
+            if name in {"web.search", "web.fetch"}:
+                budget = (self.harness.check() or {}).get("budget", {})
+                field = "searches" if name == "web.search" else "pages"
+                limit = budget.get("limits", {}).get(field)
+                if limit is not None and budget.get(field, 0) >= limit:
+                    # A page/search sub-limit fences only new web work, not the
+                    # model's opportunity to read and answer from acquired evidence.
+                    observation = {"status": "failed", "tool": name, "call_ref": logical_id,
+                        "arguments": args, "evidence": [], "error": {
+                            "code": "WEB_SEARCH_LIMIT" if field == "searches" else "WEB_PAGE_LIMIT",
+                            "message": "本轮该类联网次数已用尽，请使用已取得的正文回答；可回读已有证据，不要重复请求新网页。"}}
+                    self.harness.save_record("observations", logical_id, {"observation": observation})
+                    return observation
             self.harness.reserve_tool(logical_id, name)
             if name in LOCAL_TOOLS:
                 args = LOCAL_TOOLS[name][0].model_validate(args).model_dump(mode="json")

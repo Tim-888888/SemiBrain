@@ -166,15 +166,16 @@ def last_review():
 
 @pytest.mark.parametrize("agent_type", [Investigator, MultiAgent])
 def test_missing_citation_gets_one_markdown_repair_and_independent_recheck(agent_type):
-    revised = "Different stages [1].\n\nA precedes B [1]."
-    runner, state = runner_for(agent_type, [first_review(), revised, last_review()])
+    revised = "Different stages [1].\n\nOrder, uncited. [1]"
+    runner, state = runner_for(agent_type, [first_review(), last_review()])
     result = review_answer(runner, state)
     assert result["outcome"] == "succeeded" and result["draft"] == revised
     calls = [c.kwargs for c in runner.model_call.call_args_list]
-    assert [c["suffix"] for c in calls] == ["closeout-review", "closeout-repair", "closeout-recheck"]
+    assert [c["suffix"] for c in calls] == ["closeout-review", "closeout-recheck"]
     assert all(c["final"] and not c.get("tools") for c in calls)
     payload = json.loads(calls[1]["inputs"][0]["content"])
-    assert payload["missing_goals"] == ["Order"] and payload["original_draft"] == "Different stages [1].\n\nOrder, uncited."
+    assert payload["draft_blocks"][1]["text"] == "Order, uncited. [1]"
+    assert result["review"]["citation_patch_applied"]
     assert result["review"]["repair_attempted"] and len(result["review"]["attempts"]) == 2
 
 
@@ -191,18 +192,30 @@ def test_repair_failure_keeps_verified_original_and_names_unanswered_goal(error)
 
 
 def test_recheck_failure_never_publishes_unverified_rewrite():
-    runner, state = runner_for(Investigator, [first_review(), "Dangerous invented fact [1].", "invalid"])
+    initial = first_review()
+    initial["blocks"][1]["verdict"] = "unsupported"
+    runner, state = runner_for(Investigator, [initial, "Dangerous invented fact [1].", "invalid", "invalid"])
     result = review_answer(runner, state)
     assert "Different stages [1]." in result["draft"] and "Dangerous" not in result["draft"]
-    assert runner.model_call.call_count == 3
+    assert runner.model_call.call_count == 4
 
 
 def test_still_incomplete_rewrite_does_not_start_another_loop():
-    runner, state = runner_for(MultiAgent, [first_review(), "First [1].\n\nInvented rate [1].",
+    initial = first_review()
+    initial["blocks"][1]["verdict"] = "unsupported"
+    runner, state = runner_for(MultiAgent, [initial, "First [1].\n\nInvented rate [1].",
         verdict(["supported", "unsupported"], goals=[covered(0, 0), covered(1, 1)]).model_dump()])
     result = review_answer(runner, state)
     assert result["outcome"] == "partial" and runner.model_call.call_count == 3
     assert "Invented rate" not in result["draft"] and "尚未充分回答：Order" in result["draft"]
+
+
+def test_citation_only_patch_is_not_published_when_independent_review_rejects_it():
+    runner, state = runner_for(Investigator, [first_review(),
+        verdict(["supported", "unsupported"], goals=[covered(0, 0), {"index": 1, "covered": False}]).model_dump()])
+    result = review_answer(runner, state)
+    assert result["outcome"] == "partial" and "Order, uncited" not in result["draft"]
+    assert runner.model_call.call_count == 2
 
 
 @pytest.mark.parametrize("reason", ["RUN_CANCELLED", "LEASE_LOST"])
@@ -213,9 +226,33 @@ def test_cancellation_or_lease_loss_during_repair_propagates(reason):
 
 
 def test_invalid_initial_review_can_be_repaired_once_but_never_published_unchecked():
-    runner, state = runner_for(MultiAgent, ["bad json", "Difference [1].\n\nOrder [1].", last_review()])
+    runner, state = runner_for(MultiAgent, ["bad json", "still invalid", "Difference [1].\n\nOrder [1].", last_review()])
     result = review_answer(runner, state)
-    assert result["outcome"] == "succeeded" and runner.model_call.call_count == 3
+    assert result["outcome"] == "succeeded" and runner.model_call.call_count == 4
+
+
+@pytest.mark.parametrize("invalid", ["not JSON", {"blocks": [], "goals": [], "missing_goals": [{"reason": "missing"}]}])
+def test_malformed_control_is_repaired_without_rewriting_a_valid_answer(invalid):
+    runner, state = runner_for(Investigator, [invalid, last_review()])
+    state["draft"] = "Difference [1].\n\nOrder [1]."
+    result = review_answer(runner, state)
+    assert result["outcome"] == "succeeded" and result["draft"] == state["draft"]
+    assert result["review"]["control_repaired"] and not result["review"]["repair_attempted"]
+    payload = json.loads(runner.model_call.call_args.kwargs["inputs"][0]["content"])
+    assert payload["required_block_ids"] == [0, 1] and payload["required_goal_indices"] == [0, 1]
+
+
+def test_invented_table_header_id_requires_semantic_realignment_not_numeric_shift():
+    draft = "## Difference\n\n| Stage | Position |\n|---|---|\n| A | Before [1] |\n| B | After [1] |"
+    invalid = verdict(["context", "context", "supported", "supported"], goals=[covered(0, 2, 3)]).model_dump()
+    valid = verdict(["context", "supported", "supported"], goals=[covered(0, 1, 2)]).model_dump()
+    runner, state = runner_for(Investigator, [invalid, valid])
+    state.update(draft=draft, intent={"goals": ["Difference"]})
+    result = review_answer(runner, state)
+    assert result["outcome"] == "succeeded" and result["review"]["control_repaired"]
+    payload = json.loads(runner.model_call.call_args.kwargs["inputs"][0]["content"])
+    assert payload["required_block_ids"] == [0, 1, 2]
+    assert payload["draft_blocks"][1]["text"].endswith("| A | Before [1] |")
 
 
 def test_exhausted_closeout_does_not_spend_additional_repair_calls():

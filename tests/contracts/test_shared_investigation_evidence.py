@@ -35,6 +35,34 @@ def sources(position):
     return records, page
 
 
+def test_bounded_closeout_retains_multiple_topics_instead_of_one_metadata_heavy_page():
+    from semibrain_agent.closeout import (
+        ANSWER_CEILING,
+        ANSWER_OUTPUT,
+        ANSWER_SYSTEM,
+        REVIEW_CEILING,
+        REVIEW_OUTPUT,
+        REVIEW_SYSTEM,
+        fits,
+        select_packet,
+    )
+    records = []
+    for i, topic in enumerate(["alpha", "beta", "gamma"]):
+        records.append({"evidence_id": f"fixture-{i}", "marker": str(i + 1), "title": topic,
+            "source": {"kind": "web", "source_id": str(i), "source_version": "1", "content_hash": "a" * 64},
+            "content": {"snapshot_id": str(i), "url": f"https://example.org/{topic}", "offset": 0,
+                "text": (f"{topic} has separate control. Do not infer causality. " * 90),
+                "usage": {"transport": "not evidence" * 1000}}})
+    frozen = deepcopy(records)
+    packet = select_packet("Compare alpha beta gamma", {"goals": ["Compare all three topics"]}, records, None, [], [])
+    assert {e["marker"] for e in packet["evidence"]} == {"1", "2", "3"}
+    assert all(len(e["content"]["text"]) > 200 for e in packet["evidence"])
+    assert records == frozen
+    assert fits(packet, ANSWER_SYSTEM, ANSWER_OUTPUT, ANSWER_CEILING)
+    probe = {**packet, "draft_blocks": [{"id": 0, "text": "Independent controls [1][2][3]."}]}
+    assert fits(probe, REVIEW_SYSTEM, REVIEW_OUTPUT, REVIEW_CEILING)
+
+
 @pytest.mark.parametrize("phase", ["finalize", "review", "revise"])
 @pytest.mark.parametrize("position", [0, 6, 11])
 def test_single_agent_stage_preserves_original_page_and_middle_sources(phase, position):
