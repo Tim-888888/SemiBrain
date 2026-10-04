@@ -76,13 +76,16 @@ def compose_search(executor, observation, args, logical_id):
         row = executor.harness.check() or {}
         budget = row.get("budget", {})
         limits = budget.get("limits", {})
-        count = max(0, min(3, limits.get("pages", 5) - budget.get("pages", 0),
+        # Optional first-result prefetch must leave a page for deliberate source
+        # selection after the model has seen the search results (e.g. a primary source).
+        count = max(0, min(2, limits.get("pages", 5) - budget.get("pages", 0) - 1,
                            limits.get("tools", 20) - budget.get("tools", 0)))
         pages = prefetch(executor, urls[:count], logical_id)
         observation["pages"] = pages
         observation["evidence"] = [e for p in pages for e in p.get("evidence", [])]
         observation["data"] = {**data, "source_text_available": bool(observation["evidence"]),
-                               "content_requested": True}
+                               "content_requested": True,
+                               "prefetch_notice": "自动预取最多两页，保留一次读页机会供你按目标选择更合适的来源；网址/摘要不是正文，优先来源仍需实际读取。"}
     return observation
 
 

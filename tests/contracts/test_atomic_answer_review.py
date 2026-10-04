@@ -291,6 +291,27 @@ def test_context_plus_one_fact_does_not_silently_satisfy_compound_goal():
     assert "Different stages [1]" in result["draft"]
 
 
+def test_report_structure_may_supplement_facts_only_after_independent_coverage_recheck():
+    draft = "# Report\n\nDifferent stages [1].\n\nA precedes B [1]."
+    initial = verdict(["context", "supported", "supported"], goals=[covered(0, 0, 1, 2)]).model_dump()
+    runner, state = runner_for(Investigator, [initial, {"goals": [covered(0, 0, 1, 2)]}])
+    state.update(draft=draft, intent={"goals": ["Produce a report comparing stages and order"]})
+    result = review_answer(runner, state)
+    assert result["outcome"] == "succeeded" and result["review"]["goal_coverage_rechecked"]
+    assert runner.model_call.call_count == 2
+
+
+def test_coverage_recheck_waits_until_missing_citations_are_repaired():
+    draft = "# Report\n\nDifferent stages, without reference."
+    initial = verdict(["context", "supported"], goals=[covered(0, 0, 1)]).model_dump()
+    runner, state = runner_for(Investigator, [initial, initial, {"goals": [covered(0, 0, 1)]}])
+    state.update(draft=draft, intent={"goals": ["Produce a comparison report"]})
+    result = review_answer(runner, state)
+    assert result["outcome"] == "succeeded" and result["review"]["citation_patch_applied"]
+    assert [c.kwargs["suffix"] for c in runner.model_call.call_args_list] == [
+        "closeout-review", "closeout-recheck", "closeout-goal-coverage"]
+
+
 @pytest.mark.parametrize("mapping", [[covered(0, 0)], [covered(0, 99)], [], [covered(0, 1), covered(0, 1)]])
 def test_invalid_coverage_repair_never_approves_title_missing_or_unknown_ids(mapping):
     draft = "## Order\n\nDifferent stages [1]."

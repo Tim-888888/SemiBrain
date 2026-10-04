@@ -155,3 +155,15 @@ def test_prefetch_allows_queue_and_extractor_time_but_remains_inside_investigati
     runner.harness.investigation_seconds = lambda: 8
     prefetch(runner, ["https://example.org/public"], "near-reserve")
     assert 0 < remaining_times[-1] <= 8
+
+
+@pytest.mark.parametrize("used,expected", [(0, 2), (2, 2), (3, 1), (4, 0), (5, 0)])
+def test_optional_prefetch_leaves_one_page_for_deliberate_primary_source_selection(used, expected):
+    calls = []
+    runner = executor(lambda name, args, identity: calls.append((name, args)) or {"status": "succeeded", "evidence": []})
+    runner.harness.check = lambda: {"budget": {"pages": used, "limits": {"pages": 5}}}
+    result = compose_search(runner, {"status": "succeeded", "data": {"provider": "bocha",
+        "sources": [{"url": f"https://example.org/{i}"} for i in range(5)]}},
+        {"query": "public knowledge", "content": True}, "primary")
+    assert len(calls) == expected and len(result["pages"]) == expected
+    assert result["data"]["prefetch_notice"]
