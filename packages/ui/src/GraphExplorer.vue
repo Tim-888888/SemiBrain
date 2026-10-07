@@ -43,10 +43,18 @@ onMounted(()=>load())
 <template>
  <div ref="shell" class="graph-explorer" :class="{'graph-expanded':expanded}" :role="expanded?'dialog':undefined" :aria-modal="expanded?'true':undefined" aria-label="工程图谱浏览" @keydown="keys">
   <div class="explorer-toolbar">
-   <form @submit.prevent="load()"><input v-model="query" aria-label="搜索图谱实体" maxlength="200" placeholder="搜索实体，例如 CP、刻蚀、探针台"/><button :disabled="busy" class="primary">搜索节点</button></form>
-   <label>实体类型<select v-model="kind" @change="load()" :disabled="busy"><option value="">全部类型</option><option v-for="(label,value) in types" :value="value" :key="value">{{label}}</option></select></label>
-   <label>每次加载<select v-model.number="limit" @change="load(mode,center)" :disabled="busy"><option :value="50">50 个</option><option :value="100">100 个</option><option :value="200">200 个</option><option :value="500">500 个</option></select></label>
-   <button :disabled="busy" @click="overview">返回概览</button><button ref="toggle" @click="fullscreen">{{expanded?'退出全屏':'全屏查看'}}</button>
+   <form class="explorer-search" @submit.prevent="load()">
+    <label class="explorer-field">搜索实体<input v-model="query" aria-label="搜索图谱实体" maxlength="200" placeholder="搜索实体，例如 CP、刻蚀、探针台"/></label>
+    <button :disabled="busy" class="primary">搜索节点</button>
+   </form>
+   <div class="explorer-filters">
+    <label class="explorer-field">实体类型<select v-model="kind" @change="load()" :disabled="busy"><option value="">全部类型</option><option v-for="(label,value) in types" :value="value" :key="value">{{label}}</option></select></label>
+    <label class="explorer-field">每次加载<select v-model.number="limit" @change="load(mode,center)" :disabled="busy"><option :value="50">50 个</option><option :value="100">100 个</option><option :value="200">200 个</option><option :value="500">500 个</option></select></label>
+   </div>
+   <div class="explorer-actions">
+    <button class="secondary" :disabled="busy" @click="overview">返回概览</button>
+    <button ref="toggle" class="secondary" @click="fullscreen">{{expanded?'退出全屏':'全屏查看'}}</button>
+   </div>
   </div>
   <p v-if="error" class="error" role="alert">{{error}} <button @click="load(mode,center)">重试</button></p>
   <div class="explorer-status" aria-live="polite"><span>{{mode==='ego'?'局部探索':'图谱概览'}} · 已展示 {{data.meta.returned}} / {{data.meta.total}} 个可见实体</span><span v-if="busy">正在加载关系与来源…</span><span v-else-if="data.meta.at_capacity">画布已达 500 个节点，可双击节点切换局部图。</span><span v-else-if="data.meta.truncated">本次范围还有 {{data.meta.remaining}} 个节点未展示</span></div>
@@ -63,5 +71,18 @@ onMounted(()=>load())
  </ResourceDrawer>
 </template>
 <style scoped>
-.graph-explorer{min-width:0}.explorer-toolbar{display:flex;align-items:end;gap:10px;flex-wrap:wrap}.explorer-toolbar form{display:flex;gap:8px;flex:1;min-width:230px}.explorer-toolbar input{width:100%;min-width:100px}.explorer-toolbar label{font-size:12px;display:grid;gap:5px;color:var(--muted)}.explorer-toolbar select{min-width:90px}.explorer-toolbar button{white-space:nowrap}.explorer-status{display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;font-size:12px;color:var(--muted);margin-top:16px}.graph-explorer :deep(.interactive-graph){margin:12px 0}.graph-explorer :deep(svg){height:clamp(480px,68vh,1000px)}.graph-expanded{position:fixed;inset:0;z-index:1900;background:var(--canvas,#f5f7fa);padding:18px 24px;display:flex;flex-direction:column;overflow:auto}.graph-expanded :deep(.interactive-graph){flex:1;min-height:300px;display:flex;flex-direction:column}.graph-expanded :deep(svg){height:auto;flex:1;min-height:240px}.empty{padding:80px 20px;text-align:center}blockquote{white-space:pre-wrap;border-left:3px solid var(--border);padding-left:12px;max-height:280px;overflow:auto}.panel-card{margin-top:14px}.panel-card h3{font-size:15px}details{overflow-wrap:anywhere}@media(max-width:700px){.graph-explorer :deep(svg){height:60vh;min-height:360px}.graph-expanded{padding:12px}.explorer-toolbar form{flex-basis:100%}}
+.graph-explorer{min-width:0;container:graph-explorer / inline-size}
+.explorer-toolbar{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap}
+.explorer-search{display:flex;align-items:flex-end;gap:8px;flex:1 1 300px;min-width:0;margin:0}
+.explorer-search .explorer-field{flex:1;min-width:0}
+.explorer-filters,.explorer-actions{display:flex;align-items:flex-end;gap:12px}
+.explorer-actions{margin-left:auto;gap:8px}
+/* Override form-label spacing locally so both workspaces share one control baseline. */
+.graph-explorer .explorer-toolbar .explorer-field{display:flex;flex-direction:column;gap:6px;margin:0;font-size:12px;line-height:18px;color:var(--muted)}
+.graph-explorer .explorer-toolbar input,.graph-explorer .explorer-toolbar select,.graph-explorer .explorer-toolbar button{box-sizing:border-box;height:40px;min-height:40px;margin:0;border-radius:8px;font-size:13px;line-height:20px}
+.explorer-toolbar input{width:100%;min-width:0}
+.explorer-toolbar select{width:112px}
+.explorer-toolbar button{flex-shrink:0;white-space:nowrap;padding:9px 15px}
+@container graph-explorer (max-width:860px){.explorer-search{flex-basis:100%}}
+.explorer-status{display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;font-size:12px;color:var(--muted);margin-top:16px}.graph-explorer :deep(.interactive-graph){margin:12px 0}.graph-explorer :deep(svg){height:clamp(480px,68vh,1000px)}.graph-expanded{position:fixed;inset:0;z-index:1900;background:var(--canvas,#f5f7fa);padding:18px 24px;display:flex;flex-direction:column;overflow:auto}.graph-expanded :deep(.interactive-graph){flex:1;min-height:300px;display:flex;flex-direction:column}.graph-expanded :deep(svg){height:auto;flex:1;min-height:240px}.empty{padding:80px 20px;text-align:center}blockquote{white-space:pre-wrap;border-left:3px solid var(--border);padding-left:12px;max-height:280px;overflow:auto}.panel-card{margin-top:14px}.panel-card h3{font-size:15px}details{overflow-wrap:anywhere}@media(max-width:700px){.graph-explorer :deep(svg){height:60vh;min-height:360px}.graph-expanded{padding:12px}}
 </style>
