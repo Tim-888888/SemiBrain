@@ -92,6 +92,10 @@ function up(event:PointerEvent,cancelled=false){
     if(event.shiftKey){if(!props.expandDisabled)emit('expand',finished.id);return}
     if(clickTimer)clearTimeout(clickTimer)
     clickTimer=setTimeout(()=>choose(finished.id),230)
+  }else if(!finished.id && !finished.moved && !cancelled){
+    // A background tap clears emphasis; a pan or cancelled gesture preserves it.
+    if(clickTimer)clearTimeout(clickTimer)
+    selected.value='';hovered.value=''
   }
 }
 function explore(id:string){if(clickTimer)clearTimeout(clickTimer);emit('explore',id)}
@@ -117,7 +121,7 @@ onUnmounted(()=>{disposed=true;stop();observer?.disconnect();if(clickTimer)clear
       </g>
     </g>
   </svg>
-  <div class="graph-caption"><span>拖动节点会推开邻近节点 · 拖空白平移 · 聚焦后滚轮缩放 · 点击查看来源 · 双击局部探索</span><details><summary>实体列表（{{nodes.length}}）</summary><button v-for="node in nodes" :key="node.id" class="text-button" @click="choose(node.id)">{{node.name}}</button></details></div>
+  <div class="graph-caption"><span>拖动节点会推开邻近节点 · 拖空白平移 · 单击空白取消高亮 · 聚焦后滚轮缩放 · 点击查看来源 · 双击局部探索</span><details><summary>实体列表（{{nodes.length}}）</summary><button v-for="node in nodes" :key="node.id" class="text-button" @click="choose(node.id)">{{node.name}}</button></details></div>
 </div>
 </template>
 <style scoped>
