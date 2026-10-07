@@ -4,6 +4,17 @@ from semibrain_business.security import db
 
 
 def initialize():
+    migrate(db(), "graph-extraction-001", [
+        ("graph_extraction_jobs", [("input_key", 1)], {}),
+        ("graph_extraction_jobs", [("status", 1), ("ready_at", 1)], {}),
+        ("graph_extraction_jobs", [("document_id", 1), ("version", 1)], {}),
+        ("graph_extraction_jobs", [("created_at", -1), ("_id", -1)], {}),
+        ("graph_candidates", [("status", 1), ("created_at", -1), ("_id", -1)], {}),
+        ("graph_decisions", [("document_id", 1)], {}),
+        ("graph_entities", [("kind", 1), ("normalized_names", 1)], {}),
+        ("graph_edges", [("subject_id", 1), ("enabled", 1)], {}),
+        ("graph_edges", [("object_id", 1), ("enabled", 1)], {}),
+    ])
     migrate(db(), "e-exports-001", [
         ("report_exports", [("request_key", 1)], {"unique": True}),
         ("report_exports", [("status", 1), ("lease_until", 1)], {}),

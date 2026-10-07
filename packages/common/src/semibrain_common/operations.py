@@ -20,10 +20,10 @@ from semibrain_common.runtime import (
     transaction,
 )
 
-QUEUES = {"agent": ["runs"], "business": ["tool_jobs", "ingestion_jobs", "report_exports"], "conversation": []}
+QUEUES = {"agent": ["runs"], "business": ["tool_jobs", "ingestion_jobs", "report_exports", "graph_extraction_jobs"], "conversation": []}
 
 
-def admission(db, collection, query, update):
+def admission(db, collection, query, update, **options):
     """Serialize a new claim against drain, while admitted work continues normally."""
     def claim(session):
         db.queue_control.update_one({"_id": "admission"},
@@ -33,7 +33,7 @@ def admission(db, collection, query, update):
         if not gate.matched_count:
             return None
         return db[collection].find_one_and_update(query, update,
-            return_document=ReturnDocument.AFTER, session=session)
+            return_document=ReturnDocument.AFTER, session=session, **options)
     return transaction(claim)
 
 

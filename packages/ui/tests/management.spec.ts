@@ -30,7 +30,7 @@ function response(path:string):any {
   if(path==='/admin/v1/skills')return skills
   if(path==='/admin/v1/mcp')return {revision:1,policy:{mode:'selected',selected:[],services:[]},endpoints:[{ref:'approved',ready:true}],catalogs:[],recent:[]}
   if(path==='/admin/v1/agent-configuration')return {revision:1,active:{version:'baseline',settings},builtin:{version:'baseline'},model_choices:['demo'],versions:[]}
-  if(path==='/v1/graph/catalog')return {entities:[],edges:[],revision:1,configured:true}
+  if(path.startsWith('/v1/graph/catalog'))return {entities:[],edges:[],revision:1,configured:true,next_cursor:null}
   if(path==='/v1/memories')return {items:[],enabled:true,revision:1}
   if(path==='/admin/v1/evaluations')return {summary:{run_count:0,human_label_count:0,grounding_supported_rate:null,grounding_checked_count:0,action_macro_f1:null,p95_elapsed_ms:null},items:[]}
   if(path==='/admin/v1/search')return {revision:1,policy:{providers:{bocha:{enabled:true,daily_limit:null}},order:['bocha'],timeout_seconds:10},providers:[{name:'bocha',credential_configured:true,requests_today:0}],recent:[]}

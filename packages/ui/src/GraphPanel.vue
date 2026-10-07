@@ -4,8 +4,10 @@ import { computed, onMounted, ref } from 'vue'
 import { api, post } from './api'
 import MarkdownAnswer from './MarkdownAnswer.vue'
 import GraphCanvas from './GraphCanvas.vue'
+import GraphExtractionPanel from './GraphExtractionPanel.vue'
 import ResourceDrawer from './ResourceDrawer.vue'
 const detailOpen=ref(false), detailId=ref('')
+const extractionOpen=ref(false), graphCursor=ref<string|null>(null)
 const detailEdges=computed(()=>catalog.value.edges.filter((e:any)=>canonical(e.subject_id)===detailId.value || canonical(e.object_id)===detailId.value))
 const visualEdges=computed(()=>links.value.map((e:any)=>({...e,subject_id:canonical(e.subject_id),object_id:canonical(e.object_id)})))
 function inspect(id:string){detailId.value=id;detailOpen.value=true}
@@ -16,7 +18,7 @@ const loaded=ref(false)
 const busy = ref(false), error = ref(''), notice = ref(''), query = ref(''), result = ref<any>(null)
 const edit = ref(false), form = ref<any>({}), from = ref(''), to = ref(''), reason = ref('')
 const types:Record<string,string> = {product:'产品',process:'工序',equipment:'设备',chamber:'腔体',defect:'缺陷',alarm:'告警',sop:'SOP',action:'维护动作',concept:'概念'}
-const relations:Record<string,string> = {applies_to:'适用于',occurs_in:'发生于',references:'引用',recommended_action:'处理建议',precedes:'先于',cooccurs:'共现／相关',validated_cause:'经验证的因果'}
+const relations:Record<string,string> = {applies_to:'适用于',occurs_in:'发生于',references:'引用',recommended_action:'处理建议',precedes:'先于',cooccurs:'共现／相关',validated_cause:'经验证的因果',uses:'使用',part_of:'组成部分',is_a:'属于类型',produces:'产生',measures:'测量'}
 const nodes = computed(() => {
   const active = new Set(catalog.value.edges.filter((e:any) => e.effective)
     .flatMap((e:any) => [canonical(e.subject_id), canonical(e.object_id)]))
@@ -25,8 +27,10 @@ const nodes = computed(() => {
 const links = computed(() => catalog.value.edges.filter((e:any) => e.effective && nodes.value.some((n:any) => n.id === canonical(e.subject_id)) && nodes.value.some((n:any) => n.id === canonical(e.object_id))))
 function entity(id:string) { return catalog.value.entities.find((n:any) => n.id === id) }
 function canonical(id:string) { return entity(id)?.canonical_id || id }
-async function load() {
-  catalog.value = await api('/v1/graph/catalog')
+async function load(append=false) {
+  const data = await api('/v1/graph/catalog?query='+encodeURIComponent(query.value)+(append&&graphCursor.value?'&before='+encodeURIComponent(graphCursor.value):''))
+  catalog.value = append?{...data,edges:[...catalog.value.edges,...data.edges],entities:[...new Map([...catalog.value.entities,...data.entities].map((e:any)=>[e.id,e])).values()]}:data
+  graphCursor.value=data.next_cursor
   if (props.manage) docs.value = (await documentCatalog()).items.filter((d:any) => d.active_version)
   loaded.value=true
 }
@@ -50,18 +54,20 @@ async function toggle(edge:any) { await act(async () => {
 }) }
 async function rebuild() { await act(async () => { await post('/admin/v1/graph/rebuild',{request_id:crypto.randomUUID(),expected_revision:catalog.value.revision});await load();notice.value='图谱投影已重建。' }) }
 async function merge() { await act(async () => { await post('/admin/v1/graph/merge',{request_id:crypto.randomUUID(),expected_revision:catalog.value.revision,source_id:from.value,target_id:to.value,reason:reason.value});await load();notice.value='实体已合并，原始名称和映射仍保留。请重建图谱投影。' }) }
-async function search() { await act(async () => { result.value=await post('/v1/graph/search',{query:query.value,depth:2,top_k:5}) }) }
+async function search() { await act(async () => { await load();result.value=await post('/v1/graph/search',{query:query.value,depth:2,top_k:5}) }) }
 onMounted(() => act(load))
 </script>
 <template>
   <section class="resource-panel">
-    <div class="page-title"><div><h1>工程知识图谱</h1><p class="muted">沿实体关系查找原文。共现、相关和处理建议不等同于已证明的因果。</p></div><button v-if="manage" class="primary" :disabled="busy" @click="create">登记关系</button></div>
+    <div class="page-title"><div><h1>工程知识图谱</h1><p class="muted">沿实体关系查找原文。共现、相关和处理建议不等同于已证明的因果。</p></div><div v-if="manage" class="form-row"><button class="primary" :disabled="busy" @click="extractionOpen=true">自动构建</button><button :disabled="busy" @click="create">登记关系</button></div></div>
+    <GraphExtractionPanel v-if="manage" v-model:open="extractionOpen" :documents="docs" @changed="act(()=>load())"/>
     <p v-if="error" class="error" role="alert">{{ error }}</p><p v-if="notice" role="status">{{ notice }}</p>
     <p v-if="!loaded && busy" class="loading-state">正在读取图谱与来源…</p><template v-if="loaded"><p class="small muted">{{ catalog.configured ? '图谱已配置' : '图谱未配置，查询使用文本检索' }} · 关系版本 {{ catalog.revision }} · 投影版本 {{ catalog.projected_revision }} <button v-if="manage" class="text-button" :disabled="busy || !catalog.configured" @click="rebuild">重建投影</button></p>
     <form class="form-row" @submit.prevent="search"><input aria-label="图谱查询" v-model="query" maxlength="200" placeholder="输入工序、设备或缺陷名称" required/><button class="primary" :disabled="busy">查找关联原文</button></form>
     <GraphCanvas v-if="nodes.length" :nodes="nodes" :edges="visualEdges" :types="types" :relations="relations" @select="inspect"/>
     <p v-else class="muted">尚无可见的有效关系，可继续使用文本检索。</p>
     <p class="small muted">当前展示 {{nodes.length}} 个授权实体，上限 30；关系类型与出处见下表。</p>
+    <p class="small muted">输入实体名称可查看相关局部图谱。<button v-if="query" @click="query='';act(()=>load())">返回图谱概览</button><button v-if="graphCursor" :disabled="busy" @click="act(()=>load(true))">加载更多关系</button></p>
     <ResourceDrawer v-model="detailOpen" :title="entity(detailId)?.name || '实体详情'" width="620px"><p class="muted">{{types[entity(detailId)?.kind] || '实体'}} · {{detailEdges.length}} 条已授权关系</p><article v-for="edge in detailEdges" :key="edge.id" class="panel-card"><h3>{{entity(edge.subject_id)?.name}} → {{entity(edge.object_id)?.name}}</h3><p><span class="status-pill">{{relations[edge.relation]}}</span> · {{edge.effective ? '有效' : '当前不可用于检索'}}</p><blockquote>{{edge.quote}}</blockquote><p v-if="edge.verification_note">{{edge.verification_note}}</p><details><summary>来源与版本</summary><p class="small">文档 {{edge.document_id}} · 版本 {{edge.version}}</p></details></article><p v-if="!detailEdges.length">暂无可见的关联来源。</p></ResourceDrawer>
     <ResourceDrawer v-model="edit" title="登记有来源的关系" :snapshot="form" :busy="busy" :error="error"><form id="graph-editor" @submit.prevent="save"><h2>登记有来源的关系</h2><fieldset :disabled="busy"><div class="form-row"><label>起点名称<input v-model="form.subject.name" maxlength="120" required/></label><label>起点类型<select v-model="form.subject.kind"><option v-for="(label,key) in types" :value="key">{{ label }}</option></select></label><label>终点名称<input v-model="form.object.name" maxlength="120" required/></label><label>终点类型<select v-model="form.object.kind"><option v-for="(label,key) in types" :value="key">{{ label }}</option></select></label></div>
       <label>关系类型<select v-model="form.relation"><option v-for="(label,key) in relations" :value="key">{{ label }}</option></select></label>

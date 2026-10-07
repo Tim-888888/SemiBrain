@@ -297,6 +297,16 @@ def call(service: str, method: str, path: str, *, delegation=None, timeout=30, *
     url = os.environ[f"SEMIBRAIN_{service.upper()}_URL"] + path
     response = internal_http_client().request(method, url, headers=headers, timeout=timeout, **kwargs)
     if response.status_code >= 400:
+        if path.startswith("/internal/v1/graph"):
+            try:
+                code = response.json().get("detail", {}).get("code")
+            except (ValueError, AttributeError):
+                code = None
+            if code in {"GRAPH_MODEL_UNAVAILABLE", "GRAPH_EXTRACTION_INVALID", "GRAPH_MODEL_FAILED",
+                        "GRAPH_JOB_STOPPED", "GRAPH_JOB_BINDING_INVALID", "GRAPH_JOB_UNAVAILABLE",
+                        "GRAPH_JOB_STATE_CONFLICT", "GRAPH_REVIEW_CONFLICT", "GRAPH_ALIAS_CONFLICT",
+                        "GRAPH_SOURCE_UNAVAILABLE", "CAUSAL_VERIFICATION_REQUIRED"}:
+                failure(code, response.status_code)
         if (service == "business" and method == "POST"
                 and path.startswith("/internal/v1/knowledge/documents/")
                 and path.endswith(("/republish", "/reprocess", "/publish", "/edit", "/rollback"))):

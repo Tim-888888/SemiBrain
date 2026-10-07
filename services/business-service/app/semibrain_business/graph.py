@@ -56,10 +56,8 @@ def source(row, claim):
     return document, chunk
 
 
-def authorized_edges(claim):
-    rows = list(db().graph_edges.find({"enabled": True}).limit(5001))
-    if len(rows) > 5000:
-        failure("GRAPH_SCOPE_TOO_WIDE", 422)
+def authorized_edges(claim, edge_query=None):
+    rows = list(db().graph_edges.find(edge_query or {"enabled": True}).limit(5000))
     eligible = []
     for row in rows:
         try:
@@ -135,6 +133,8 @@ def save_edge(form: GraphEdge, request: Request):
             failure("GRAPH_EDGE_NOT_FOUND", 404)
         if old:
             authorized_document(old["document_id"], claim)
+            from semibrain_business.graph_extraction import protect_edge
+            protect_edge(old, session=session)
         # Fence publication/revocation races in the same Mongo transaction.
         changed = db().documents.update_one(
             {"_id": value["document_id"], "active_version": value["version"], "revoked": False},
@@ -149,7 +149,8 @@ def save_edge(form: GraphEdge, request: Request):
             ids.append(eid)
             db().graph_entities.update_one(
                 {"_id": eid},
-                {"$setOnInsert": {**item.model_dump(), "created_at": now()}},
+                {"$setOnInsert": {**item.model_dump(), "created_at": now()},
+                 "$addToSet": {"normalized_names": unicodedata.normalize("NFKC", item.name).casefold().strip()}},
                 upsert=True,
                 session=session,
             )
@@ -161,11 +162,14 @@ def save_edge(form: GraphEdge, request: Request):
                 "subject_id": ids[0],
                 "object_id": ids[1],
                 "revision": form.expected_revision + 1,
+                "origin": "manual", "human_locked": True,
                 "updated_at": now(),
             },
             upsert=True,
             session=session,
         )
+        from semibrain_business.graph_extraction import protect_edge
+        protect_edge({"_id": identity, **value, "subject_id": ids[0], "object_id": ids[1]}, session=session)
         return {"edge_id": identity}
 
     return command(form, claim, "save_edge", write)
@@ -189,10 +193,12 @@ def change_edge_state(form: GraphEdgeState, request: Request):
             )
             if not changed.matched_count:
                 failure("SOURCE_VERSION_UNAVAILABLE", 403)
+        from semibrain_business.graph_extraction import protect_edge
+        protect_edge(row, session=session)
         db().graph_edges.update_one(
             {"_id": row["_id"]},
             {"$set": {"enabled": form.enabled, "revision": form.expected_revision + 1,
-                      "updated_at": now()}}, session=session,
+                      "updated_at": now(), "human_locked": True}}, session=session,
         )
         return {"edge_id": row["_id"], "enabled": form.enabled}
 
@@ -223,6 +229,9 @@ def merge(form: GraphMerge, request: Request):
         db().graph_entities.update_one(
             {"_id": src}, {"$set": {"merged_into": target, "merged_at": now()}}, session=session
         )
+        db().graph_entities.update_one({"_id": target}, {"$addToSet": {"normalized_names": {"$each":
+            list({unicodedata.normalize("NFKC", entities[src]["name"]).casefold().strip(),
+                  *entities[src].get("normalized_names", [])})}}}, session=session)
         return {"source_id": src, "target_id": target}
 
     return command(form, claim, "merge", write)
@@ -267,19 +276,30 @@ def rebuild(form: GraphCommand, request: Request):
 
 
 @router.get("/internal/v1/graph/catalog")
-def catalog(request: Request):
+def catalog(request: Request, before: str = "", query: str = ""):
     claim = authorize_request(request, "knowledge.read")
-    rows = authorized_edges(claim)
-    effective = {r["_id"] for r in rows}
-    if claim["role"] == "admin":
-        rows = []
-        for row in db().graph_edges.find({}).limit(5000):
+    filters = {"_id": {"$gt": before}} if before else {}
+    if len(query) > 200 or len(before) > 80:
+        failure("INVALID_ARGUMENT", 422)
+    if query.strip():
+        names = matching_entities(query)
+        filters["$or"] = [{"subject_id": {"$in": names}}, {"object_id": {"$in": names}}]
+    page = list(db().graph_edges.find(filters).sort("_id", 1).limit(201))
+    rows, effective = [], set()
+    for row in page[:200]:
+        try:
+            authorized_document(row["document_id"], claim)
             try:
-                authorized_document(row["document_id"], claim)
-                rows.append(row)
+                source(row, claim)
+                effective.add(row["_id"])
             except HTTPException as exc:
                 if exc.status_code != 403:
                     raise
+            if row["_id"] in effective or claim["role"] == "admin":
+                rows.append(row)
+        except HTTPException as exc:
+            if exc.status_code != 403:
+                raise
     entities = {r["_id"]: r for r in db().graph_entities.find({})}
     ids = {r[k] for r in rows for k in ("subject_id", "object_id")}
     ids |= {resolve(eid, entities) for eid in ids}
@@ -287,6 +307,7 @@ def catalog(request: Request):
         "revision": state()["revision"],
         "configured": projection.configured(),
         "projected_revision": state().get("projected_revision", -1),
+        "next_cursor": page[199]["_id"] if len(page) > 200 else None,
         "entities": [
             {
                 "id": eid,
@@ -303,17 +324,43 @@ def catalog(request: Request):
     }
 
 
+def matching_entities(query):
+    normalized = unicodedata.normalize("NFKC", query).casefold().strip()
+    entities = list(db().graph_entities.find({}))
+    matches = [e["_id"] for e in entities if any(
+        name and (normalized in name or name in normalized)
+        for name in [unicodedata.normalize("NFKC", e["name"]).casefold(),
+                     *e.get("normalized_names", [])])][:200]
+    return list(expand_mappings(matches, {e["_id"]: e for e in entities}))
+
+
+def expand_mappings(ids, entities):
+    targets = {resolve(eid, entities) for eid in ids if eid in entities}
+    return {eid for eid in entities if resolve(eid, entities) in targets}
+
+
 def graph_search(form, claim):
-    rows = authorized_edges(claim)
+    # Bound the neighborhood, not the total graph. Unrelated large graphs do not
+    # disable retrieval for a small engineering topic.
+    entities = {r["_id"]: r for r in db().graph_entities.find({})}
+    initial = set(matching_entities(form.query))
+    adjacent, rows = initial, []
+    for _ in range(form.depth):
+        if not adjacent:
+            break
+        local = authorized_edges(claim, {"enabled": True, "$or": [
+            {"subject_id": {"$in": list(adjacent)}}, {"object_id": {"$in": list(adjacent)}}]})
+        rows.extend(local)
+        adjacent |= {r[k] for r in local for k in ("subject_id", "object_id")}
+        adjacent = expand_mappings(adjacent, entities)
+    rows = list({r["_id"]: r for r in rows}.values())
     entities = {r["_id"]: r for r in db().graph_entities.find({})}
     eligible = {r["_id"]: r for r in rows}
-    query = unicodedata.normalize("NFKC", form.query).casefold()
     seeds = {
         resolve(r[k], entities)
         for r in rows
         for k in ("subject_id", "object_id")
-        if query in unicodedata.normalize("NFKC", entities[r[k]]["name"]).casefold()
-        or unicodedata.normalize("NFKC", entities[r[k]]["name"]).casefold() in query
+        if r[k] in initial
     }
     status = state()
     reason = "GRAPH_NO_MATCH"

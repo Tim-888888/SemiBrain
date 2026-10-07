@@ -32,6 +32,7 @@ class GraphEdge(GraphCommand):
         "precedes",
         "cooccurs",
         "validated_cause",
+        "uses", "part_of", "is_a", "produces", "measures",
     ]
     document_id: UUID
     version: UUID
