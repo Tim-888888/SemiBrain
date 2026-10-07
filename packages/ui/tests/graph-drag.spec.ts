@@ -31,6 +31,18 @@ async function move(x:number,y:number){await pointer(wrapper.find('svg').element
 async function end(type='pointerup'){await pointer(wrapper.find('svg').element,type)}
 function gap(){const a=position(0),b=position(1);return Math.hypot(a.x-b.x,a.y-b.y)}
 describe('graph pointer and simulation lifecycle',()=>{
+  it('keeps an exploring graph in view while settling and respects manual zoom',async()=>{
+    wrapper=mount(GraphCanvas,{props:{...props,layoutKey:1,nodes:Array.from({length:100},(_,i)=>({id:String(i),name:String(i),kind:'process'})),edges:[]}})
+    await nextTick()
+    for(let tick=0;tick<6;tick++){
+      await advance(1)
+      const [px,py,z]=wrapper.find('svg > g').attributes('transform').match(/-?\d+(?:\.\d+)?(?:e[+-]?\d+)?/g)!.map(Number)
+      for(let i=0;i<100;i++){const p=position(i);expect(p.x*z+px).toBeGreaterThan(0);expect(p.x*z+px).toBeLessThan(840);expect(p.y*z+py).toBeGreaterThan(0);expect(p.y*z+py).toBeLessThan(440)}
+    }
+    await wrapper.find('[aria-label="放大图谱"]').trigger('click')
+    const manual=wrapper.find('svg > g').attributes('transform')
+    await advance(5);expect(wrapper.find('svg > g').attributes('transform')).toBe(manual)
+  })
   it('wakes a settled graph, keeps the dragged center fixed and stops again after release',async()=>{
     await create();await advance(200);expect(frames.size).toBe(0)
     const a=position(0),b=position(1)

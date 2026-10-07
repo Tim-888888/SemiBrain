@@ -19,7 +19,7 @@ def visible_snapshot(claim):
     # introduce an entity; reading entities before the edge cursor can miss it.
     raw_rows = list(db().graph_edges.find({"enabled": True}))
     entities = {r["_id"]: r for r in db().graph_entities.find({})}
-    documents, chunks, rows = {}, {}, []
+    documents, chunks, rows, aliases = {}, {}, [], {}
     for row in raw_rows:
         if row.get("valid_until") and row["valid_until"] <= now():
             continue
@@ -43,10 +43,14 @@ def visible_snapshot(claim):
         a, b = (graph.resolve(row[k], entities) for k in ("subject_id", "object_id"))
         if a == b:
             continue
+        for key, target in (("subject_id", a), ("object_id", b)):
+            # Only aliases actually backed by this reader's authorized edges.
+            aliases.setdefault(target, set()).add(entities[row[key]]["name"])
         rows.append({**{k: v for k, v in row.items() if k != "_id"}, "id": row["_id"],
                      "subject_id": a, "object_id": b, "effective": True,
                      "source_title": document["title"], "data_origin": document.get("data_origin", "")})
-    return entities, rows
+    return {eid: {**n, "search_names": sorted(aliases.get(eid, set()))}
+            for eid, n in entities.items()}, rows
 
 
 def slice_graph(entities, rows, form):
@@ -83,8 +87,9 @@ def slice_graph(entities, rows, form):
         selected.update(additions[:min(form.limit, MAX_VISIBLE - len(selected))])
     else:
         query = unicodedata.normalize("NFKC", form.query).casefold().strip()
-        candidates = sorted((eid for eid in ids if not query or query in
-                             unicodedata.normalize("NFKC", entities[eid]["name"]).casefold()), key=rank)
+        candidates = sorted((eid for eid in ids if not query or any(
+            query in unicodedata.normalize("NFKC", name).casefold()
+            for name in [entities[eid]["name"], *entities[eid].get("search_names", [])])), key=rank)
         selected = set(candidates[:form.limit])
     edges = [r for r in rows if r["subject_id"] in selected and r["object_id"] in selected]
     return {

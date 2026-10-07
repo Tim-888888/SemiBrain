@@ -16,6 +16,26 @@ from semibrain_conversation.auth import current_user
 from semibrain_conversation.main import app
 
 
+def test_complete_entity_name_does_not_seed_a_shorter_acronym(graph_fixture):
+    _, _, _, store, _, _, _ = graph_fixture
+    store.graph_entities.find.return_value = [
+        {"_id": "test", "name": "CP晶圆测试", "kind": "process", "normalized_names": ["cp"]},
+        {"_id": "index", "name": "Cp过程能力指数", "kind": "concept"},
+    ]
+    assert set(graph.matching_entities("Cp过程能力指数")) == {"index"}
+    assert set(graph.matching_entities("CP晶圆测试")) == {"test"}
+    assert set(graph.matching_entities("比较CP晶圆测试和Cp过程能力指数")) == {"test", "index"}
+
+
+def test_exact_alias_includes_merged_sources(graph_fixture):
+    _, _, _, store, _, _, _ = graph_fixture
+    store.graph_entities.find.return_value = [
+        {"_id": "english", "name": "Prober", "kind": "equipment", "merged_into": "cn"},
+        {"_id": "cn", "name": "探针台", "kind": "equipment"},
+    ]
+    assert set(graph.matching_entities("Prober")) == {"english", "cn"}
+
+
 @pytest.fixture
 def graph_fixture(monkeypatch):
     document = {

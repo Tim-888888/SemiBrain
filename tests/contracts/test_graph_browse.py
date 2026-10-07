@@ -30,6 +30,31 @@ def test_overview_ranks_connectivity_and_exposes_real_hidden_neighbors():
     assert len(result["edges"]) == 9
 
 
+def test_merged_search_alias_requires_an_authorized_source(monkeypatch):
+    store = SimpleNamespace(graph_entities=Mock(), graph_edges=Mock(), chunks=Mock())
+    store.graph_entities.find.return_value = [
+        {"_id": eid(0), "name": "探针台", "kind": "equipment", "normalized_names": ["secret alias"]},
+        {"_id": eid(1), "name": "CP晶圆测试", "kind": "process"},
+        {"_id": eid(2), "name": "Prober", "kind": "equipment", "merged_into": eid(0)},
+        {"_id": eid(3), "name": "secret alias", "kind": "equipment", "merged_into": eid(0)},
+    ]
+    store.graph_edges.find.return_value = [
+        {"_id": "public", "subject_id": eid(2), "object_id": eid(1), "document_id": "public", "version": "v", "chunk_id": "c", "quote": "original"},
+        {"_id": "private", "subject_id": eid(3), "object_id": eid(1), "document_id": "private", "version": "v", "chunk_id": "c", "quote": "original"},
+    ]
+    def authorize(identity, *args, **kwargs):
+        if identity == "private":
+            raise HTTPException(403)
+        return {"title": "public"}
+    store.chunks.find_one.return_value = {"text": "original"}
+    monkeypatch.setattr(view, "db", lambda: store)
+    monkeypatch.setattr(view, "authorized_document", authorize)
+    nodes, rows = view.visible_snapshot({})
+    result = view.slice_graph(nodes, rows, GraphBrowse(query="Prober"))
+    assert [n["id"] for n in result["entities"]] == [eid(0)]
+    assert not view.slice_graph(nodes, rows, GraphBrowse(query="secret alias"))["entities"]
+
+
 def test_incremental_expansion_reauthorizes_existing_ids_and_progresses_past_first_page():
     nodes, rows = star(70)
     visible = [eid(0), eid(999)]

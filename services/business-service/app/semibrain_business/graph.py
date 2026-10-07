@@ -327,11 +327,14 @@ def catalog(request: Request, before: str = "", query: str = ""):
 def matching_entities(query):
     normalized = unicodedata.normalize("NFKC", query).casefold().strip()
     entities = list(db().graph_entities.find({}))
-    matches = [e["_id"] for e in entities if any(
+    names = {e["_id"]: [unicodedata.normalize("NFKC", e["name"]).casefold().strip(),
+                         *e.get("normalized_names", [])] for e in entities}
+    # A complete entity name is more specific than an acronym contained in it.
+    exact = [eid for eid, aliases in names.items() if normalized in aliases]
+    matches = exact or [e["_id"] for e in entities if any(
         name and (normalized in name or name in normalized)
-        for name in [unicodedata.normalize("NFKC", e["name"]).casefold(),
-                     *e.get("normalized_names", [])])][:200]
-    return list(expand_mappings(matches, {e["_id"]: e for e in entities}))
+        for name in names[e["_id"]])]
+    return list(expand_mappings(matches[:200], {e["_id"]: e for e in entities}))
 
 
 def expand_mappings(ids, entities):

@@ -24,6 +24,7 @@ function animate(){
   frame=0
   if(disposed)return
   const speed=step()
+  if(autoFit)frameView()
   if(tick<MAX_TICKS && (tick<45 || speed>.035))frame=requestAnimationFrame(animate)
   else if(autoFit){autoFit=false;fit()}
 }
@@ -56,7 +57,8 @@ function sync(){
   if(!next[hovered.value])hovered.value=''
   wake()
 }
-function fit(){stop();const pts=Object.values(positions.value);if(!pts.length)return;const minX=Math.min(...pts.map(p=>p.x))-70,maxX=Math.max(...pts.map(p=>p.x))+70,minY=Math.min(...pts.map(p=>p.y))-35,maxY=Math.max(...pts.map(p=>p.y))+55;zoom.value=Math.max(.1,Math.min(2,Math.min((viewport.value.width-40)/(maxX-minX),(viewport.value.height-40)/(maxY-minY))));pan.value={x:center.value.x-(minX+maxX)/2*zoom.value,y:center.value.y-(minY+maxY)/2*zoom.value}}
+function frameView(){const pts=Object.values(positions.value);if(!pts.length)return;const minX=Math.min(...pts.map(p=>p.x))-70,maxX=Math.max(...pts.map(p=>p.x))+70,minY=Math.min(...pts.map(p=>p.y))-35,maxY=Math.max(...pts.map(p=>p.y))+55;zoom.value=Math.max(.1,Math.min(2,Math.min((viewport.value.width-40)/(maxX-minX),(viewport.value.height-40)/(maxY-minY))));pan.value={x:center.value.x-(minX+maxX)/2*zoom.value,y:center.value.y-(minY+maxY)/2*zoom.value}}
+function fit(){stop();frameView()}
 function local(event:PointerEvent|WheelEvent){const matrix=svg.value?.getScreenCTM();if(!matrix)return {x:0,y:0};const p=new DOMPoint(event.clientX,event.clientY).matrixTransform(matrix.inverse());return {x:p.x,y:p.y}}
 function down(event:PointerEvent,id=''){
   if(event.button!==0 || drag)return
@@ -92,7 +94,7 @@ function up(event:PointerEvent,cancelled=false){
 }
 function explore(id:string){if(clickTimer)clearTimeout(clickTimer);emit('explore',id)}
 function choose(id:string){selected.value=id;emit('select',id)}
-function scale(factor:number,at=center.value){const before=zoom.value,after=Math.min(3,Math.max(.1,before*factor));pan.value={x:at.x-(at.x-pan.value.x)*after/before,y:at.y-(at.y-pan.value.y)*after/before};zoom.value=after}
+function scale(factor:number,at=center.value){autoFit=false;const before=zoom.value,after=Math.min(3,Math.max(.1,before*factor));pan.value={x:at.x-(at.x-pan.value.x)*after/before,y:at.y-(at.y-pan.value.y)*after/before};zoom.value=after}
 function wheel(event:WheelEvent){if(document.activeElement!==svg.value && !event.ctrlKey && !event.metaKey)return;event.preventDefault();scale(event.deltaY<0?1.1:1/1.1,local(event))}
 function key(event:KeyboardEvent){if(event.key==='+' || event.key==='='){event.preventDefault();scale(1.2)}else if(event.key==='-'){event.preventDefault();scale(1/1.2)}else if(event.key==='0'){event.preventDefault();fit()}}
 watch(()=>[props.layoutKey,JSON.stringify([props.nodes.map(n=>n.id),props.edges.map(e=>[e.subject_id,e.object_id])])],(value,old)=>{if(value[0]!==old?.[0])layout();else sync()})
