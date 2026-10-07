@@ -1,0 +1,237 @@
+/* Workspace chrome follows the admin theme. Keep answer Markdown and scrolling
+   behavior in their existing components; scope these rules to the user surface. */
+.workspace:not(.admin-workspace) {
+  background: var(--canvas);
+  color: var(--ink);
+}
+
+.workspace:not(.admin-workspace) .sidebar {
+  background: var(--surface);
+  border-color: var(--border);
+  padding: 24px 14px 12px;
+}
+.workspace:not(.admin-workspace) .sidebar .wordmark {
+  padding: 0 12px;
+  margin-bottom: 24px;
+  font-size: 23px;
+  white-space: nowrap;
+}
+.workspace:not(.admin-workspace) .sidebar .brand-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.workspace:not(.admin-workspace) .new-chat {
+  min-height: 40px;
+  padding: 9px 13px;
+  margin-bottom: 16px;
+  border: 1px solid var(--accent);
+  border-radius: var(--control-radius);
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+}
+.workspace:not(.admin-workspace) .new-chat:hover { background: #106454; }
+.workspace:not(.admin-workspace) .sidebar nav { gap: 0; }
+.workspace:not(.admin-workspace) .sidebar nav button {
+  gap: 11px;
+  padding: 10px 13px;
+  margin: 3px 0;
+  border-radius: var(--control-radius);
+  color: var(--nav-text);
+  font-size: 13px;
+}
+.workspace:not(.admin-workspace) .sidebar nav button:hover,
+.workspace:not(.admin-workspace) .history button:hover {
+  background: var(--nav-hover);
+  color: #1c665b;
+}
+.workspace:not(.admin-workspace) .sidebar nav button.active,
+.workspace:not(.admin-workspace) .history button.selected {
+  background: var(--nav-selected);
+  color: var(--nav-selected-text);
+  font-weight: 600;
+}
+.workspace:not(.admin-workspace) .history {
+  flex: 1;
+  margin-top: 24px;
+  padding-bottom: 12px;
+  scrollbar-width: thin;
+}
+.workspace:not(.admin-workspace) .history .eyebrow {
+  padding: 0 12px;
+  margin-bottom: 7px;
+  color: #8894a0;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: .8px;
+}
+.workspace:not(.admin-workspace) .history button {
+  border-radius: var(--control-radius);
+  color: var(--nav-text);
+  font-size: 13px;
+}
+.workspace:not(.admin-workspace) .sidebar-bottom {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  background: var(--surface);
+}
+.workspace:not(.admin-workspace) .admin-link {
+  padding: 8px 12px;
+  border: 0;
+  color: var(--nav-text);
+  font-size: 12px;
+}
+.workspace:not(.admin-workspace) .profile { padding: 8px 10px 0; }
+.workspace:not(.admin-workspace) .profile strong { font-size: 13px; }
+.workspace:not(.admin-workspace) .profile small { font-size: 11px; }
+.workspace:not(.admin-workspace) .topbar {
+  height: 64px;
+  padding: 0 28px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--nav-text);
+  font-size: 13px;
+  gap: 12px;
+}
+.workspace:not(.admin-workspace) .workspace-tag {
+  background: #f1f7f4;
+  color: #547a6e;
+  font-size: 11px;
+}
+.workspace:not(.admin-workspace) .resource-panel {
+  max-width: 1480px;
+  padding: 28px 32px 48px;
+}
+.workspace:not(.admin-workspace) .resource-panel > .page-title {
+  align-items: flex-start;
+  margin-bottom: 24px;
+}
+.workspace:not(.admin-workspace) .resource-panel > .page-title h1 {
+  margin: 0 0 6px;
+  color: var(--ink);
+  font-size: 24px;
+  letter-spacing: -.3px;
+}
+.workspace:not(.admin-workspace) .resource-panel > .page-title p { font-size: 13px; }
+.workspace:not(.admin-workspace) .resource-panel > .page-title .eyebrow { display: none; }
+.workspace:not(.admin-workspace) .document-list { background: var(--surface); }
+
+/* Match card hierarchy without applying heading rules to generated answers. */
+.workspace:not(.admin-workspace) .feature-welcome { margin-top: 28px; }
+.workspace:not(.admin-workspace) .feature-welcome h1 {
+  color: var(--ink);
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -.3px;
+}
+.workspace:not(.admin-workspace) .feature-welcome > p:not(.eyebrow) { color: var(--muted); }
+.workspace:not(.admin-workspace) .feature-welcome .eyebrow { color: #7b8793; }
+.workspace:not(.admin-workspace) .feature-grid { gap: 14px; margin-top: 24px; }
+.workspace:not(.admin-workspace) .feature-card {
+  gap: 10px;
+  padding: 18px;
+  border-radius: var(--panel-radius);
+  background: var(--surface);
+}
+.workspace:not(.admin-workspace) .feature-card:hover:not(:disabled) {
+  background: var(--surface);
+  border-color: #adcac0;
+  box-shadow: 0 4px 16px #253d3710;
+}
+.workspace:not(.admin-workspace) .feature-heading strong { color: var(--ink); }
+.workspace:not(.admin-workspace) .feature-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--control-radius);
+  background: #edf5f1;
+}
+.workspace:not(.admin-workspace) .feature-description { color: #667580; font-size: 13px; }
+.workspace:not(.admin-workspace) .feature-tags > span {
+  border-color: var(--border);
+  color: #637180;
+  font-size: 11px;
+}
+.workspace:not(.admin-workspace) .feature-welcome .feature-hint { color: #7b8793; }
+
+/* Composer controls remain in the existing toolbar, with the same events. */
+.workspace:not(.admin-workspace) .composer {
+  border-color: var(--border);
+  border-radius: var(--panel-radius);
+  box-shadow: 0 4px 16px #253d3708;
+}
+.workspace:not(.admin-workspace) .composer:focus-within {
+  border-color: #89bdb3;
+  box-shadow: 0 0 0 2px #147d6a12;
+}
+.workspace:not(.admin-workspace) .composer textarea { color: var(--ink); }
+.workspace:not(.admin-workspace) .composer textarea::placeholder { color: #89949e; }
+.workspace:not(.admin-workspace) .composer-toolbar select,
+.workspace:not(.admin-workspace) .source-select summary {
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--control-radius);
+  background: var(--surface);
+  color: var(--nav-text);
+  font-size: 13px;
+}
+.workspace:not(.admin-workspace) .composer-toolbar .web-toggle { color: var(--nav-text); font-size: 13px; }
+.workspace:not(.admin-workspace) .composer-add-trigger {
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: var(--control-radius);
+  background: var(--surface);
+  color: var(--nav-text);
+}
+.workspace:not(.admin-workspace) .composer-add-trigger:hover,
+.workspace:not(.admin-workspace) .composer-add-trigger[aria-expanded=true] {
+  background: var(--nav-selected);
+  color: var(--accent);
+}
+.workspace:not(.admin-workspace) .composer-add-panel,
+.workspace:not(.admin-workspace) .source-menu {
+  border-color: var(--border);
+  border-radius: var(--panel-radius);
+  color: var(--ink);
+  box-shadow: 0 8px 28px #23323b18;
+}
+.workspace:not(.admin-workspace) .composer-add-action { border-radius: var(--control-radius); }
+.workspace:not(.admin-workspace) .source-menu { bottom: calc(100% + 12px); }
+.workspace:not(.admin-workspace) .composer-add-action:hover:not(:disabled) { background: var(--nav-hover); }
+.workspace:not(.admin-workspace) .composer-add-heading,
+.workspace:not(.admin-workspace) .composer-add-action small,
+.workspace:not(.admin-workspace) .composer-note { color: var(--muted); }
+.workspace:not(.admin-workspace) .send-button {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--control-radius);
+  background: var(--accent);
+}
+.workspace:not(.admin-workspace) .send-button:hover:not(:disabled) { background: #106454; }
+.workspace:not(.admin-workspace) .latest-button {
+  border-color: var(--border);
+  border-radius: var(--control-radius);
+  color: var(--accent);
+}
+.workspace:not(.admin-workspace) .latest-button:hover { background: var(--nav-hover); }
+
+@media (max-width: 760px) {
+  .workspace:not(.admin-workspace) .topbar { padding: 0 16px; }
+  .workspace:not(.admin-workspace) .resource-panel { padding: 22px 16px; }
+}
+@media (max-width: 650px) {
+  .workspace:not(.admin-workspace) .sidebar { padding: 24px 16px; }
+  .workspace:not(.admin-workspace) .sidebar .wordmark { justify-content: flex-start; }
+  .workspace:not(.admin-workspace) .feature-welcome { margin-top: 18px; }
+  .workspace:not(.admin-workspace) .feature-grid { gap: 10px; margin-top: 18px; }
+  .workspace:not(.admin-workspace) .feature-card { padding: 14px; }
+  .workspace:not(.admin-workspace) .composer-toolbar select,
+  .workspace:not(.admin-workspace) .source-select summary,
+  .workspace:not(.admin-workspace) .composer-toolbar .web-toggle { font-size: 12px; }
+}

@@ -30,6 +30,7 @@ const UsersPanel = lazyPanel(() => import('./UsersPanel.vue'))
 import { api, post, setCsrf, type Message, type Run, type User } from './api'
 import './style.css'
 import './experience.css'
+import './workbench.css'
 import UiIcon from './UiIcon.vue'
 import { routerKey } from 'vue-router'
 import { adminGroups, adminPages } from './admin-navigation'
@@ -305,10 +306,10 @@ onUnmounted(() => { closeStream(); clearImages() })
   <AuthPanel v-else-if="!user" @signed-in="signedIn" />
   <div v-else-if="denied" class="loading-page"><h1>此账号没有管理权限</h1><p><a href="/">返回工作台</a></p></div>
   <div v-else class="workspace" :class="{ 'admin-workspace': adminPage, 'is-collapsed': collapsed, 'mobile-nav-open': mobileNav }"><button v-if="mobileNav" class="sidebar-scrim" aria-label="关闭导航" @click="mobileNav = false" />
-    <component :inert="narrow && !mobileNav" :is="adminPage ? 'aside' : ResizableSidebar" :class="{ 'admin-sidebar': adminPage }"><a class="wordmark" href="/" aria-label="SemiBrain 首页"><BrandLogo /> SemiBrain</a><span v-if="adminPage" class="admin-caption">管理控制台</span>
+    <component :inert="narrow && !mobileNav" :is="adminPage ? 'aside' : ResizableSidebar" :class="{ 'admin-sidebar': adminPage }"><a class="wordmark" href="/" aria-label="SemiBrain 首页"><BrandLogo /><span class="brand-name">SemiBrain</span></a><span v-if="adminPage" class="admin-caption">管理控制台</span>
       <button v-if="!adminPage" class="new-chat" @click="newChat">＋ 新会话</button>
       <nav v-if="adminPage" class="admin-navigation" aria-label="管理导航"><section v-for="group in adminGroups" :key="group.label" class="nav-group"><p class="nav-group-label">{{ group.label }}</p><button v-for="[id,label] in group.items" :key="id" :class="{ active: view === id }" :aria-current="view === id ? 'page' : undefined" :title="label" @click="navigate(id)"><UiIcon :name="id" /><span class="nav-label">{{ label }}</span></button></section></nav>
-      <nav v-else aria-label="工作台导航"><button v-for="[id,label] in userPages" :key="id" :class="{ active: view === id }" @click="navigate(id)"><UiIcon :name="id" />{{ label }}</button></nav>
+      <nav v-else aria-label="工作台导航"><button v-for="[id,label] in userPages" :key="id" :class="{ active: view === id }" :aria-current="view === id ? 'page' : undefined" @click="navigate(id)"><UiIcon :name="id" />{{ label }}</button></nav>
       <div v-if="!adminPage" class="history"><p class="eyebrow">最近会话</p><button v-for="item in conversations" :key="item.id" :title="item.title" :class="{ selected: conversation?.id === item.id }" @click="openChat(item)">{{ item.title }}</button><button v-if="conversationsCursor" @click="olderChats">加载更早会话</button><p v-if="!conversations.length" class="small muted">你的会话会保存在这里</p></div>
       <div class="sidebar-bottom"><a v-if="user.role === 'admin' && !adminPage" class="admin-link" href="/admin/">管理控制台 ↗</a><a v-if="adminPage" class="admin-link" href="/">返回工作台 ↗</a><div class="profile"><span class="avatar">{{ user.username.slice(0, 1).toUpperCase() }}</span><div><strong>{{ user.username }}</strong><small>{{ user.role === 'admin' ? '管理员' : '普通用户' }}</small></div><button class="text-button" @click="settings = true" aria-label="账号设置">⚙</button></div><button class="text-button logout" @click="logout">退出登录</button></div>
     </component>

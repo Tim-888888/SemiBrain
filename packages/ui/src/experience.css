@@ -2,6 +2,8 @@
 :root {
   --accent:#147d6a; --border:#e2e8ee; --muted:#637180; --ink:#23323b;
   --surface:#fff; --canvas:#f6f8fa; --el-color-primary:#147d6a;
+  --nav-text:#586875; --nav-hover:#f6f8fa; --nav-selected:#eaf4ef; --nav-selected-text:#147663;
+  --control-radius:8px; --panel-radius:12px;
   --el-color-primary-light-3:#5bA496; --el-color-primary-light-5:#89bdb3;
   --el-color-primary-light-7:#bdd9d2; --el-color-primary-light-8:#d3e6e1; --el-color-primary-light-9:#edf6f3;
   --el-font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
@@ -22,10 +24,10 @@ label:has(>input[type=checkbox]),label:has(>input[type=radio]){display:flex;flex
 .admin-navigation{flex:1;min-height:0;overflow-y:auto;padding:0 0 12px;scrollbar-width:thin}
 .nav-group{margin-bottom:18px}
 .nav-group-label{font-size:11px;color:#8894a0;margin:0 12px 7px;letter-spacing:.8px}
-.admin-navigation button{width:100%;display:flex;align-items:center;gap:11px;padding:10px 13px;margin:3px 0;border-radius:8px;text-align:left;font-size:13px;white-space:nowrap;color:#586875}
+.admin-navigation button{width:100%;display:flex;align-items:center;gap:11px;padding:10px 13px;margin:3px 0;border-radius:8px;text-align:left;font-size:13px;white-space:nowrap;color:var(--nav-text)}
 .admin-navigation svg{flex-shrink:0}
-.admin-navigation button:hover{background:#f6f8fa;color:#1c665b}
-.admin-navigation button.active{background:#eaf4ef;color:#147663;font-weight:600}
+.admin-navigation button:hover{background:var(--nav-hover);color:#1c665b}
+.admin-navigation button.active{background:var(--nav-selected);color:var(--nav-selected-text);font-weight:600}
 .admin-sidebar .sidebar-bottom{margin-top:0;border-top:1px solid var(--border);padding-top:10px;background:#fff}
 .admin-sidebar .admin-link{border:0;padding:8px 12px;font-size:12px}
 .admin-sidebar .profile{padding:8px 10px 0}
