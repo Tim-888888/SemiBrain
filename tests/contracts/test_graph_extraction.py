@@ -34,6 +34,10 @@ VERDICT = {
     "supported": True,
     "unambiguous": True,
     "aliases_supported": True,
+    "predicate_exact": True,
+    "meaningful_entities": True,
+    "source_subject": "alpha",
+    "source_object": "beta",
     "reason": "The text explicitly states this usage.",
 }
 
@@ -49,12 +53,21 @@ VERDICT = {
         ("causal", "pending"),
         ("missing_entity", "pending"),
         ("missing_check", "pending"),
+        ("direction", "pending"),
+        ("predicate", "pending"),
+        ("generic_entities", "pending"),
     ],
 )
 def test_grounding_never_promotes_unverified_candidates(case, status):
     fact, verdict = deepcopy(FACT), dict(VERDICT)
     if case == "fabricated_quote":
         fact["quote"] = "alpha causes beta, established by testing"
+    if case == "direction":
+        verdict.update(source_subject="beta", source_object="alpha")
+    if case == "predicate":
+        verdict["predicate_exact"] = False
+    if case == "generic_entities":
+        verdict["meaningful_entities"] = False
     if case == "negation":
         verdict["supported"] = False
     if case == "ambiguous":

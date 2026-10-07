@@ -102,6 +102,8 @@ def enqueue(document, config, claim, request_id, *, automatic=False, session=Non
         {"$set": {"status": "superseded", "updated_at": now()}},
         session=session,
     )
+    db().graph_candidates.update_many({"document_id": document["_id"], "status": "pending"},
+        {"$set": {"status": "superseded", "reason": "已由新的抽取任务替代"}}, session=session)
     db().graph_extraction_jobs.insert_one(
         {
             "_id": identity,
@@ -173,6 +175,8 @@ def guard_job(job_id, fence, *, session=None):
         session=session,
     )
     if not job:
+        failure("GRAPH_JOB_STOPPED", 409)
+    if job["extractor_version"] != EXTRACTION_VERSION:
         failure("GRAPH_JOB_STOPPED", 409)
     if job["automatic"] and not policy()["policy"]["enabled"]:
         failure("GRAPH_JOB_STOPPED", 409)
@@ -247,6 +251,11 @@ def grounding(candidate, text, verdict):
         return "pending", "实体名称需要人工核对"
     if not verdict or not verdict["supported"]:
         return "pending", (verdict or {}).get("reason", "缺少独立核验结果")
+    if not verdict.get("predicate_exact") or not verdict.get("meaningful_entities"):
+        return "pending", verdict["reason"]
+    for entity, key in [(candidate.subject, "source_subject"), (candidate.object, "source_object")]:
+        if normalized(verdict.get(key, "")) not in {normalized(n) for n in [entity.name, *entity.aliases]}:
+            return "pending", "独立核验的主客体方向与候选不一致"
     if candidate.relation == "validated_cause":
         return "pending", "因果关系必须由人工记录工程验证依据"
     if not verdict["unambiguous"] or not verdict["aliases_supported"]:
