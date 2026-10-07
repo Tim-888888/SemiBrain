@@ -287,6 +287,15 @@ def entity_binding(entity, claim, *, session=None):
         ):
             try:
                 graph.source(edge, claim)
+                # Case folding is useful for search, but can conflate scientific
+                # symbols/acronyms (for example CP testing and the Cp index).
+                # Require a descriptive correction instead of silently reusing it.
+                existing_name = unicodedata.normalize("NFKC", item.get("name", "")).strip()
+                for term in [entity.name, *entity.aliases]:
+                    exact = unicodedata.normalize("NFKC", term).strip()
+                    if (existing_name and len(exact) <= 12 and exact.isascii()
+                            and exact != existing_name and exact.casefold() == existing_name.casefold()):
+                        return identity, True
                 targets.add(graph.resolve(item["_id"], entities))
                 break
             except HTTPException:

@@ -88,6 +88,13 @@ describe('graph pointer and simulation lifecycle',()=>{
     await new Promise(r=>setTimeout(r,250))
     expect(wrapper.emitted('explore')).toEqual([['a']]);expect(wrapper.emitted('select')).toBeUndefined()
   })
+  it('handles browser double clicks retargeted to the pointer capture SVG',async()=>{
+    await create();const a=position(0)
+    await start(0,a.x,a.y);await end()
+    await wrapper.find('svg').trigger('dblclick')
+    await new Promise(r=>setTimeout(r,250))
+    expect(wrapper.emitted('explore')).toEqual([['a']]);expect(wrapper.emitted('select')).toBeUndefined()
+  })
   it('shift clicking requests additive expansion and honors capacity',async()=>{
     await create();const a=position(0)
     await start(0,a.x,a.y);await pointer(wrapper.find('svg').element,'pointerup',{shiftKey:true})

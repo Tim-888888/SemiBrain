@@ -163,6 +163,16 @@ def test_private_source_cannot_supply_an_alias(store, monkeypatch):
     assert service.entity_binding(entity, {}) == (graph.entity_id(entity), False)
 
 
+@pytest.mark.parametrize("name,existing,conflict", [("CP", "Cp", True), ("CO", "Co", True), ("CP", "CP", False)])
+def test_case_folded_scientific_names_require_review(store, monkeypatch, name, existing, conflict):
+    entity = Candidate(**{**FACT, "subject": {"name": name, "kind": "concept"}}).subject
+    identity = graph.entity_id(entity)
+    store.graph_entities.find.return_value = [{"_id": identity, "name": existing, "kind": "concept"}]
+    store.graph_edges.find.return_value = [{"enabled": True}]
+    monkeypatch.setattr(graph, "source", lambda *a: ({}, {}))
+    assert service.entity_binding(entity, {}) == (identity, conflict)
+
+
 def test_source_change_prevents_any_candidate_or_fact_commit(store, monkeypatch):
     def stopped(*args, **kwargs):
         raise HTTPException(409, {"code": "GRAPH_JOB_STOPPED"})

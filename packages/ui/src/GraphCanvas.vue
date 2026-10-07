@@ -14,7 +14,7 @@ const kinds=computed(()=>[...new Set(props.nodes.map(n=>n.kind))])
 const highlight=computed(()=>{const id=hovered.value || selected.value;const ids=new Set([id]);for(const edge of props.edges){if(edge.subject_id===id)ids.add(edge.object_id);if(edge.object_id===id)ids.add(edge.subject_id)}return ids})
 const focus=computed(()=>hovered.value || selected.value)
 const markerId='sb-graph-arrow-'+crypto.randomUUID()
-let frame=0, tick=0, disposed=false, reduced=false, anchor='',autoFit=false
+let frame=0, tick=0, disposed=false, reduced=false, anchor='',autoFit=false,lastClicked=''
 const MAX_TICKS=180
 let drag:{id:string;start:{x:number;y:number};origin:{x:number;y:number};moved:boolean;pointer:number}|null=null
 function point(id:string){return positions.value[id] || {x:420,y:220,vx:0,vy:0}}
@@ -81,6 +81,7 @@ function move(event:PointerEvent){
 function up(event:PointerEvent,cancelled=false){
   if(!drag || drag.pointer!==event.pointerId)return
   const finished=drag;drag=null
+  lastClicked=!cancelled&&!finished.moved?finished.id:''
   if(svg.value?.hasPointerCapture(event.pointerId))svg.value.releasePointerCapture(event.pointerId)
   if(finished.id && finished.moved)wake()
   else if(finished.id && !cancelled){
@@ -103,7 +104,7 @@ onUnmounted(()=>{disposed=true;stop();observer?.disconnect();if(clickTimer)clear
 <template>
 <div class="interactive-graph">
   <div class="graph-toolbar"><div class="graph-legend"><span v-for="kind in kinds" :key="kind"><i :style="{background:colors[kind] || '#65846a'}"/>{{types[kind] || kind}}</span></div><div class="row-actions"><button class="secondary" @click="scale(1/1.2)" aria-label="缩小图谱">−</button><span class="small muted">{{Math.round(zoom*100)}}%</span><button class="secondary" @click="scale(1.2)" aria-label="放大图谱">＋</button><button class="secondary" @click="fit">适应画布</button><button class="secondary" @click="layout">重新布局</button></div></div>
-  <svg ref="svg" :viewBox="`0 0 ${viewport.width} ${viewport.height}`" role="group" tabindex="0" aria-label="实体关系图：可拖动节点，拖空白平移；聚焦后滚轮缩放，按加减键缩放、0 适应画布" @pointerdown="down($event)" @pointermove="move" @pointerup="up" @pointercancel="up($event,true)" @lostpointercapture="up($event,true)" @wheel="wheel" @keydown="key">
+  <svg ref="svg" :viewBox="`0 0 ${viewport.width} ${viewport.height}`" role="group" tabindex="0" aria-label="实体关系图：可拖动节点，拖空白平移；聚焦后滚轮缩放，按加减键缩放、0 适应画布" @pointerdown="down($event)" @pointermove="move" @pointerup="up" @pointercancel="up($event,true)" @lostpointercapture="up($event,true)" @wheel="wheel" @keydown="key" @dblclick="lastClicked&&explore(lastClicked)">
     <defs><marker :id="markerId" viewBox="0 0 10 10" refX="21" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#92afa5"/></marker></defs>
     <g :transform="`translate(${pan.x} ${pan.y}) scale(${zoom})`">
       <g v-for="edge in edges" :key="edge.id" :opacity="focus && edge.subject_id!==focus && edge.object_id!==focus ? .18:1"><line :x1="point(edge.subject_id).x" :y1="point(edge.subject_id).y" :x2="point(edge.object_id).x" :y2="point(edge.object_id).y" stroke="#aac2b9" stroke-width="1.6" :marker-end="`url(#${markerId})`"/><text v-if="edge.subject_id===focus || edge.object_id===focus || zoom>1.5" :x="(point(edge.subject_id).x+point(edge.object_id).x)/2" :y="(point(edge.subject_id).y+point(edge.object_id).y)/2-7" class="edge-label">{{relations[edge.relation] || edge.relation}}</text></g>
