@@ -62,6 +62,8 @@ function fit(){stop();frameView()}
 function local(event:PointerEvent|WheelEvent){const matrix=svg.value?.getScreenCTM();if(!matrix)return {x:0,y:0};const p=new DOMPoint(event.clientX,event.clientY).matrixTransform(matrix.inverse());return {x:p.x,y:p.y}}
 function down(event:PointerEvent,id=''){
   if(event.button!==0 || drag)return
+  // The canvas owns primary-pointer gestures, including Shift and double-click.
+  event.preventDefault()
   stop();preserved.clear();autoFit=false;svg.value?.focus();const p=local(event)
   drag={id,start:p,origin:id?{...point(id)}:{...pan.value},moved:false,pointer:event.pointerId}
   if(id){anchor=id;point(id).vx=0;point(id).vy=0}
@@ -119,5 +121,7 @@ onUnmounted(()=>{disposed=true;stop();observer?.disconnect();if(clickTimer)clear
 </div>
 </template>
 <style scoped>
+/* Keep native text selection out of the canvas without affecting source text. */
+svg,svg *{-webkit-user-select:none;user-select:none}
 .interactive-graph{border:1px solid var(--border);border-radius:12px;overflow:hidden;background:#fff;margin:20px 0}.graph-toolbar{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border);flex-wrap:wrap}.graph-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:#6b7c76}.graph-legend span{display:flex;align-items:center;gap:6px}.graph-legend i{width:8px;height:8px;border-radius:50%}svg{width:100%;height:clamp(280px,48vh,540px);display:block;background:radial-gradient(#dfe7e3 .8px,transparent .8px);background-size:20px 20px;cursor:grab;touch-action:none}svg:active{cursor:grabbing}.graph-node{cursor:grab;outline:none}.graph-node:focus-visible circle:first-child{stroke:#193d33;stroke-width:2}.graph-node text{font-size:12px;fill:#3b5148;paint-order:stroke;stroke:#fff;stroke-width:4px;pointer-events:none}.edge-label{font-size:10px;fill:#668275;text-anchor:middle;paint-order:stroke;stroke:#fff;stroke-width:3px}.graph-caption{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:10px 18px;border-top:1px solid var(--border);color:#6b7c76;font-size:11px}.graph-caption details{max-width:50%}.graph-caption summary{cursor:pointer}
 </style>
