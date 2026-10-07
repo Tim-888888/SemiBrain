@@ -57,7 +57,7 @@ services:
     tmpfs: ['/tmp:size=256m,mode=1777']
   graph-worker:
     <<: *api
-    command: [celery, -A, semibrain_business.graph_worker:app, worker, --beat, --schedule, /tmp/graph-celerybeat, --pool, threads, --concurrency, '1', --queues, celery_business_graph_v1, --loglevel, WARNING, --without-gossip, --without-mingle, --without-heartbeat]
+    command: [celery, -A, semibrain_business.graph_worker:app, worker, --beat, --schedule, /tmp/graph-celerybeat, --pool, threads, --concurrency, '${GRAPH_WORKER_CONCURRENCY:-1}', --queues, celery_business_graph_v1, --loglevel, WARNING, --without-gossip, --without-mingle, --without-heartbeat]
     env_file: ["${SECRET_DIR}/business.env"]
     networks: [core, business-data]
     mem_limit: 1g

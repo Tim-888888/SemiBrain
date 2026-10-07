@@ -3,15 +3,10 @@ import { documentCatalog } from './document-catalog'
 import { computed, onMounted, ref } from 'vue'
 import { api, post } from './api'
 import MarkdownAnswer from './MarkdownAnswer.vue'
-import GraphCanvas from './GraphCanvas.vue'
+import GraphExplorer from './GraphExplorer.vue'
 import GraphExtractionPanel from './GraphExtractionPanel.vue'
 import ResourceDrawer from './ResourceDrawer.vue'
-const detailOpen=ref(false), detailId=ref('')
 const extractionOpen=ref(false), graphCursor=ref<string|null>(null)
-const detailEdges=computed(()=>catalog.value.edges.filter((e:any)=>canonical(e.subject_id)===detailId.value || canonical(e.object_id)===detailId.value))
-const visualEdges=computed(()=>links.value.map((e:any)=>({...e,subject_id:canonical(e.subject_id),object_id:canonical(e.object_id)})))
-function inspect(id:string){detailId.value=id;detailOpen.value=true}
-
 const props = defineProps<{ manage:boolean }>()
 const catalog = ref<any>({entities:[],edges:[],revision:0}), docs = ref<any[]>([]), chunks = ref<any[]>([])
 const loaded=ref(false)
@@ -22,9 +17,8 @@ const relations:Record<string,string> = {applies_to:'适用于',occurs_in:'发�
 const nodes = computed(() => {
   const active = new Set(catalog.value.edges.filter((e:any) => e.effective)
     .flatMap((e:any) => [canonical(e.subject_id), canonical(e.object_id)]))
-  return catalog.value.entities.filter((n:any) => n.id === n.canonical_id && active.has(n.id)).slice(0,30)
+  return catalog.value.entities.filter((n:any) => n.id === n.canonical_id && active.has(n.id))
 })
-const links = computed(() => catalog.value.edges.filter((e:any) => e.effective && nodes.value.some((n:any) => n.id === canonical(e.subject_id)) && nodes.value.some((n:any) => n.id === canonical(e.object_id))))
 function entity(id:string) { return catalog.value.entities.find((n:any) => n.id === id) }
 function canonical(id:string) { return entity(id)?.canonical_id || id }
 async function load(append=false) {
@@ -58,17 +52,12 @@ async function search() { await act(async () => { await load();result.value=awai
 onMounted(() => act(load))
 </script>
 <template>
-  <section class="resource-panel">
+  <section class="resource-panel graph-page">
     <div class="page-title"><div><h1>工程知识图谱</h1><p class="muted">沿实体关系查找原文。共现、相关和处理建议不等同于已证明的因果。</p></div><div v-if="manage" class="form-row"><button class="primary" :disabled="busy" @click="extractionOpen=true">自动构建</button><button :disabled="busy" @click="create">登记关系</button></div></div>
     <GraphExtractionPanel v-if="manage" v-model:open="extractionOpen" :documents="docs" @changed="act(()=>load())"/>
     <p v-if="error" class="error" role="alert">{{ error }}</p><p v-if="notice" role="status">{{ notice }}</p>
     <p v-if="!loaded && busy" class="loading-state">正在读取图谱与来源…</p><template v-if="loaded"><p class="small muted">{{ catalog.configured ? '图谱已配置' : '图谱未配置，查询使用文本检索' }} · 关系版本 {{ catalog.revision }} · 投影版本 {{ catalog.projected_revision }} <button v-if="manage" class="text-button" :disabled="busy || !catalog.configured" @click="rebuild">重建投影</button></p>
-    <form class="form-row" @submit.prevent="search"><input aria-label="图谱查询" v-model="query" maxlength="200" placeholder="输入工序、设备或缺陷名称" required/><button class="primary" :disabled="busy">查找关联原文</button></form>
-    <GraphCanvas v-if="nodes.length" :nodes="nodes" :edges="visualEdges" :types="types" :relations="relations" @select="inspect"/>
-    <p v-else class="muted">尚无可见的有效关系，可继续使用文本检索。</p>
-    <p class="small muted">当前展示 {{nodes.length}} 个授权实体，上限 30；关系类型与出处见下表。</p>
-    <p class="small muted">输入实体名称可查看相关局部图谱。<button v-if="query" @click="query='';act(()=>load())">返回图谱概览</button><button v-if="graphCursor" :disabled="busy" @click="act(()=>load(true))">加载更多关系</button></p>
-    <ResourceDrawer v-model="detailOpen" :title="entity(detailId)?.name || '实体详情'" width="620px"><p class="muted">{{types[entity(detailId)?.kind] || '实体'}} · {{detailEdges.length}} 条已授权关系</p><article v-for="edge in detailEdges" :key="edge.id" class="panel-card"><h3>{{entity(edge.subject_id)?.name}} → {{entity(edge.object_id)?.name}}</h3><p><span class="status-pill">{{relations[edge.relation]}}</span> · {{edge.effective ? '有效' : '当前不可用于检索'}}</p><blockquote>{{edge.quote}}</blockquote><p v-if="edge.verification_note">{{edge.verification_note}}</p><details><summary>来源与版本</summary><p class="small">文档 {{edge.document_id}} · 版本 {{edge.version}}</p></details></article><p v-if="!detailEdges.length">暂无可见的关联来源。</p></ResourceDrawer>
+    <GraphExplorer :revision="catalog.revision" :types="types" :relations="relations"/>
     <ResourceDrawer v-model="edit" title="登记有来源的关系" :snapshot="form" :busy="busy" :error="error"><form id="graph-editor" @submit.prevent="save"><h2>登记有来源的关系</h2><fieldset :disabled="busy"><div class="form-row"><label>起点名称<input v-model="form.subject.name" maxlength="120" required/></label><label>起点类型<select v-model="form.subject.kind"><option v-for="(label,key) in types" :value="key">{{ label }}</option></select></label><label>终点名称<input v-model="form.object.name" maxlength="120" required/></label><label>终点类型<select v-model="form.object.kind"><option v-for="(label,key) in types" :value="key">{{ label }}</option></select></label></div>
       <label>关系类型<select v-model="form.relation"><option v-for="(label,key) in relations" :value="key">{{ label }}</option></select></label>
       <label>来源文档<select v-model="form.document_id" @change="selectSource" required><option value="" disabled>请选择已发布来源</option><option v-for="doc in docs" :value="doc.id">{{ doc.title }}</option></select></label>
@@ -77,10 +66,14 @@ onMounted(() => act(load))
       <label>工程验证说明<textarea v-model="form.verification_note" maxlength="1000" :minlength="form.relation==='validated_cause'?20:0" :required="form.relation==='validated_cause'" placeholder="因果关系必须记录验证依据；其他关系可补充适用边界"/></label><label>有效期至（可留空）<input type="date" v-model="form.expires"/></label>
       </fieldset></form><template #footer><button type="submit" form="graph-editor" class="primary" :disabled="busy">保存关系</button></template></ResourceDrawer>
     <details v-if="manage && nodes.length>1" class="upload-card"><summary>合并同名实体</summary><form @submit.prevent="merge"><div class="form-row"><label>原实体<select v-model="from" required><option value="" disabled>请选择</option><option v-for="n in nodes" :value="n.id">{{ n.name }} · {{ types[n.kind] }}</option></select></label><label>合并到<select v-model="to" required><option value="" disabled>请选择</option><option v-for="n in nodes.filter((v:any)=>v.id!==from)" :value="n.id">{{ n.name }} · {{ types[n.kind] }}</option></select></label></div><label>合并依据<input v-model="reason" minlength="5" maxlength="500" required/></label><button class="primary" :disabled="busy">合并并保留映射</button></form></details>
+    <details class="graph-records"><summary>关系记录与原文检索（已加载 {{catalog.edges.length}} 条记录）</summary>
+    <form class="form-row" @submit.prevent="search"><input aria-label="关系原文查询" v-model="query" maxlength="200" placeholder="输入实体名称查找关系原文" required/><button :disabled="busy">查找关联原文</button></form><button v-if="graphCursor" :disabled="busy" @click="act(()=>load(true))">加载更多关系记录</button>
     <div v-if="catalog.edges.length" class="table-scroll"><table><thead><tr><th>起点 → 终点</th><th>关系</th><th>出处与有效期</th><th v-if="manage">操作</th></tr></thead><tbody><tr v-for="edge in catalog.edges" :key="edge.id"><td>{{ entity(edge.subject_id)?.name }} → {{ entity(edge.object_id)?.name }}</td><td>{{ relations[edge.relation] }}<p class="small muted">{{ edge.effective ? '有效' : edge.enabled ? '来源或有效期已失效' : '已停用' }}</p></td><td><details><summary>查看原文与版本</summary><blockquote>{{ edge.quote }}</blockquote><p class="small">文档 {{ edge.document_id }} · 版本 {{ edge.version }} · {{ edge.valid_until || '未设到期日' }}</p><p v-if="edge.verification_note">{{ edge.verification_note }}</p></details></td><td v-if="manage"><button class="secondary" :disabled="busy" @click="toggle(edge)">{{ edge.enabled ? '停用' : '恢复' }}</button></td></tr></tbody></table></div>
+    </details>
     <section v-if="result" class="upload-card"><h2>关联原文</h2><p class="muted">{{ result.retrieval.graph_fallback ? '本次使用文本检索补充' : '从授权图谱找到来源，已核验发布状态' }}</p><article v-for="item in result.evidence" :key="item.chunk_id || item._id"><h3>{{ item.title }}</h3><MarkdownAnswer :text="item.text" :image-refs="item.image_refs"/></article><p v-if="!result.evidence.length">未找到当前可读的匹配资料。</p></section>
   </template></section>
 </template>
 <style scoped>
+.graph-page.resource-panel{max-width:none;width:100%;min-width:0}.graph-records{margin-top:24px}.graph-records>summary{cursor:pointer;padding:12px 0;font-weight:600}
 label { display:block; margin:12px 0; } input,select,textarea { width:100%; } .form-row { display:flex; gap:12px; flex-wrap:wrap; } .form-row>* { flex:1;min-width:140px; } .graph-canvas { margin:18px 0; border:1px solid #dce6df; border-radius:12px; } svg { width:100%;max-height:440px; } .table-scroll{overflow:auto} table{width:100%;border-collapse:collapse} td,th{padding:12px;border-bottom:1px solid #dce6df;text-align:left} blockquote{white-space:pre-wrap;max-height:240px;overflow:auto}
 </style>

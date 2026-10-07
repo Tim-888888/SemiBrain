@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends
 from semibrain_contracts.graph import (
+    GraphBrowse,
     GraphCommand,
     GraphEdge,
     GraphEdgeState,
@@ -17,6 +18,12 @@ from semibrain_conversation.access import business
 from semibrain_conversation.auth import admin, current_user
 
 router = APIRouter()
+
+
+@router.post("/v1/graph/browse")
+def browse(form: GraphBrowse, user=Depends(current_user)):
+    return business(user, "POST", "/internal/v1/graph/browse", operation="knowledge.read",
+                    json=form.model_dump(mode="json"), timeout=90).json()
 
 
 @router.get("/v1/graph/catalog")

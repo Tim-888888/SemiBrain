@@ -42,7 +42,7 @@ async function decide(action:string){await act(async()=>{await command('review',
    <label>自动抽取范围<select v-model="settings.scope"><option value="wiki">已发布工程 Wiki</option><option value="all">全部已发布知识资料</option></select></label>
    <label>抽取与核验模型<select v-model="settings.model"><option v-for="model in models" :key="model" :value="model">{{model}}</option></select></label>
    <label class="check"><input type="checkbox" v-model="settings.auto_accept"/>普通关系通过原文核验后自动入图</label>
-   <p class="small muted">关闭自动入图时，抽取结果进入待审核；歧义、别名冲突和因果关系始终需要审核。后台并发为 1，失败最多自动尝试 3 次。</p>
+   <p class="small muted">关闭自动入图时，抽取结果进入待审核；歧义、别名冲突和因果关系始终需要审核。使用独立后台队列，失败最多自动尝试 3 次。</p>
    <label>领域补充说明<textarea v-model="settings.instructions" rows="4" maxlength="2000" placeholder="例如：优先提取测试工序、设备、量测指标及适用关系。"/></label>
    <button class="primary" :disabled="busy" @click="savePolicy">保存自动构建设置</button>
   </section>

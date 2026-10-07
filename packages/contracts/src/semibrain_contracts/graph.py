@@ -66,3 +66,24 @@ class GraphQuery(BaseModel):
     query: str = Field(min_length=1, max_length=200)
     depth: int = Field(default=1, ge=1, le=2)
     top_k: int = Field(default=5, ge=1, le=6)
+
+
+class GraphBrowse(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    mode: Literal["overview", "ego"] = "overview"
+    center: UUID | None = None
+    query: str = Field(default="", max_length=200)
+    limit: int = Field(default=100, ge=1, le=500)
+    depth: int = Field(default=1, ge=1, le=2)
+    kinds: list[str] = Field(default_factory=list, max_length=9)
+    # Incremental requests re-authorize every retained node; IDs grant no access.
+    visible_ids: list[UUID] = Field(default_factory=list, max_length=500)
+
+    @model_validator(mode="after")
+    def valid_browse(self):
+        if self.mode == "ego" and self.center is None:
+            raise ValueError("GRAPH_CENTER_REQUIRED")
+        allowed = {"product", "process", "equipment", "chamber", "defect", "alarm", "sop", "action", "concept"}
+        if set(self.kinds) - allowed:
+            raise ValueError("GRAPH_KIND_INVALID")
+        return self
