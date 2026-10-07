@@ -37,7 +37,7 @@ function layout(){
   preserved.clear();autoFit=props.layoutKey!==undefined
   positions.value=Object.fromEntries(props.nodes.map((n,i)=>{const a=2*Math.PI*i/Math.max(1,props.nodes.length);return [n.id,{x:center.value.x+Math.cos(a)*Math.max(240,Math.sqrt(props.nodes.length)*35),y:center.value.y+Math.sin(a)*Math.max(145,Math.sqrt(props.nodes.length)*25),vx:0,vy:0}]}))
   tick=0;zoom.value=1;pan.value={x:0,y:0};selected.value='';hovered.value=''
-  if(reduced){for(let i=0;i<MAX_TICKS;i++)step()}else wake()
+  if(reduced){for(let i=0;i<MAX_TICKS;i++)step();if(autoFit){autoFit=false;fit()}}else{if(autoFit)fit();wake()}
 }
 function sync(){
   stop();drag=null;anchor='';autoFit=false
