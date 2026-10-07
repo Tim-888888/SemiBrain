@@ -253,6 +253,8 @@ def grounding(candidate, text, verdict):
         return "pending", (verdict or {}).get("reason", "缺少独立核验结果")
     if not verdict.get("predicate_exact") or not verdict.get("meaningful_entities"):
         return "pending", verdict["reason"]
+    if verdict.get("source_relation") != candidate.relation:
+        return "pending", "独立核验的关系类型与候选不一致"
     for entity, key in [(candidate.subject, "source_subject"), (candidate.object, "source_object")]:
         if normalized(verdict.get(key, "")) not in {normalized(n) for n in [entity.name, *entity.aliases]}:
             return "pending", "独立核验的主客体方向与候选不一致"

@@ -38,6 +38,7 @@ VERDICT = {
     "meaningful_entities": True,
     "source_subject": "alpha",
     "source_object": "beta",
+    "source_relation": "uses",
     "reason": "The text explicitly states this usage.",
 }
 
@@ -54,6 +55,7 @@ VERDICT = {
         ("missing_entity", "pending"),
         ("missing_check", "pending"),
         ("direction", "pending"),
+        ("relation_readback", "pending"),
         ("predicate", "pending"),
         ("generic_entities", "pending"),
     ],
@@ -64,6 +66,8 @@ def test_grounding_never_promotes_unverified_candidates(case, status):
         fact["quote"] = "alpha causes beta, established by testing"
     if case == "direction":
         verdict.update(source_subject="beta", source_object="alpha")
+    if case == "relation_readback":
+        verdict["source_relation"] = "part_of"
     if case == "predicate":
         verdict["predicate_exact"] = False
     if case == "generic_entities":

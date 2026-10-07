@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from semibrain_contracts.graph import Entity, GraphCommand
 
-EXTRACTION_VERSION = "semiconductor-graph-v2"
+EXTRACTION_VERSION = "semiconductor-graph-v3"
 Relation = Literal[
     "applies_to",
     "occurs_in",
@@ -53,6 +53,7 @@ class Verdict(BaseModel):
     meaningful_entities: bool
     source_subject: str = Field(max_length=120)
     source_object: str = Field(max_length=120)
+    source_relation: Relation | None
     reason: str = Field(min_length=1, max_length=500)
 
 
