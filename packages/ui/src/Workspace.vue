@@ -7,6 +7,7 @@ import type { ConversationStarter } from './conversation-starters'
 import ResizableSidebar from './ResizableSidebar.vue'
 import { clipboardImages, imageError, ScrollFollow } from './composer.mjs'
 import AuthPanel from './AuthPanel.vue'
+import BrandLogo from './BrandLogo.vue'
 import ResourceDrawer from './ResourceDrawer.vue'
 import PanelLoadError from './PanelLoadError.vue'
 const lazyPanel=(loader:any)=>defineAsyncComponent({loader,delay:150,timeout:20000,errorComponent:PanelLoadError,loadingComponent:{render:()=>h('div',{class:'loading-state',role:'status'},'正在加载页面…')}})
@@ -304,7 +305,7 @@ onUnmounted(() => { closeStream(); clearImages() })
   <AuthPanel v-else-if="!user" @signed-in="signedIn" />
   <div v-else-if="denied" class="loading-page"><h1>此账号没有管理权限</h1><p><a href="/">返回工作台</a></p></div>
   <div v-else class="workspace" :class="{ 'admin-workspace': adminPage, 'is-collapsed': collapsed, 'mobile-nav-open': mobileNav }"><button v-if="mobileNav" class="sidebar-scrim" aria-label="关闭导航" @click="mobileNav = false" />
-    <component :inert="narrow && !mobileNav" :is="adminPage ? 'aside' : ResizableSidebar" :class="{ 'admin-sidebar': adminPage }"><a class="wordmark" href="/"><span class="brand-icon">S</span> SemiBrain</a><span v-if="adminPage" class="admin-caption">管理控制台</span>
+    <component :inert="narrow && !mobileNav" :is="adminPage ? 'aside' : ResizableSidebar" :class="{ 'admin-sidebar': adminPage }"><a class="wordmark" href="/" aria-label="SemiBrain 首页"><BrandLogo /> SemiBrain</a><span v-if="adminPage" class="admin-caption">管理控制台</span>
       <button v-if="!adminPage" class="new-chat" @click="newChat">＋ 新会话</button>
       <nav v-if="adminPage" class="admin-navigation" aria-label="管理导航"><section v-for="group in adminGroups" :key="group.label" class="nav-group"><p class="nav-group-label">{{ group.label }}</p><button v-for="[id,label] in group.items" :key="id" :class="{ active: view === id }" :aria-current="view === id ? 'page' : undefined" :title="label" @click="navigate(id)"><UiIcon :name="id" /><span class="nav-label">{{ label }}</span></button></section></nav>
       <nav v-else aria-label="工作台导航"><button v-for="[id,label] in userPages" :key="id" :class="{ active: view === id }" @click="navigate(id)"><UiIcon :name="id" />{{ label }}</button></nav>

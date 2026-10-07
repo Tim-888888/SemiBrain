@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import BrandLogo from './BrandLogo.vue'
 import { api, post, setCsrf, type User } from './api'
 const emit = defineEmits<{ signedIn: [user: User] }>()
 const mode = ref<'login' | 'register'>('login')
@@ -30,7 +31,7 @@ onMounted(refresh)
 <template>
   <main class="auth-page">
     <section class="auth-story">
-      <a class="wordmark" href="/"><span class="brand-icon">S</span> SemiBrain</a>
+      <a class="wordmark" href="/" aria-label="SemiBrain 首页"><BrandLogo /> SemiBrain</a>
       <div><p class="eyebrow">SEMICONDUCTOR KNOWLEDGE WORKSPACE</p><h1>让知识有出处，<br>让分析有依据。</h1><p class="story-copy">连接半导体文档与业务数据，<br>把问题变成可追溯的回答。</p></div>
       <p class="muted small">半导体知识 · 数据查询 · 来源追溯</p>
     </section>
