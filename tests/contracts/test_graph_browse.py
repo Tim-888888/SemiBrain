@@ -89,3 +89,19 @@ def test_snapshot_filters_stale_private_expired_and_fabricated_edges_before_expo
 def test_request_bounds(values):
     with pytest.raises(ValidationError):
         GraphBrowse(**values)
+
+
+def test_entities_are_read_after_concurrent_edge_cursor_commits(monkeypatch):
+    existing = [{"_id": eid(0), "name": "old", "kind": "process"}]
+    def concurrent_edges(*args):
+        existing.append({"_id": eid(1), "name": "new", "kind": "equipment"})
+        yield {"_id": "e", "subject_id": eid(0), "object_id": eid(1), "document_id": "d",
+               "version": "v", "chunk_id": "c", "quote": "original"}
+    store = SimpleNamespace(graph_entities=Mock(), graph_edges=Mock(), chunks=Mock())
+    store.graph_entities.find.side_effect = lambda *args: list(existing)
+    store.graph_edges.find.side_effect = concurrent_edges
+    store.chunks.find_one.return_value = {"text": "original"}
+    monkeypatch.setattr(view, "db", lambda: store)
+    monkeypatch.setattr(view, "authorized_document", lambda *a, **k: {"title": "source"})
+    nodes, rows = view.visible_snapshot({})
+    assert view.slice_graph(nodes, rows, GraphBrowse())["meta"]["total"] == 2

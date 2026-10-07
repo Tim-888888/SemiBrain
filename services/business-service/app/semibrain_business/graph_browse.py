@@ -15,9 +15,12 @@ MAX_VISIBLE = 500
 
 def visible_snapshot(claim):
     """Request-local caches only. Counts and aliases never include inaccessible facts."""
+    # Read the bounded-in-time edge set first. A concurrently committed edge may
+    # introduce an entity; reading entities before the edge cursor can miss it.
+    raw_rows = list(db().graph_edges.find({"enabled": True}))
     entities = {r["_id"]: r for r in db().graph_entities.find({})}
     documents, chunks, rows = {}, {}, []
-    for row in db().graph_edges.find({"enabled": True}):
+    for row in raw_rows:
         if row.get("valid_until") and row["valid_until"] <= now():
             continue
         key = (row["document_id"], row["version"])
