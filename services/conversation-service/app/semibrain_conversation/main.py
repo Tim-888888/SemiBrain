@@ -10,6 +10,7 @@ from semibrain_conversation.knowledge_revisions import router as revisions_route
 from semibrain_conversation.memory import router as memory_router
 from semibrain_conversation.operations import router as operations_router
 from semibrain_conversation.storage import initialize
+from semibrain_conversation.titles import router as titles_router
 from semibrain_conversation.wiki import router as wiki_router
 
 app = create_app("conversation-service")
@@ -26,6 +27,7 @@ app.include_router(access.router)
 app.include_router(history.router)
 app.include_router(conversations.router)
 app.include_router(resources.router)
+app.include_router(titles_router)
 
 
 @app.on_event("startup")

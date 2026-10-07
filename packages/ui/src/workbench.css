@@ -1,5 +1,27 @@
 /* Workspace chrome follows the admin theme. Keep answer Markdown and scrolling
    behavior in their existing components; scope these rules to the user surface. */
+.workspace:not(.admin-workspace) .conversation-history-item {
+  display: flex; align-items: center; border-radius: var(--control-radius); margin: 2px 0;
+}
+.workspace:not(.admin-workspace) .conversation-history-item:hover { background: var(--nav-hover); }
+.workspace:not(.admin-workspace) .conversation-history-item.selected { background: var(--nav-selected); }
+.workspace:not(.admin-workspace) .history .conversation-history-link {
+  flex: 1; min-width: 0; width: auto; margin: 0; padding: 10px 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; background: transparent;
+}
+.workspace:not(.admin-workspace) .history .selected .conversation-history-link {
+  color: var(--nav-selected-text); font-weight: 600;
+}
+.workspace:not(.admin-workspace) .history .conversation-history-more {
+  display: flex; align-items: center; justify-content: center; width: 30px; height: 32px;
+  margin: 0 4px 0 0; padding: 0; flex-shrink: 0;
+}
+.workspace:not(.admin-workspace) .topbar-title { min-width: 0; flex: 1; }
+.workspace:not(.admin-workspace) .topbar-title > span {
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.workspace:not(.admin-workspace) .title-edit-button { flex-shrink: 0; }
+#conversation-title-input { width: 100%; margin-top: 8px; }
 .workspace:not(.admin-workspace) {
   background: var(--canvas);
   color: var(--ink);

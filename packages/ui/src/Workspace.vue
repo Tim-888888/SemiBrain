@@ -3,6 +3,9 @@ import { documentCatalog } from './document-catalog'
 import { computed, defineAsyncComponent, inject, provide, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import ComposerAddMenu from './ComposerAddMenu.vue'
 import ConversationStarters from './ConversationStarters.vue'
+import ConversationHistoryItem from './ConversationHistoryItem.vue'
+import ConversationTitleEditor from './ConversationTitleEditor.vue'
+import { mergeTitle, type ConversationTitle } from './conversation-titles'
 import type { ConversationStarter } from './conversation-starters'
 import ResizableSidebar from './ResizableSidebar.vue'
 import { clipboardImages, imageError, ScrollFollow } from './composer.mjs'
@@ -61,6 +64,35 @@ const diagnosticOpen=computed({get:()=>!!diagnosticRun.value,set:(v:boolean)=>{i
 const promptOpen=computed({get:()=>!!promptPreview.value,set:(v:boolean)=>{if(!v)promptPreview.value=''}})
 const passwordBusy=ref(false)
 const conversations = ref<any[]>([]), conversation = ref<any>(null), messages = ref<Message[]>([]), activeRun = ref<Run | null>(null)
+const titleEditor = ref<{ item: any; mode: 'rename' | 'generate' } | null>(null)
+const titleCache = new Map<string, ConversationTitle>(), titlePolls = new Map<string, number>()
+let titleTimer: ReturnType<typeof setTimeout> | undefined, titleEpoch = 0
+function applyTitle(value: ConversationTitle) {
+  titleCache.set(value.id, mergeTitle(titleCache.get(value.id) || value, value))
+  const latest = titleCache.get(value.id)!
+  conversations.value = conversations.value.map(item => item.id === value.id ? mergeTitle(item, latest) : item)
+  if (conversation.value?.id === value.id) conversation.value = mergeTitle(conversation.value, latest)
+}
+function cachedTitle(item: any) { return mergeTitle(item, titleCache.get(item.id) || {}) }
+function editTitle(item: any, mode: 'rename' | 'generate' = 'rename') { titleEditor.value = { item, mode } }
+function scheduleTitles() {
+  clearTimeout(titleTimer)
+  if (conversations.value.some(item => item.title_status === 'pending' && (titlePolls.get(item.id) || 0) < 40))
+    titleTimer = setTimeout(refreshTitles, 3000)
+}
+async function refreshTitles() {
+  const epoch = titleEpoch
+  const items = conversations.value.filter(item => item.title_status === 'pending' && (titlePolls.get(item.id) || 0) < 40).slice(0, 5)
+  await Promise.allSettled(items.map(async item => {
+    titlePolls.set(item.id, (titlePolls.get(item.id) || 0) + 1)
+    const value = await api<ConversationTitle>(`/v1/conversations/${item.id}/title`)
+    if (epoch === titleEpoch) applyTitle(value)
+  }))
+  if (epoch === titleEpoch) scheduleTitles()
+}
+watch(() => user.value?.id, () => {
+  titleEpoch++; clearTimeout(titleTimer); titleCache.clear(); titlePolls.clear(); titleEditor.value = null
+})
 const attached = ref<string[]>([])
 const mode = ref<'quick_qa' | 'investigation'>('quick_qa'), allowWeb = ref(false)
 const multiAvailable = ref(false), multiAgent = ref(false), uploading = ref(false)
@@ -101,10 +133,11 @@ async function loadLists() {
   const current = generation
   const [page, documents, capabilities] = await Promise.all([api('/v1/conversations'), documentCatalog(), api('/v1/capabilities')])
   if (current !== generation) return
-  multiAvailable.value = capabilities.multi_agent === true; conversations.value = page.items; conversationsCursor.value = page.next_cursor
+  multiAvailable.value = capabilities.multi_agent === true; conversations.value = page.items.map(cachedTitle); conversationsCursor.value = page.next_cursor
   knowledge.value = documents.items.filter((item: any) => item.active_version)
-  const updated = page.items.find((item: any) => item.id === conversation.value?.id)
-  if (updated) conversation.value = updated
+  const updated = conversations.value.find((item: any) => item.id === conversation.value?.id)
+  if (updated) conversation.value = { ...updated, revision: Math.max(updated.revision, conversation.value.revision) }
+  scheduleTitles()
 }
 async function signedIn(value: User) { user.value = value; if (adminPage.value) view.value = String(router?.currentRoute.value.name || 'knowledge'); await loadLists() }
 function rememberChat(id?: string) {
@@ -140,9 +173,9 @@ async function openChat(item: any) {
   starterNotice.value = ''
   const current = ++generation; clearImages(); scrollFollow.reset(); closeStream(); view.value = 'chat'; error.value = ''; pending = null
   try {
-    const result = await api(`/v1/conversations/${item.id}/messages`)
+    const [result, title] = await Promise.all([api(`/v1/conversations/${item.id}/messages`), api<ConversationTitle>(`/v1/conversations/${item.id}/title`)])
     if (generation !== current) return
-    multiAgent.value = item.last_investigation_strategy === 'multi_agent'; imageUploads.value = []; conversation.value = item; messages.value = result.items; messagesCursor.value = result.next_cursor; activeRun.value = null; selectedDocuments.value = []; attached.value = []
+    multiAgent.value = item.last_investigation_strategy === 'multi_agent'; imageUploads.value = []; conversation.value = cachedTitle(item); applyTitle(title); scheduleTitles(); messages.value = result.items; messagesCursor.value = result.next_cursor; activeRun.value = null; selectedDocuments.value = []; attached.value = []
     const last = messages.value.at(-1)
     conversation.value.revision = Math.max(item.revision || 0, ...messages.value.map(message => message.input_revision))
     rememberChat(item.id)
@@ -258,7 +291,7 @@ async function send() {
   } catch (e) { if (current === generation) error.value = (e as Error).message }
   finally { sending.value = false }
 }
-async function olderChats() { try { const page = await api('/v1/conversations?after=' + conversationsCursor.value); conversations.value.push(...page.items); conversationsCursor.value = page.next_cursor } catch (e) { error.value = (e as Error).message } }
+async function olderChats() { const current=generation; try { const page = await api('/v1/conversations?after=' + conversationsCursor.value); if(current!==generation)return; conversations.value.push(...page.items.map(cachedTitle)); conversationsCursor.value = page.next_cursor; scheduleTitles() } catch (e) { if(current===generation)error.value = (e as Error).message } }
 async function olderMessages() {
   if (loadingOlder.value) return
   const current = generation; loadingOlder.value = true; scrollFollow.pause()
@@ -299,7 +332,7 @@ async function showPrompt(runId: string) {
 }
 function keydown(event: KeyboardEvent) { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); send() } }
 onMounted(async () => { try { const result = await api('/v1/auth/me'); setCsrf(result.csrf); await signedIn(result.user); if (!adminPage.value) await restoreChat() } catch { user.value = null } finally { loading.value = false } })
-onUnmounted(() => { closeStream(); clearImages() })
+onUnmounted(() => { closeStream(); clearImages(); titleEpoch++; clearTimeout(titleTimer) })
 </script>
 <template>
   <div v-if="loading" class="loading-page">正在打开 SemiBrain…</div>
@@ -310,10 +343,10 @@ onUnmounted(() => { closeStream(); clearImages() })
       <button v-if="!adminPage" class="new-chat" @click="newChat">＋ 新会话</button>
       <nav v-if="adminPage" class="admin-navigation" aria-label="管理导航"><section v-for="group in adminGroups" :key="group.label" class="nav-group"><p class="nav-group-label">{{ group.label }}</p><button v-for="[id,label] in group.items" :key="id" :class="{ active: view === id }" :aria-current="view === id ? 'page' : undefined" :title="label" @click="navigate(id)"><UiIcon :name="id" /><span class="nav-label">{{ label }}</span></button></section></nav>
       <nav v-else aria-label="工作台导航"><button v-for="[id,label] in userPages" :key="id" :class="{ active: view === id }" :aria-current="view === id ? 'page' : undefined" @click="navigate(id)"><UiIcon :name="id" />{{ label }}</button></nav>
-      <div v-if="!adminPage" class="history"><p class="eyebrow">最近会话</p><button v-for="item in conversations" :key="item.id" :title="item.title" :class="{ selected: conversation?.id === item.id }" @click="openChat(item)">{{ item.title }}</button><button v-if="conversationsCursor" @click="olderChats">加载更早会话</button><p v-if="!conversations.length" class="small muted">你的会话会保存在这里</p></div>
+      <div v-if="!adminPage" class="history"><p class="eyebrow">最近会话</p><ConversationHistoryItem v-for="item in conversations" :key="item.id" :item="item" :selected="conversation?.id === item.id" @open="openChat(item)" @edit="editTitle(item, $event)" /><button v-if="conversationsCursor" @click="olderChats">加载更早会话</button><p v-if="!conversations.length" class="small muted">你的会话会保存在这里</p></div>
       <div class="sidebar-bottom"><a v-if="user.role === 'admin' && !adminPage" class="admin-link" href="/admin/">管理控制台 ↗</a><a v-if="adminPage" class="admin-link" href="/">返回工作台 ↗</a><div class="profile"><span class="avatar">{{ user.username.slice(0, 1).toUpperCase() }}</span><div><strong>{{ user.username }}</strong><small>{{ user.role === 'admin' ? '管理员' : '普通用户' }}</small></div><button class="text-button" @click="settings = true" aria-label="账号设置">⚙</button></div><button class="text-button logout" @click="logout">退出登录</button></div>
     </component>
-    <main class="main-panel"><header class="topbar"><div class="topbar-title"><button ref="mobileMenu" class="icon-button mobile-menu-button" @click="mobileNav = !mobileNav" aria-label="打开导航" :aria-expanded="mobileNav"><UiIcon name="menu" /></button><button v-if="adminPage" class="icon-button desktop-collapse" :title="collapsed ? '展开侧栏' : '收起侧栏'" :aria-label="collapsed ? '展开侧栏' : '收起侧栏'" @click="collapsed = !collapsed"><UiIcon name="collapse" /></button><span><template v-if="adminPage"><span class="breadcrumb-root">管理控制台</span><span class="breadcrumb-divider">/</span></template>{{ pageTitle }}</span></div><span class="workspace-tag">半导体知识空间</span></header>
+    <main class="main-panel"><header class="topbar"><div class="topbar-title"><button ref="mobileMenu" class="icon-button mobile-menu-button" @click="mobileNav = !mobileNav" aria-label="打开导航" :aria-expanded="mobileNav"><UiIcon name="menu" /></button><button v-if="adminPage" class="icon-button desktop-collapse" :title="collapsed ? '展开侧栏' : '收起侧栏'" :aria-label="collapsed ? '展开侧栏' : '收起侧栏'" @click="collapsed = !collapsed"><UiIcon name="collapse" /></button><span><template v-if="adminPage"><span class="breadcrumb-root">管理控制台</span><span class="breadcrumb-divider">/</span></template>{{ pageTitle }}</span><button v-if="!adminPage && view === 'chat' && conversation" class="icon-button title-edit-button" aria-label="重命名会话" title="重命名会话" @click="editTitle(conversation)"><UiIcon name="edit" :size="17" /></button></div><span class="workspace-tag">半导体知识空间</span></header>
       <EvaluationPanel v-if="view === 'evaluations'" /><AgentConfiguration v-else-if="view === 'agent-config'" /><MemoryPanel v-else-if="view === 'memory'" />
       <KnowledgePanel v-else-if="view === 'knowledge'" :manage="adminPage && user.role === 'admin'" />
       <SkillsPanel v-else-if="view === 'skills'" /><MCPPanel v-else-if="view === 'mcp'" /><GraphPanel v-else-if="view === 'graph'" :manage="adminPage && user.role === 'admin'" /><WikiPanel v-else-if="view === 'wiki'" :manage="adminPage && user.role === 'admin'" /><OperationsPanel v-else-if="view === 'operations'" /><UsersPanel v-else-if="view === 'users'" /><RunComparison v-else-if="view === 'comparison'" />
@@ -351,6 +384,7 @@ onUnmounted(() => { closeStream(); clearImages() })
         </div>
       </template>
     </main>
+    <ConversationTitleEditor v-if="titleEditor" :key="titleEditor.item.id" :item="titleEditor.item" :mode="titleEditor.mode" @close="titleEditor = null" @saved="applyTitle" />
     <ResourceDrawer v-model="diagnosticOpen" title="运行详情" width="1100px"><RunDiagnostics v-if="diagnosticRun" :run-id="diagnosticRun" /></ResourceDrawer>
     <ResourceDrawer v-model="promptOpen" title="脱敏提示词预览" width="1000px"><p>仅显示本账号且来源仍可访问的已执行模型输入；不包含密钥或隐藏推理。</p><pre class="prompt-preview">{{promptPreview}}</pre></ResourceDrawer>
     <ResourceDrawer v-model="settings" title="账号设置" width="480px" :snapshot="{oldPassword,newPassword}" :busy="passwordBusy" :error="error"><p class="muted">修改密码后需要重新登录。</p><form id="password-editor" @submit.prevent="changePassword"><label>当前密码<input v-model="oldPassword" type="password" autocomplete="current-password" required :disabled="passwordBusy"/></label><label>新密码<input v-model="newPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" required :disabled="passwordBusy"/></label></form><template #footer><button type="submit" form="password-editor" class="primary" :disabled="passwordBusy">保存密码</button></template></ResourceDrawer>

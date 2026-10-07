@@ -35,6 +35,12 @@ services:
     command: [celery, -A, semibrain_conversation.worker:app, worker, --beat, --schedule, /tmp/celerybeat, --pool, threads, --concurrency, '2', --loglevel, WARNING, --without-gossip, --without-mingle, --without-heartbeat]
     env_file: ["${SECRET_DIR}/conversation.env"]
     healthcheck: {disable: true}
+  title-worker:
+    <<: *api
+    command: [celery, -A, semibrain_conversation.title_worker:app, worker, --beat, --schedule, /tmp/title-celerybeat, --pool, threads, --concurrency, '1', --queues, celery_conversation_titles_v1, --loglevel, WARNING, --without-gossip, --without-mingle, --without-heartbeat]
+    env_file: ["${SECRET_DIR}/conversation.env"]
+    mem_limit: 512m
+    healthcheck: {disable: true}
   agent-worker:
     <<: *api
     command: [celery, -A, semibrain_agent.worker:app, worker, --beat, --schedule, /tmp/celerybeat, --pool, threads, --concurrency, '3', --loglevel, WARNING, --without-gossip, --without-mingle, --without-heartbeat]

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 withDefaults(defineProps<{ name: string; size?: number }>(), { size: 20 })
 const paths: Record<string, string> = {
+  edit:'M14 5l5 5 M4 20l5-1L21 7l-5-5L4 14z',
+  more:'M5 12h.01 M12 12h.01 M19 12h.01',
   knowledge:'M4 4h16v16H4z M8 4v16 M11 8h6 M11 12h6 M11 16h4',
   chat:'M4 4h16v12H9l-5 4z M8 8h8 M8 12h5',
   wiki:'M12 5C8 3 5 3 3 4v15c3-1 6-1 9 1 3-2 6-2 9-1V4c-2-1-5-1-9 1z M12 5v15',

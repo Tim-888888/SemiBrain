@@ -11,6 +11,7 @@ from semibrain_agent.memory import router as memory_router
 from semibrain_agent.retention import router as retention_router
 from semibrain_agent.runs import router
 from semibrain_agent.storage import initialize
+from semibrain_agent.titles import router as titles_router
 
 app = create_app("agent-service")
 app.include_router(router_for("agent"))
@@ -22,6 +23,7 @@ app.include_router(evaluations_router)
 app.include_router(memory_router)
 app.include_router(retention_router)
 app.include_router(graph_extraction_router)
+app.include_router(titles_router)
 
 
 @app.on_event("startup")

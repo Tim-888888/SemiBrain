@@ -21,6 +21,8 @@ from semibrain_contracts.models import InputSnapshot, RunRequest, parse_sse_curs
 
 from semibrain_conversation.access import POLICY, run_snapshot
 from semibrain_conversation.auth import current_user, db
+from semibrain_conversation.titles import public as public_title
+from semibrain_conversation.titles import queue_first
 
 router = APIRouter()
 
@@ -47,6 +49,9 @@ def create(form: ConversationInput, request: Request, user=Depends(current_user)
         "request_key": key,
         "payload_hash": payload_hash,
         "title": form.title,
+        "title_revision": 0,
+        "title_source": "placeholder" if form.title == "新会话" else "manual",
+        "title_status": "idle",
         "revision": 0,
         "created_at": now(),
         "updated_at": now(),
@@ -55,7 +60,7 @@ def create(form: ConversationInput, request: Request, user=Depends(current_user)
     saved = db().conversations.find_one({"request_key": key})
     if saved["payload_hash"] != payload_hash:
         failure("IDEMPOTENCY_CONFLICT", 409)
-    return {"id": saved["_id"], "title": saved["title"], "revision": saved["revision"]}
+    return {**public_title(saved), "revision": saved["revision"]}
 
 
 @router.get("/v1/conversations")
@@ -73,8 +78,7 @@ def list_conversations(after: str = "", user=Depends(current_user)):
     return {
         "items": [
             {
-                "id": r["_id"],
-                "title": r["title"],
+                **public_title(r),
                 "revision": r["revision"],
                 "updated_at": r["updated_at"],
                 "last_investigation_strategy": r.get("last_investigation_strategy", "single_agent"),
@@ -282,10 +286,7 @@ def submit(conversation_id: str, form: MessageInput, request: Request, user=Depe
             },
             session=session,
         )
-        if conv["revision"] == 1:
-            db().conversations.update_one(
-                {"_id": conversation_id}, {"$set": {"title": form.text[:60]}}, session=session
-            )
+        queue_first(conv, user, form.text, session)
         publish(db(), "stream:runs", "run.requested", run_id, command, session)
         return row
 

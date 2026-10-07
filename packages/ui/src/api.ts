@@ -10,6 +10,11 @@ export type Message = Partial<Run> & { id: string; role: string; text?: string; 
 let csrf = ''
 export function setCsrf(value: string) { csrf = value }
 const labels: Record<string, string> = {
+  TITLE_REVISION_CONFLICT: '标题已在其他页面更新。请重新打开改名窗口后保存。',
+  TITLE_QUEUE_BUSY: '已有多个标题正在生成，请稍后再试。',
+  TITLE_NO_MESSAGES: '发送第一条消息后，即可生成标题。',
+  TITLE_SUGGESTION_NOT_FOUND: '标题建议已过期，请重新生成。',
+  CONVERSATION_NOT_FOUND: '会话不存在或无权访问。',
   CONFIG_MODEL_UNAVAILABLE: '所选模型未在当前部署中批准，请重新选择可用模型。',
   CONFIG_BASELINE_CHANGED: '系统基线已升级，请基于此内容创建新草稿并重新审核。',
   CONFIG_ROLLBACK_UNPUBLISHED: '只能回滚到曾经发布过的版本。',

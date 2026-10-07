@@ -15,9 +15,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 STORAGE = ("mongo", "redis", "postgres", "minio", "etcd", "milvus", "neo4j")
-APPLICATION = ("web", "conversation", "conversation-worker", "agent", "agent-worker", "business", "business-worker")
+APPLICATION = ("web", "conversation", "conversation-worker", "title-worker", "agent", "agent-worker", "business", "business-worker")
 AUTHORITY = {
-    'conversation': ['users','conversations','messages','gateway_runs'],
+    'conversation': ['users','conversations','messages','gateway_runs','conversation_title_jobs','conversation_title_commands'],
     'agent': ['runs','reports','model_calls','tool_calls','memories','agent_configuration','agent_configuration_versions','evaluations'],
     'business': ['documents','document_versions','chunks','assets','graph_edges','graph_entities','skills','skill_versions','mcp_settings'],
 }
@@ -123,7 +123,7 @@ def main():
     started = time.monotonic()
     try:
         # Stop ingress first; no newly accepted work can cross the snapshot fence.
-        for group in (['web','conversation'], ['conversation-worker','agent-worker','business-worker'], ['agent','business']):
+        for group in (['web','conversation'], ['conversation-worker','title-worker','agent-worker','business-worker'], ['agent','business']):
             names = [apps[name]['Id'] for name in group]
             run(['docker','stop','--time','25',*names], timeout=100)
         # Recheck accepted work after closing ingress. If busy, restore services
