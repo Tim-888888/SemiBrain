@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import BrandLogo from './BrandLogo.vue'
 import IcpFooter from './IcpFooter.vue'
+import GitHubProfileLink from './GitHubProfileLink.vue'
 import { api, post, setCsrf, type User } from './api'
 const emit = defineEmits<{ signedIn: [user: User] }>()
 const mode = ref<'login' | 'register'>('login')
@@ -49,7 +50,13 @@ onMounted(refresh)
         <p v-if="error" role="alert" class="error">{{ error }}</p>
         <button class="primary wide" :disabled="busy || refreshing || !challenge">{{ busy ? '正在处理…' : mode === 'login' ? '登录 SemiBrain' : '创建账号并登录' }}</button>
       </form>
+      <div class="auth-profile-link"><GitHubProfileLink /></div>
       <IcpFooter />
     </section>
   </main>
 </template>
+<style scoped>
+.auth-profile-link { display: flex; justify-content: center; margin-top: 20px; }
+.auth-profile-link :deep(.github-profile-link) { min-height: 40px; padding: 9px 20px; }
+@media (pointer: coarse) { .auth-profile-link :deep(.github-profile-link) { min-height: 44px; } }
+</style>

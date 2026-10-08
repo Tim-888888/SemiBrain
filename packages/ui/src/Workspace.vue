@@ -13,6 +13,7 @@ import ResizableSidebar from './ResizableSidebar.vue'
 import { clipboardImages, imageError, ScrollFollow } from './composer.mjs'
 import AuthPanel from './AuthPanel.vue'
 import IcpFooter from './IcpFooter.vue'
+import GitHubProfileLink from './GitHubProfileLink.vue'
 import BrandLogo from './BrandLogo.vue'
 import ResourceDrawer from './ResourceDrawer.vue'
 import PanelLoadError from './PanelLoadError.vue'
@@ -384,7 +385,7 @@ onUnmounted(() => { closeStream(); clearImages(); titleEpoch++; clearTimeout(tit
       <div v-if="!adminPage" class="history"><div class="history-heading"><p class="eyebrow">最近会话</p><button class="text-button" :disabled="refreshingLists" @click="refreshLists" title="刷新会话列表与可用资料">刷新</button></div><ConversationHistoryItem v-for="item in conversations" :key="item.id" :item="item" :selected="conversation?.id === item.id" @open="openChat(item)" @edit="editTitle(item, $event)" /><button v-if="conversationsCursor" @click="olderChats">加载更早会话</button><p v-if="!conversations.length" class="small muted">你的会话会保存在这里</p></div>
       <div class="sidebar-bottom"><a v-if="user.role === 'admin' && !adminPage" class="admin-link" href="/admin/">管理控制台 ↗</a><a v-if="adminPage" class="admin-link" href="/">返回工作台 ↗</a><div class="profile"><span class="avatar">{{ user.username.slice(0, 1).toUpperCase() }}</span><div><strong>{{ user.username }}</strong><small>{{ user.role === 'admin' ? '管理员' : '普通用户' }}</small></div><button class="text-button" @click="settings = true" aria-label="账号设置">⚙</button></div><button class="text-button logout" @click="logout">退出登录</button><IcpFooter /></div>
     </component>
-    <main class="main-panel"><header class="topbar"><div class="topbar-title"><button ref="mobileMenu" class="icon-button mobile-menu-button" @click="mobileNav = !mobileNav" aria-label="打开导航" :aria-expanded="mobileNav"><UiIcon name="menu" /></button><button v-if="adminPage" class="icon-button desktop-collapse" :title="collapsed ? '展开侧栏' : '收起侧栏'" :aria-label="collapsed ? '展开侧栏' : '收起侧栏'" @click="collapsed = !collapsed"><UiIcon name="collapse" /></button><span><template v-if="adminPage"><span class="breadcrumb-root">管理控制台</span><span class="breadcrumb-divider">/</span></template>{{ pageTitle }}</span><button v-if="!adminPage && view === 'chat' && conversation" class="icon-button title-edit-button" aria-label="重命名会话" title="重命名会话" @click="editTitle(conversation)"><UiIcon name="edit" :size="17" /></button></div><span class="workspace-tag">半导体知识空间</span></header>
+    <main class="main-panel"><header class="topbar"><div class="topbar-title"><button ref="mobileMenu" class="icon-button mobile-menu-button" @click="mobileNav = !mobileNav" aria-label="打开导航" :aria-expanded="mobileNav"><UiIcon name="menu" /></button><button v-if="adminPage" class="icon-button desktop-collapse" :title="collapsed ? '展开侧栏' : '收起侧栏'" :aria-label="collapsed ? '展开侧栏' : '收起侧栏'" @click="collapsed = !collapsed"><UiIcon name="collapse" /></button><span><template v-if="adminPage"><span class="breadcrumb-root">管理控制台</span><span class="breadcrumb-divider">/</span></template>{{ pageTitle }}</span><button v-if="!adminPage && view === 'chat' && conversation" class="icon-button title-edit-button" aria-label="重命名会话" title="重命名会话" @click="editTitle(conversation)"><UiIcon name="edit" :size="17" /></button></div><div class="topbar-actions"><GitHubProfileLink /><span class="workspace-tag">半导体知识空间</span></div></header>
       <EvaluationPanel v-if="view === 'evaluations'" /><AgentConfiguration v-else-if="view === 'agent-config'" /><MemoryPanel v-else-if="view === 'memory'" />
       <KnowledgePanel v-else-if="view === 'knowledge'" :manage="adminPage && user.role === 'admin'" />
       <SkillsPanel v-else-if="view === 'skills'" /><MCPPanel v-else-if="view === 'mcp'" /><GraphPanel v-else-if="view === 'graph'" :manage="adminPage && user.role === 'admin'" /><WikiPanel v-else-if="view === 'wiki'" :manage="adminPage && user.role === 'admin'" /><OperationsPanel v-else-if="view === 'operations'" /><UsersPanel v-else-if="view === 'users'" /><RunComparison v-else-if="view === 'comparison'" />
@@ -429,3 +430,9 @@ onUnmounted(() => { closeStream(); clearImages(); titleEpoch++; clearTimeout(tit
     <ResourceDrawer v-model="settings" title="账号设置" width="480px" :snapshot="{oldPassword,newPassword}" :busy="passwordBusy" :error="error"><p class="muted">修改密码后需要重新登录。</p><form id="password-editor" @submit.prevent="changePassword"><label>当前密码<input v-model="oldPassword" type="password" autocomplete="current-password" required :disabled="passwordBusy"/></label><label>新密码<input v-model="newPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" required :disabled="passwordBusy"/></label></form><template #footer><button type="submit" form="password-editor" class="primary" :disabled="passwordBusy">保存密码</button></template></ResourceDrawer>
   </div>
 </template>
+<style scoped>
+.topbar-title { flex: 1; min-width: 0; }
+.topbar-title > button { flex-shrink: 0; }
+.topbar-actions { display: flex; flex-shrink: 0; align-items: center; gap: 16px; }
+@media (max-width: 650px) { .topbar-actions .workspace-tag { display: none; } }
+</style>
