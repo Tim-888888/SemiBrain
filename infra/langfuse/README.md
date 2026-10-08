@@ -81,6 +81,54 @@ authenticated object-storage design if introduced later.
 
 ## Retention and recovery
 
+### Optional administrator SSO
+
+The conversation service can act as a narrowly scoped OIDC bridge for the single
+self-hosted Langfuse client. Enable `SEMIBRAIN_LANGFUSE_SSO_ENABLED` only after
+setting the client ID/secret, a base64 RSA PKCS8 signing key, and the explicit
+local administrator user ID / existing Langfuse email binding. The email is an
+operator-confirmed mapping, not a verified user-entered email. No users or
+project memberships are created. Never map arbitrary registration emails.
+
+Use `SEMIBRAIN_PUBLIC_ORIGIN/v1/auth/langfuse/oidc` as `AUTH_CUSTOM_ISSUER`.
+Set `AUTH_CUSTOM_NAME=SemiBrain`, matching client credentials,
+`AUTH_CUSTOM_ID_TOKEN=true`, `AUTH_CUSTOM_CLIENT_AUTH_METHOD=client_secret_basic`,
+`AUTH_CUSTOM_CHECKS=pkce,state,nonce`, and
+`AUTH_CUSTOM_ID_TOKEN_SIGNED_RESPONSE_ALG=RS256`. Account linking must be enabled
+for the custom provider to attach this explicitly bound identity to the existing
+password account. Keep signup disabled, username/password enabled as a fallback,
+and automatic organization/project provisioning unset.
+
+Include `admin-sso.locations.conf` in the Langfuse HTTPS server, adapting the
+canonical SemiBrain return origin if needed. Both HTTPS endpoints must be
+reachable from the Langfuse container. Preserve all existing routes and TLS
+configuration. Disable access logging for the OIDC routes and callback on every
+proxy layer. Do not log authorization codes, JWTs, credentials or cookies.
+
+The trace gateway supplies a local `sso_url` only for the bound administrator and
+the current project/origin. The open endpoint rechecks run access and computes
+the destination server-side. Historical cloud projects retain their existing
+login. The same-origin bridge uses Langfuse's normal CSRF-protected sign-in,
+so Langfuse itself creates its session; no session cookie is forged or shared.
+Authorization codes expire in 60 seconds and are consumed atomically. PKCE S256,
+fixed callback, confidential client authentication and live account/session
+checks are mandatory. Access/ID tokens expire in 120 seconds; no refresh tokens,
+dynamic clients, consent grants or public user provisioning are supported.
+
+SemiBrain logout/password change revokes local access first, then completes a
+CSRF-protected Langfuse logout in the same browser and returns to SemiBrain.
+This requires network access and completion of the redirect. Other devices and
+already-issued Langfuse sessions remain governed by Langfuse's session policy;
+disabling the local account blocks new SSO but is not global back-channel logout.
+For urgent revocation also revoke sessions in Langfuse. Configure a short
+`AUTH_SESSION_MAX_AGE` (minutes; upstream requires >5) and retain that limitation
+in the operational runbook. Set the bridge flag false and remove the custom
+provider configuration to roll back; the existing password login still works.
+
+Verify fresh-browser sign-in, an exact trace return, mobile layout, ordinary-user
+denial, code replay/expiry, revoked accounts/sessions, logout and password-login
+fallback before declaring SSO live. There is no business database migration.
+
 Built-in configurable retention is an Enterprise entitlement in this release;
 the headless retention variable is ignored without that entitlement. The
 community deployment uses `retention.py` and the supported project API to

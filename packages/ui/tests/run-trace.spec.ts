@@ -21,6 +21,15 @@ const result = () => ({
 })
 
 describe('owned run trace', () => {
+  it('uses the bound admin SSO entry and keeps it hidden from ordinary users', async () => {
+    const value = { ...result(), trace: { ...result().trace, sso_url: '/v1/auth/langfuse/open?run_id=run' } }
+    vi.mocked(api).mockResolvedValue(value)
+    const w = mount(RunTrace, { props: { runId: 'run', isAdmin: true } }); await flushPromises()
+    expect(w.get('a').attributes('href')).toBe(value.trace.sso_url)
+    expect(w.text()).toContain('管理员统一登录')
+    await w.setProps({ isAdmin: false })
+    expect(w.find('a').exists()).toBe(false); w.unmount()
+  })
   it('uses the owner endpoint and hides external links from ordinary accounts', async () => {
     vi.mocked(api).mockResolvedValue(result())
     const w = mount(RunTrace, { props: { runId: 'run' } }); await flushPromises()

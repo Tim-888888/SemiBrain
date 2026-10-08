@@ -7,6 +7,7 @@ from semibrain_conversation.exports import router as exports_router
 from semibrain_conversation.extensions import router as extensions_router
 from semibrain_conversation.graph import router as graph_router
 from semibrain_conversation.knowledge_revisions import router as revisions_router
+from semibrain_conversation.langfuse_sso import router as langfuse_sso_router
 from semibrain_conversation.memory import router as memory_router
 from semibrain_conversation.operations import router as operations_router
 from semibrain_conversation.storage import initialize
@@ -23,6 +24,7 @@ app.include_router(revisions_router)
 app.include_router(memory_router)
 app.include_router(exports_router)
 app.include_router(auth.router)
+app.include_router(langfuse_sso_router)
 app.include_router(access.router)
 app.include_router(history.router)
 app.include_router(conversations.router)

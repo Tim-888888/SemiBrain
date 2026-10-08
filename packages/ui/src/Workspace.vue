@@ -147,7 +147,13 @@ async function loadLists() {
   if (updated) conversation.value = { ...updated, revision: Math.max(updated.revision, conversation.value.revision) }
   scheduleTitles()
 }
-async function signedIn(value: User) { setCacheUser(value); user.value = value; if (adminPage.value) view.value = String(router?.currentRoute.value.name || 'knowledge'); else await loadLists() }
+async function signedIn(value: User) {
+  setCacheUser(value); user.value = value
+  if (value.role === 'admin' && new URLSearchParams(window.location.search).get('sso') === 'langfuse') {
+    window.location.replace('/v1/auth/langfuse/resume'); return
+  }
+  if (adminPage.value) view.value = String(router?.currentRoute.value.name || 'knowledge'); else await loadLists()
+}
 const refreshingLists = ref(false)
 async function refreshLists() { refreshingLists.value = true; try { invalidateReadCache(); await loadLists() } catch(e) { error.value = (e as Error).message } finally { refreshingLists.value = false } }
 async function sourceToggle(event: Event) {
@@ -331,10 +337,15 @@ function resetSession() {
   conversations.value = []; knowledge.value = []; multiAvailable.value = false
   settings.value = false; diagnosticRun.value = ''; promptPreview.value = ''
 }
-async function logout() { try { await post('/v1/auth/logout', {}); resetSession() } catch (e) { error.value = (e as Error).message } }
+function finishLogout(result: { logout_url?: string; sso_logout_failed?: boolean }) {
+  resetSession()
+  if (result.logout_url?.startsWith('/v1/auth/langfuse/logout-redirect?')) window.location.assign(result.logout_url)
+  else if (result.sso_logout_failed) window.alert('SemiBrain 已退出；Langfuse 暂时无法同步退出，请在 Langfuse 中手动退出。')
+}
+async function logout() { try { finishLogout(await post('/v1/auth/logout', {})) } catch (e) { error.value = (e as Error).message } }
 async function changePassword() {
   if(passwordBusy.value)return;passwordBusy.value=true
-  try { await post('/v1/auth/password', { old_password: oldPassword.value, new_password: newPassword.value }); resetSession(); oldPassword.value = ''; newPassword.value = '' }
+  try { const result = await post('/v1/auth/password', { old_password: oldPassword.value, new_password: newPassword.value }); oldPassword.value = ''; newPassword.value = ''; finishLogout(result) }
   catch (e) { error.value = (e as Error).message }
   finally{passwordBusy.value=false}
 }

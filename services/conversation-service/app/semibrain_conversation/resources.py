@@ -10,6 +10,7 @@ from semibrain_common.runtime import call, failure
 
 from semibrain_conversation.access import business, run_snapshot
 from semibrain_conversation.auth import admin, current_user, db
+from semibrain_conversation.langfuse_sso import decorate_trace
 
 router = APIRouter()
 
@@ -17,7 +18,9 @@ router = APIRouter()
 @router.get("/admin/v1/runs/{run_id}/diagnostics")
 def run_diagnostics(run_id: UUID, user=Depends(admin)):
     run_snapshot(user, str(run_id))
-    return call("agent", "GET", f"/internal/v1/runs/{run_id}/diagnostics").json()
+    result = call("agent", "GET", f"/internal/v1/runs/{run_id}/diagnostics").json()
+    result["trace"] = decorate_trace(result.get("trace"), run_id, user)
+    return result
 
 
 @router.get("/v1/runs/{run_id}/trace")
@@ -28,7 +31,7 @@ def own_run_trace(run_id: UUID, user=Depends(current_user)):
     public = {key: result[key] for key in (
         "run_id", "status", "items", "counts", "truncated", "telemetry", "read_only") if key in result}
     if user.get("role") == "admin":
-        public["trace"] = result.get("trace")
+        public["trace"] = decorate_trace(result.get("trace"), run_id, user)
     return JSONResponse(public, headers={"Cache-Control": "no-store"})
 
 

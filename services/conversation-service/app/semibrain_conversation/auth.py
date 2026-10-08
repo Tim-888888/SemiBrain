@@ -248,7 +248,18 @@ def me(request: Request, response: Response, user=Depends(current_user)):
 def logout(request: Request, response: Response, user=Depends(current_user)):
     redis().delete("auth:session:" + digest(request.cookies[COOKIE]))
     response.delete_cookie(COOKIE, path="/", secure=secure(), httponly=True, samesite="lax")
-    return {"ok": True}
+    return logout_result(user)
+
+
+def logout_result(user):
+    # Local logout/revocation must succeed even if the optional SSO bridge is down.
+    from semibrain_conversation.langfuse_sso import logout_url
+
+    try:
+        url = logout_url(user)
+    except Exception:
+        return {"ok": True, "sso_logout_failed": True}
+    return {"ok": True, **({"logout_url": url} if url else {})}
 
 
 class PasswordInput(BaseModel):
@@ -272,7 +283,7 @@ def password(form: PasswordInput, request: Request, response: Response, user=Dep
     if not updated.modified_count:
         failure("REVISION_CONFLICT", 409)
     response.delete_cookie(COOKIE, path="/")
-    return {"ok": True, "login_required": True}
+    return {**logout_result(user), "login_required": True}
 
 
 @router.get("/admin/v1/users")

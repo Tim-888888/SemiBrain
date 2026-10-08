@@ -4,7 +4,7 @@ import { api } from './api'
 
 type Usage = { input_tokens?: number; output_tokens?: number; total_tokens?: number }
 type Step = { id: string; kind: string; phase?: string; tool?: string; name?: string; parent_id?: string | null; status?: string; created_at?: string; elapsed_ms?: number | null; usage: Usage; profile?: { model?: string }; error_code?: string }
-type Trace = { status: string; counts: { model: number; tool: number }; items: Step[]; truncated: boolean; trace?: { url?: string }; telemetry: { status: string; items: Step[]; truncated: boolean } }
+type Trace = { status: string; counts: { model: number; tool: number }; items: Step[]; truncated: boolean; trace?: { url?: string; sso_url?: string }; telemetry: { status: string; items: Step[]; truncated: boolean } }
 const props = defineProps<{ runId: string; isAdmin?: boolean }>()
 const data = ref<Trace | null>(null), error = ref(''), loading = ref(false)
 const view = ref('calls'), kind = ref('all')
@@ -56,8 +56,8 @@ const spans = computed(() => {
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <p v-if="loading" class="muted" role="status">正在读取本次链路…</p>
     <template v-if="data">
-      <div class="trace-status-row"><span class="trace-status" :data-status="data.status">{{ states[data.status] || data.status }}</span><a v-if="isAdmin && data.trace?.url" :href="data.trace.url" target="_blank" rel="noopener noreferrer">完整 Langfuse ↗</a></div>
-      <p v-if="isAdmin && data.trace?.url" class="small muted">管理员入口，需登录 Langfuse 项目账号。</p>
+      <div class="trace-status-row"><span class="trace-status" :data-status="data.status">{{ states[data.status] || data.status }}</span><a v-if="isAdmin && data.trace?.url" :href="data.trace.sso_url || data.trace.url" target="_blank" rel="noopener noreferrer">完整 Langfuse ↗</a></div>
+      <p v-if="isAdmin && data.trace?.url" class="small muted">{{ data.trace.sso_url ? '管理员统一登录，将直接打开本次链路。' : '管理员入口，需登录 Langfuse 项目账号。' }}</p>
       <div class="trace-metrics">
         <article><span>模型请求</span><strong>{{ data.counts.model }} <small>次</small></strong></article>
         <article><span>工具调用</span><strong>{{ data.counts.tool }} <small>次</small></strong></article>
