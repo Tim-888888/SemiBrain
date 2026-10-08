@@ -4,7 +4,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict
 from semibrain_common.runtime import call, failure
 
@@ -18,6 +18,18 @@ router = APIRouter()
 def run_diagnostics(run_id: UUID, user=Depends(admin)):
     run_snapshot(user, str(run_id))
     return call("agent", "GET", f"/internal/v1/runs/{run_id}/diagnostics").json()
+
+
+@router.get("/v1/runs/{run_id}/trace")
+def own_run_trace(run_id: UUID, user=Depends(current_user)):
+    # Includes owner binding, account revocation and current source access checks.
+    run_snapshot(user, str(run_id))
+    result = call("agent", "GET", f"/internal/v1/runs/{run_id}/trace", timeout=15).json()
+    public = {key: result[key] for key in (
+        "run_id", "status", "items", "counts", "truncated", "telemetry", "read_only") if key in result}
+    if user.get("role") == "admin":
+        public["trace"] = result.get("trace")
+    return JSONResponse(public, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/admin/v1/runs/comparison")

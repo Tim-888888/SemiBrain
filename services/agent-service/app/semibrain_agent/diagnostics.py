@@ -9,6 +9,7 @@ from semibrain_common.runtime import digest, internal_identity
 from semibrain_common.telemetry import trace_target
 
 from semibrain_agent.runs import db
+from semibrain_agent.trace_readback import readback
 
 router = APIRouter()
 
@@ -99,3 +100,12 @@ def diagnostics(run_id: str, request: Request):
             "configuration_version": (run.get("agent_configuration") or {}).get("version"),
             "version_bundle": run.get("version_bundle"),
             "read_only": True}
+
+
+@router.get("/internal/v1/runs/{run_id}/trace")
+def run_trace(run_id: str, request: Request):
+    result = diagnostics(run_id, request)
+    run = db().runs.find_one({"_id": run_id})
+    result["telemetry"] = readback(run_id, run.get("telemetry_target", trace_target(legacy=True))) if run else {
+        "status": "pending", "items": [], "truncated": False}
+    return result

@@ -26,6 +26,8 @@ export function invalidateReadCache(broadcast = false) {
   if (broadcast) cacheChannel?.postMessage('invalidate')
 }
 const labels: Record<string, string> = {
+  RUN_NOT_FOUND: '运行不存在或当前账号无权查看。',
+  RUN_REVOKED: '本次运行的访问权限已变更，请重新登录后查看。',
   TITLE_REVISION_CONFLICT: '标题已在其他页面更新。请重新打开改名窗口后保存。',
   TITLE_QUEUE_BUSY: '已有多个标题正在生成，请稍后再试。',
   TITLE_NO_MESSAGES: '发送第一条消息后，即可生成标题。',
