@@ -56,6 +56,14 @@ describe('session read cache', () => {
     const big = vi.fn(async () => 'x'.repeat(60)); await cache.read('big', big, 1000); await cache.read('big', big, 1000)
     expect(big).toHaveBeenCalledTimes(2)
   })
+  it('fences older responses even when a forced response exceeds the cache size limit', async () => {
+    cache = new ReadCache(2, 10); cache.setScope('a')
+    const old = deferred<string>(), fresh = 'fresh large response'
+    const load = vi.fn().mockReturnValueOnce(old.promise).mockResolvedValue(fresh)
+    const pending = cache.read('x', load, 1000); await Promise.resolve()
+    expect(await cache.read('x', async () => fresh, 1000, true)).toBe(fresh)
+    old.resolve('old'); expect(await pending).toBe(fresh)
+  })
   it.each(['queued', 'running', 'receiving', 'retrying'])('does not freeze ingestion status %s', async status => {
     const load = vi.fn(async () => ({ items: [{ ingestion: { status } }] }))
     await cache.read('x', load, 1000, false, catalogIsStable); await cache.read('x', load, 1000, false, catalogIsStable)

@@ -17,6 +17,8 @@ export class ReadCache {
 
   async read<T>(key: string, loader: () => Promise<T>, ttl: number, force = false, reusable: (value: T) => boolean = () => true): Promise<T> {
     const session = this.session
+    // Explicit refresh also fences older reads whose large responses are not retained.
+    if (force) { this.clear(); force = false }
     if (!this.scope) return loader()
     for (let attempt = 0; attempt < 3; attempt++) {
       const epoch = this.epoch
@@ -28,7 +30,7 @@ export class ReadCache {
         if (epoch !== this.epoch) continue
         return value
       }
-      if (force || !entry?.pending) {
+      if (!entry?.pending) {
         entry = { expires: 0, size: 0 }
         this.entries.set(key, entry)
         entry.pending = Promise.resolve().then(() => {
