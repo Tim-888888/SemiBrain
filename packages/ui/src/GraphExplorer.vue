@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { post } from './api'
 import GraphCanvas from './GraphCanvas.vue'
 import ResourceDrawer from './ResourceDrawer.vue'
-const props=defineProps<{revision:number;types:Record<string,string>;relations:Record<string,string>}>()
+const props=defineProps<{revision:number;refreshKey?:number;types:Record<string,string>;relations:Record<string,string>}>()
 const data=ref<any>({entities:[],edges:[],meta:{total:0,returned:0,remaining:0}})
 const query=ref(''),kind=ref(''),limit=ref(100),busy=ref(false),error=ref(''),mode=ref('overview'),center=ref(''),anchor=ref(''),resetKey=ref(0)
 const detail=ref(''),detailOpen=ref(false),expanded=ref(false),shell=ref<HTMLElement|null>(null),toggle=ref<HTMLButtonElement|null>(null)
@@ -37,7 +37,7 @@ function keys(event:KeyboardEvent){
     else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus()}
   }
 }
-watch(()=>props.revision,()=>load(mode.value,center.value))
+watch(()=>[props.revision,props.refreshKey],()=>load(mode.value,center.value))
 onMounted(()=>load())
 </script>
 <template>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import RefreshDataButton from './RefreshDataButton.vue'
 import { rememberFilters } from './page-filters'
 import { computed, onMounted, ref } from 'vue'
 import { api, post } from './api'
@@ -25,7 +26,7 @@ rememberFilters('MemoryPanel', {query,kind})
 </script>
 <template>
   <section class="memory-panel">
-    <div class="page-title"><h1>我的记忆</h1><div class="row-actions"><button class="primary" :disabled="busy" @click="create">＋ 添加记忆</button><button class="secondary" :disabled="busy" @click="toggle">{{ enabled ? '关闭记忆' : '开启记忆' }}</button></div></div>
+    <div class="page-title"><h1>我的记忆</h1><div class="row-actions"><RefreshDataButton :refresh="()=>perform(async()=>{})" :disabled="busy || editing"/><button class="primary" :disabled="busy" @click="create">＋ 添加记忆</button><button class="secondary" :disabled="busy" @click="toggle">{{ enabled ? '关闭记忆' : '开启记忆' }}</button></div></div>
     <p class="muted">{{ enabled ? '已开启' : '未开启' }} · 仅自己可用。你确认保存的偏好与背景可以跨会话使用；本轮要求优先。调查摘要只帮助定位来源，不代替最新证据。</p>
     <p class="small muted">修改、关闭、删除或过期会停止仍在使用旧记忆的任务，重新提交即可使用最新内容。删除记忆不会删除原会话及已生成的历史回答。</p>
     <p v-if="error" role="alert" class="error">{{ error }}</p><p v-if="note" role="status">{{ note }}</p>

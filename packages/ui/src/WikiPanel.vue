@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { rememberFilters } from './page-filters'
 import { documentCatalog } from './document-catalog'
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
+import { useCatalogPolling } from './catalog-polling'
+import { catalogIsStable } from './read-cache'
+import RefreshDataButton from './RefreshDataButton.vue'
 import { api, post } from './api'
 import MarkdownAnswer from './MarkdownAnswer.vue'
 import KnowledgeVersions from './KnowledgeVersions.vue'
@@ -19,13 +22,14 @@ const props = defineProps<{ manage: boolean }>()
 const items = ref<any[]>([]), sources = ref<any[]>([]), selected = ref<any>(null), history = ref<any>(null)
 const error = ref(''), notice = ref(''), busy = ref(false), editing = ref(false), editor = ref<any>({})
 const draftRun = ref(''), generating = ref(false)
-let timer: ReturnType<typeof setInterval>
+let loadSequence = 0
 let generationTimer: ReturnType<typeof setInterval> | undefined
 async function load() {
+  const sequence = ++loadSequence
   try {
     const [pages, docs] = await Promise.all([api('/v1/wiki/pages' + (props.manage ? '?include_archived=true' : '')),documentCatalog()])
-    items.value = pages.items; sources.value = docs.items.filter((d: any) => d.active_version && d.kind !== 'wiki')
-  } catch (e) { error.value = (e as Error).message } finally{loading.value=false}
+    if (sequence === loadSequence) { items.value = pages.items; sources.value = docs.items.filter((d: any) => d.active_version && d.kind !== 'wiki'); error.value = '' }
+  } catch (e) { if (sequence === loadSequence) error.value = (e as Error).message } finally{if (sequence === loadSequence) loading.value=false}
 }
 function create() {
   editor.value = { title:'', body_markdown:'', applicability:'', visibility:'demo', document_id:null,
@@ -119,12 +123,13 @@ async function archive(item:any, archived:boolean) {
   } catch(e) {error.value=(e as Error).message}
   finally {busy.value=false}
 }
-onMounted(() => { load(); timer = setInterval(load,5000) }); onUnmounted(() => { clearInterval(timer); clearInterval(generationTimer) })
+useCatalogPolling(load, () => !catalogIsStable({ items: items.value }))
+onUnmounted(() => clearInterval(generationTimer))
 rememberFilters('WikiPanel', {query})
 </script>
 <template>
   <section class="resource-panel wiki-panel">
-    <div class="page-title"><div><h1>工程 Wiki</h1><p class="muted">把已发布来源整理成工程知识。草稿审核发布后可用于快速问答和智能调查。</p></div><button v-if="manage" class="primary" :disabled="busy || generating" @click="create">编写草稿</button></div>
+    <div class="page-title"><div><h1>工程 Wiki</h1><p class="muted">把已发布来源整理成工程知识。草稿审核发布后可用于快速问答和智能调查。</p></div><div class="row-actions"><RefreshDataButton :refresh="load" :disabled="busy || generating"/><button v-if="manage" class="primary" :disabled="busy || generating" @click="create">编写草稿</button></div></div>
     <p v-if="error" class="error" role="alert">{{ error }}</p><p v-if="notice" role="status">{{ notice }}</p>
     <p v-if="loading" class="loading-state">正在加载 Wiki…</p><div class="page-toolbar"><input v-model="query" type="search" placeholder="搜索 Wiki 标题" aria-label="搜索 Wiki"/><label v-if="manage" class="checkbox"><input v-model="showArchived" type="checkbox" :disabled="busy"/>查看已归档</label><span class="result-count">{{filtered.length}} 篇文章</span></div>
     <ResourceDrawer v-model="editing" title="编辑 Wiki 草稿" width="960px" :snapshot="editor" :busy="busy || generating" :error="error"><form id="wiki-editor" @input="changed" @submit.prevent="save"><h2>Wiki 草稿</h2><fieldset :disabled="busy || generating">

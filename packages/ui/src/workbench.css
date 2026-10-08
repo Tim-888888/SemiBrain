@@ -257,3 +257,7 @@
   .workspace:not(.admin-workspace) .source-select summary,
   .workspace:not(.admin-workspace) .composer-toolbar .web-toggle { font-size: 12px; }
 }
+
+.workspace:not(.admin-workspace) .history-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.workspace:not(.admin-workspace) .history-heading .eyebrow { margin: 0; }
+.workspace:not(.admin-workspace) .history-heading button { width: auto; flex: none; padding: 4px 9px; font-size: 12px; }

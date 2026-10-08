@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { rememberFilters } from './page-filters'
 import { documentCatalog } from './document-catalog'
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
+import { useCatalogPolling } from './catalog-polling'
+import { catalogIsStable } from './read-cache'
+import RefreshDataButton from './RefreshDataButton.vue'
 import { api, post } from './api'
 import MarkdownAnswer from './MarkdownAnswer.vue'
 import KnowledgeVersions from './KnowledgeVersions.vue'
@@ -25,8 +28,8 @@ const items = ref<any[]>([]), error = ref(''), busy = ref(false), preview = ref<
 const path = ref(''), origin = ref('public'), external = ref(false), files = ref<File[]>([])
 const changing = ref(''), notice = ref('')
 const rebuilding = ref<any>(null), reviewText = ref(''), reviewReason = ref(''), reviewing = ref(false)
-let timer: ReturnType<typeof setInterval>
-async function load() { try { items.value = (await documentCatalog()).items; loadError.value = '' } catch (e) { loadError.value = (e as Error).message } finally { loading.value=false } }
+let loadSequence = 0
+async function load() { const sequence = ++loadSequence; try { const data = await documentCatalog(); if (sequence === loadSequence) { items.value = data.items; loadError.value = '' } } catch (e) { if (sequence === loadSequence) loadError.value = (e as Error).message } finally { if (sequence === loadSequence) loading.value=false } }
 function choose(event: Event) { files.value = Array.from((event.target as HTMLInputElement).files || []); (event.target as HTMLInputElement).value=''; if (files.value.length === 1) path.value = files.value[0].name }
 async function upload() {
   busy.value = true; error.value = ''; uploadResults.value=[]
@@ -118,12 +121,12 @@ function draftStatus(item: any) {
 const statusNames: Record<string, string> = { published: '已发布', unpublished: '已下架', staged: '待预览发布', queued: '等待解析', running: '处理中', failed: '处理失败', needs_attention: '需检查内容', receiving: '正在接收', cancelled: '已取消' }
 watch([query,state,format],()=>{page.value=1})
 watch(pages,value=>{page.value=Math.min(page.value,value)})
-onMounted(() => { load(); timer = setInterval(load, 5000) }); onUnmounted(() => clearInterval(timer))
+useCatalogPolling(load, () => !catalogIsStable({ items: items.value }))
 rememberFilters('KnowledgePanel', {query,state,format})
 </script>
 <template>
   <section class="resource-panel">
-    <div class="page-title"><div><p class="eyebrow">KNOWLEDGE LIBRARY</p><h1>知识库</h1><p class="muted">文档与来源放在一起，回答更容易核验。</p></div><button v-if="manage" class="primary" :disabled="busy" @click="uploadOpen=true">＋ 上传文档</button><span v-else class="badge">{{ items.length }} 份资料</span></div>
+    <div class="page-title"><div><p class="eyebrow">KNOWLEDGE LIBRARY</p><h1>知识库</h1><p class="muted">文档与来源放在一起，回答更容易核验。</p></div><div class="row-actions"><RefreshDataButton :refresh="load" :disabled="busy || !!changing"/><button v-if="manage" class="primary" :disabled="busy" @click="uploadOpen=true">＋ 上传文档</button><span v-else class="badge">{{ items.length }} 份资料</span></div></div>
     <ResourceDrawer ref="uploadDrawer" v-model="uploadOpen" title="上传知识资料" :busy="busy" :snapshot="{files: files.map(f=>({name:f.name,size:f.size})),path,origin,external}" :error="error">
       <h3>添加资料</h3><p class="muted small">支持 PDF、DOC/DOCX、XLS/XLSX、PPT/PPTX、Markdown、CSV、JSON、XMind、EPUB、HTML/MHTML 和图片。含图片的 Markdown 请连同配图选择文件夹，单篇及配图合计最大 32 MB。解析完成后预览并发布。</p>
       <input type="file" multiple accept=".pdf,.doc,.docx,.ppt,.md,.csv,.xlsx,.xls,.pptx,.epub,.xmind,.json,.html,.htm,.mhtml,.mht,.png,.jpg,.jpeg,.webp,.gif,.svg" @change="choose" aria-label="选择知识库文件" />

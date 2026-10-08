@@ -32,7 +32,7 @@ const diagnosticRun = ref('')
 const RunComparison = lazyPanel(() => import('./RunComparison.vue'))
 const OperationsPanel = lazyPanel(() => import('./OperationsPanel.vue'))
 const UsersPanel = lazyPanel(() => import('./UsersPanel.vue'))
-import { api, post, setCsrf, type Message, type Run, type User } from './api'
+import { api, post, setCsrf, setCacheUser, invalidateReadCache, type Message, type Run, type User } from './api'
 import './style.css'
 import './experience.css'
 import './workbench.css'
@@ -56,6 +56,7 @@ async function navigate(id: string) {
   if (router) await router.push('/' + id)
   else if (await confirmNavigation()) view.value = id
   mobileNav.value = false
+  if (!adminPage.value && view.value === 'chat') await loadLists().catch(e => { error.value = (e as Error).message })
 }
 if (router) watch(() => router.currentRoute.value.name, name => { if (name) view.value = String(name); mobileNav.value = false })
 
@@ -144,7 +145,15 @@ async function loadLists() {
   if (updated) conversation.value = { ...updated, revision: Math.max(updated.revision, conversation.value.revision) }
   scheduleTitles()
 }
-async function signedIn(value: User) { user.value = value; if (adminPage.value) view.value = String(router?.currentRoute.value.name || 'knowledge'); await loadLists() }
+async function signedIn(value: User) { setCacheUser(value); user.value = value; if (adminPage.value) view.value = String(router?.currentRoute.value.name || 'knowledge'); else await loadLists() }
+const refreshingLists = ref(false)
+async function refreshLists() { refreshingLists.value = true; try { invalidateReadCache(); await loadLists() } catch(e) { error.value = (e as Error).message } finally { refreshingLists.value = false } }
+async function sourceToggle(event: Event) {
+  if (!(event.target as HTMLDetailsElement).open) return
+  const current = generation
+  try { const data = await documentCatalog(); if (current === generation) knowledge.value = data.items.filter((item: any) => item.active_version) }
+  catch(e) { if (current === generation) error.value = (e as Error).message }
+}
 function rememberChat(id?: string) {
   if (!user.value) return
   try { const key = `semibrain:${props.audience}:${user.value.id}:conversation`; if (id) sessionStorage.setItem(key, id); else sessionStorage.removeItem(key) } catch { /* Storage-disabled browsers can still use the workspace. */ }
@@ -260,6 +269,7 @@ function subscribe(runId: string, current = generation) {
     activeRun.value = state; if (state.web_disabled) allowWeb.value = false; await bottom()
     if (current !== generation) return
     if (['succeeded', 'partial', 'failed', 'cancelled', 'waiting_input'].includes(state.status)) {
+      invalidateReadCache(true)
       closeStream()
       const revision = conversation.value?.revision || 1
       if (!messages.value.some(message => message.role === 'assistant' && message.run_id === runId)) messages.value.push({ ...state, id: runId, role: 'assistant', input_revision: revision })
@@ -268,6 +278,7 @@ function subscribe(runId: string, current = generation) {
   })
   source.addEventListener('access.unavailable', () => {
     if (current !== generation) return
+    invalidateReadCache(true)
     closeStream(); activeRun.value = null; error.value = '登录、来源或服务状态暂时无法核验。请刷新会话重试。'
   })
 }
@@ -313,10 +324,15 @@ async function olderMessages() {
   } catch (e) { if (current === generation) error.value = (e as Error).message }
   finally { loadingOlder.value = false }
 }
-async function logout() { try { await post('/v1/auth/logout', {}); closeStream(); user.value = null; setCsrf(''); newChat() } catch (e) { error.value = (e as Error).message } }
+function resetSession() {
+  closeStream(); user.value = null; setCsrf(''); newChat(); text.value = ''
+  conversations.value = []; knowledge.value = []; multiAvailable.value = false
+  settings.value = false; diagnosticRun.value = ''; promptPreview.value = ''
+}
+async function logout() { try { await post('/v1/auth/logout', {}); resetSession() } catch (e) { error.value = (e as Error).message } }
 async function changePassword() {
   if(passwordBusy.value)return;passwordBusy.value=true
-  try { await post('/v1/auth/password', { old_password: oldPassword.value, new_password: newPassword.value }); settings.value = false; closeStream(); user.value = null; setCsrf(''); oldPassword.value = ''; newPassword.value = '' }
+  try { await post('/v1/auth/password', { old_password: oldPassword.value, new_password: newPassword.value }); resetSession(); oldPassword.value = ''; newPassword.value = '' }
   catch (e) { error.value = (e as Error).message }
   finally{passwordBusy.value=false}
 }
@@ -338,6 +354,21 @@ async function showPrompt(runId: string) {
 }
 function keydown(event: KeyboardEvent) { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); send() } }
 onMounted(async () => { try { const result = await api('/v1/auth/me'); setCsrf(result.csrf); await signedIn(result.user); if (!adminPage.value) await restoreChat() } catch { user.value = null } finally { loading.value = false } })
+let checkingSession = false
+async function verifyVisibleSession() {
+  if (document.visibilityState !== 'visible' || !user.value || checkingSession) return
+  checkingSession = true; invalidateReadCache()
+  const previous = user.value
+  try {
+    const result = await api('/v1/auth/me')
+    if (user.value !== previous) return
+    if (previous.id !== result.user.id || previous.revision !== result.user.revision || previous.role !== result.user.role) { resetSession(); setCsrf(result.csrf); await signedIn(result.user) }
+    else { setCsrf(result.csrf); if (!adminPage.value) await loadLists() }
+  } catch { /* A denied session is cleared by api(); transient failures must not destroy drafts. */ }
+  finally { checkingSession = false }
+}
+onMounted(() => { window.addEventListener('semibrain:session-expired', resetSession); document.addEventListener('visibilitychange', verifyVisibleSession) })
+onUnmounted(() => { window.removeEventListener('semibrain:session-expired', resetSession); document.removeEventListener('visibilitychange', verifyVisibleSession) })
 onUnmounted(() => { closeStream(); clearImages(); titleEpoch++; clearTimeout(titleTimer) })
 </script>
 <template>
@@ -349,7 +380,7 @@ onUnmounted(() => { closeStream(); clearImages(); titleEpoch++; clearTimeout(tit
       <button v-if="!adminPage" class="new-chat" @click="newChat">＋ 新会话</button>
       <nav v-if="adminPage" class="admin-navigation" aria-label="管理导航"><section v-for="group in adminGroups" :key="group.label" class="nav-group"><p class="nav-group-label">{{ group.label }}</p><button v-for="[id,label] in group.items" :key="id" :class="{ active: view === id }" :aria-current="view === id ? 'page' : undefined" :title="label" @click="navigate(id)"><UiIcon :name="id" /><span class="nav-label">{{ label }}</span></button></section></nav>
       <nav v-else aria-label="工作台导航"><button v-for="[id,label] in userPages" :key="id" :class="{ active: view === id }" :aria-current="view === id ? 'page' : undefined" @click="navigate(id)"><UiIcon :name="id" />{{ label }}</button></nav>
-      <div v-if="!adminPage" class="history"><p class="eyebrow">最近会话</p><ConversationHistoryItem v-for="item in conversations" :key="item.id" :item="item" :selected="conversation?.id === item.id" @open="openChat(item)" @edit="editTitle(item, $event)" /><button v-if="conversationsCursor" @click="olderChats">加载更早会话</button><p v-if="!conversations.length" class="small muted">你的会话会保存在这里</p></div>
+      <div v-if="!adminPage" class="history"><div class="history-heading"><p class="eyebrow">最近会话</p><button class="text-button" :disabled="refreshingLists" @click="refreshLists" title="刷新会话列表与可用资料">刷新</button></div><ConversationHistoryItem v-for="item in conversations" :key="item.id" :item="item" :selected="conversation?.id === item.id" @open="openChat(item)" @edit="editTitle(item, $event)" /><button v-if="conversationsCursor" @click="olderChats">加载更早会话</button><p v-if="!conversations.length" class="small muted">你的会话会保存在这里</p></div>
       <div class="sidebar-bottom"><a v-if="user.role === 'admin' && !adminPage" class="admin-link" href="/admin/">管理控制台 ↗</a><a v-if="adminPage" class="admin-link" href="/">返回工作台 ↗</a><div class="profile"><span class="avatar">{{ user.username.slice(0, 1).toUpperCase() }}</span><div><strong>{{ user.username }}</strong><small>{{ user.role === 'admin' ? '管理员' : '普通用户' }}</small></div><button class="text-button" @click="settings = true" aria-label="账号设置">⚙</button></div><button class="text-button logout" @click="logout">退出登录</button></div>
     </component>
     <main class="main-panel"><header class="topbar"><div class="topbar-title"><button ref="mobileMenu" class="icon-button mobile-menu-button" @click="mobileNav = !mobileNav" aria-label="打开导航" :aria-expanded="mobileNav"><UiIcon name="menu" /></button><button v-if="adminPage" class="icon-button desktop-collapse" :title="collapsed ? '展开侧栏' : '收起侧栏'" :aria-label="collapsed ? '展开侧栏' : '收起侧栏'" @click="collapsed = !collapsed"><UiIcon name="collapse" /></button><span><template v-if="adminPage"><span class="breadcrumb-root">管理控制台</span><span class="breadcrumb-divider">/</span></template>{{ pageTitle }}</span><button v-if="!adminPage && view === 'chat' && conversation" class="icon-button title-edit-button" aria-label="重命名会话" title="重命名会话" @click="editTitle(conversation)"><UiIcon name="edit" :size="17" /></button></div><span class="workspace-tag">半导体知识空间</span></header>
@@ -383,7 +414,7 @@ onUnmounted(() => { closeStream(); clearImages(); titleEpoch++; clearTimeout(tit
               <label v-if="mode === 'investigation'" class="checkbox web-toggle"><input v-model="multiAgent" type="checkbox" :disabled="running || uploading || (!multiAvailable && !multiAgent)" />多 Agent 协作</label>
               <label class="checkbox web-toggle"><input v-model="allowWeb" type="checkbox" :disabled="running" />联网搜索</label>
               <MCPSelector v-if="mode==='investigation'" v-model="selectedMcp" :multi-agent="multiAgent" :disabled="running || uploading" :document-only="!!selectedDocuments.length"/>
-              <details ref="sourceMenu" class="source-select"><summary>▤ 资料范围{{ selectedDocuments.length ? ` · ${selectedDocuments.length}` : '' }}</summary><div class="source-menu"><p class="small muted">不勾选时检索全部可访问资料</p><label v-for="doc in knowledge" :key="doc.id" class="checkbox"><input v-model="selectedDocuments" :disabled="running || uploading" type="checkbox" :value="doc.id" />{{ doc.title }}</label><p class="small muted">将已发布文件作为本轮阅读对象</p><label v-for="doc in knowledge.filter(item => item.asset_id)" :key="doc.asset_id" class="checkbox"><input v-model="attached" :disabled="running || uploading" type="checkbox" :value="doc.asset_id" />阅读：{{ doc.title }}</label><label v-for="image in imageUploads" :key="image.asset_id" class="checkbox"><input v-model="attached" :disabled="running || uploading" type="checkbox" :value="image.asset_id" />图片：{{ image.name }}</label><p v-if="attached.some(id => !knowledge.some(doc => doc.asset_id === id) && !imageUploads.some(image => image.asset_id === id))" class="small muted">已继承上一轮图片附件 <button type="button" class="text-button" @click="attached = attached.filter(id => knowledge.some(doc => doc.asset_id === id))">移除</button></p><p v-if="!knowledge.length" class="small muted">暂无已发布资料</p></div></details>
+              <details ref="sourceMenu" class="source-select" @toggle="sourceToggle"><summary>▤ 资料范围{{ selectedDocuments.length ? ` · ${selectedDocuments.length}` : '' }}</summary><div class="source-menu"><p class="small muted">不勾选时检索全部可访问资料</p><label v-for="doc in knowledge" :key="doc.id" class="checkbox"><input v-model="selectedDocuments" :disabled="running || uploading" type="checkbox" :value="doc.id" />{{ doc.title }}</label><p class="small muted">将已发布文件作为本轮阅读对象</p><label v-for="doc in knowledge.filter(item => item.asset_id)" :key="doc.asset_id" class="checkbox"><input v-model="attached" :disabled="running || uploading" type="checkbox" :value="doc.asset_id" />阅读：{{ doc.title }}</label><label v-for="image in imageUploads" :key="image.asset_id" class="checkbox"><input v-model="attached" :disabled="running || uploading" type="checkbox" :value="image.asset_id" />图片：{{ image.name }}</label><p v-if="attached.some(id => !knowledge.some(doc => doc.asset_id === id) && !imageUploads.some(image => image.asset_id === id))" class="small muted">已继承上一轮图片附件 <button type="button" class="text-button" @click="attached = attached.filter(id => knowledge.some(doc => doc.asset_id === id))">移除</button></p><p v-if="!knowledge.length" class="small muted">暂无已发布资料</p></div></details>
               <button class="send-button" :disabled="!text.trim() || running || uploading" @click="send" aria-label="发送问题">↑</button>
             </div>
           </div>

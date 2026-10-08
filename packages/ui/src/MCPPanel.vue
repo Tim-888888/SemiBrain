@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import RefreshDataButton from './RefreshDataButton.vue'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { api, post } from './api'
 import { rememberFilters } from './page-filters'
@@ -67,7 +68,7 @@ onMounted(()=>action(load));rememberFilters('MCPPanel',{search})
 </script>
 <template>
 <section class="mcp-panel">
-  <div class="page-title"><div><h1>MCP 服务</h1><p class="muted">接入外部工具，选择用途和权限，在对话中按需调用。</p></div><button class="primary" :disabled="busy || !data" @click="edit()">＋ 添加服务</button></div>
+  <div class="page-title"><div><h1>MCP 服务</h1><p class="muted">接入外部工具，选择用途和权限，在对话中按需调用。</p></div><div class="row-actions"><RefreshDataButton :refresh="()=>action(load)" :disabled="busy || editing || scopeOpen"/><button class="primary" :disabled="busy || !data" @click="edit()">＋ 添加服务</button></div></div>
   <p v-if="error && !editing" class="error" role="alert">{{error}} <button v-if="!data" class="text-button" @click="action(load)">重试</button></p><p v-if="notice && !editing" class="notice" role="status">{{notice}}</p>
   <div v-if="busy && !data" class="loading-state">正在加载服务…</div>
   <template v-if="data">

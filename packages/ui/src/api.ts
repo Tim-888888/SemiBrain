@@ -1,3 +1,4 @@
+import { readCache, readCacheTtl, catalogIsStable } from './read-cache'
 export type ContextRequest = { request_id: string; task_id: string; model: string; role: string; phase: string; created_at: string; status: string; context_window_tokens: number; estimated_input_tokens: number; output_reserve_tokens: number; headroom_tokens: number; threshold_tokens: number; breakdown: Record<string, number>; usage?: { input_tokens?: number; output_tokens?: number; cached_input_tokens?: number } | null }
 export type ContextUsage = { version: string; latest: ContextRequest; agents: ContextRequest[]; request_count: number; compaction_count: number; reused_summary_count: number; unknown_usage_requests: number; cache_reported_requests: number; usage: { input_tokens: number; output_tokens: number; cached_input_tokens: number } }
 export type User = { id: string; username: string; role: 'admin' | 'user'; revision: number; enabled: boolean; demo: boolean }
@@ -8,7 +9,22 @@ export type TaskNode = { task_id: string; role: string; key: string; goals: stri
 export type Run = { answer_export?: { status: string; format: string } | null; historical_source_refs?: string[]; context_usage?: ContextUsage; image_refs?: DocumentImage[]; artifacts?: Artifact[]; task_tree?: TaskNode[]; run_id: string; status: string; sequence: number; body_markdown: string; citations: Citation[]; progress?: string; error?: string; web_disabled?: boolean; web_activity?: { search: string; reason: string; results?: number; error?: string; pages: { status: string; error?: string }[] }; continuation?: { from_run_id: string; kind: string }; input_scope?: { mcp_service_ids?: string[] | null; investigation_strategy?: "single_agent" | "multi_agent"; mode: "quick_qa" | "investigation"; allow_web: boolean; resource_restrictions: string[]; attachment_refs: string[] }; strategy?: string; model_origin?: string; round?: number; active_tool?: string; scope_summary?: { goals: string[]; constraints: string[]; missing: string[]; allow_web: boolean }; budget?: { model_calls: number; tools: number; searches?: number; pages?: number; settled_tokens: number; unreconciled_calls: number } }
 export type Message = Partial<Run> & { id: string; role: string; text?: string; run_id: string; input_revision: number }
 let csrf = ''
-export function setCsrf(value: string) { csrf = value }
+export function setCsrf(value: string) { csrf = value; if (!value) readCache.setScope('') }
+export function setCacheUser(user: User) { readCache.setScope([user.id, user.role, user.revision, user.enabled].join(':')) }
+const cacheChannel = typeof window !== 'undefined' && typeof window.BroadcastChannel === 'function'
+  ? new window.BroadcastChannel('semibrain:read-cache') : null
+function sessionExpired() {
+  setCsrf('')
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event('semibrain:session-expired'))
+}
+if (cacheChannel) cacheChannel.onmessage = event => {
+  if (event.data === 'invalidate' || event.data === 'session') readCache.clear()
+  if (event.data === 'session') sessionExpired()
+}
+export function invalidateReadCache(broadcast = false) {
+  readCache.clear()
+  if (broadcast) cacheChannel?.postMessage('invalidate')
+}
 const labels: Record<string, string> = {
   TITLE_REVISION_CONFLICT: '标题已在其他页面更新。请重新打开改名窗口后保存。',
   TITLE_QUEUE_BUSY: '已有多个标题正在生成，请稍后再试。',
@@ -74,13 +90,16 @@ const labels: Record<string, string> = {
   WIKI_EXPIRED: 'Wiki 已超过设定有效期。',
   WIKI_ARCHIVE_CONFLICT: '页面状态已变化，或仍在发布中。请先下架并刷新，再归档。',
 }
-export async function api<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, options: RequestInit): Promise<T> {
   const headers = new Headers(options.headers)
   if (options.body && !(options.body instanceof FormData)) headers.set('Content-Type', 'application/json')
   if (csrf) headers.set('X-CSRF-Token', csrf)
   const response = await fetch(path, { ...options, headers, credentials: 'same-origin' })
   const data = await response.json().catch(() => ({}))
   if (!response.ok) {
+    // Never keep a previously authorized response after denial or a revision conflict.
+    if ([401, 403, 404, 409].includes(response.status)) invalidateReadCache()
+    if (response.status === 401) sessionExpired()
     const code = data.detail?.code || data.error?.code || 'REQUEST_FAILED'
     if (code === 'INVALID_ARGUMENT' && path.startsWith('/v1/auth/')) {
       const hints: Record<string, string> = {
@@ -98,6 +117,25 @@ export async function api<T = any>(path: string, options: RequestInit = {}): Pro
   }
   return data as T
 }
+export async function api<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+  const method = (options.method || 'GET').toUpperCase()
+  const readOnly = ['GET', 'HEAD'].includes(method) || (method === 'POST' && ['/v1/graph/browse', '/v1/graph/search'].includes(path))
+  const ttl = readCacheTtl(path, method)
+  let completed = false
+  if (!readOnly || options.cache === 'no-store') invalidateReadCache()
+  try {
+    const load = () => request<T>(path, options)
+    // Aborts/custom headers belong to their individual caller, not a shared request.
+    if (ttl && !options.signal && !options.headers && options.cache !== 'no-store')
+      return await readCache.read(method + ':' + path + ':' + (options.body || ''), load, ttl, options.cache === 'reload', catalogIsStable)
+    const result = await load(); completed = true; return result
+  } finally {
+    if (!readOnly) {
+      invalidateReadCache(true)
+      if (completed && path.startsWith('/v1/auth/')) cacheChannel?.postMessage('session')
+    }
+  }
+}
 export const post = <T = any>(path: string, value: object, requestId?: string) => api<T>(path, {
-  method: 'POST', body: JSON.stringify(value), headers: requestId ? { 'Idempotency-Key': requestId } : {},
+  method: 'POST', body: JSON.stringify(value), ...(requestId ? { headers: { 'Idempotency-Key': requestId } } : {}),
 })

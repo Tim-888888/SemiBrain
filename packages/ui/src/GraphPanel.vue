@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import RefreshDataButton from './RefreshDataButton.vue'
 import { documentCatalog } from './document-catalog'
 import { computed, onMounted, ref } from 'vue'
 import { api, post } from './api'
@@ -9,7 +10,8 @@ import ResourceDrawer from './ResourceDrawer.vue'
 const extractionOpen=ref(false), graphCursor=ref<string|null>(null)
 const props = defineProps<{ manage:boolean }>()
 const catalog = ref<any>({entities:[],edges:[],revision:0}), docs = ref<any[]>([]), chunks = ref<any[]>([])
-const loaded=ref(false)
+const loaded=ref(false), refreshKey=ref(0)
+async function refresh() { await act(()=>load()); refreshKey.value++ }
 const busy = ref(false), error = ref(''), notice = ref(''), query = ref(''), result = ref<any>(null)
 const edit = ref(false), form = ref<any>({}), from = ref(''), to = ref(''), reason = ref('')
 const types:Record<string,string> = {product:'产品',process:'工序',equipment:'设备',chamber:'腔体',defect:'缺陷',alarm:'告警',sop:'SOP',action:'维护动作',concept:'概念'}
@@ -53,11 +55,11 @@ onMounted(() => act(load))
 </script>
 <template>
   <section class="resource-panel graph-page">
-    <div class="page-title"><div><h1>工程知识图谱</h1><p class="muted">沿实体关系查找原文。共现、相关和处理建议不等同于已证明的因果。</p></div><div v-if="manage" class="form-row"><button class="primary" :disabled="busy" @click="extractionOpen=true">自动构建</button><button :disabled="busy" @click="create">登记关系</button></div></div>
+    <div class="page-title"><div><h1>工程知识图谱</h1><p class="muted">沿实体关系查找原文。共现、相关和处理建议不等同于已证明的因果。</p></div><div class="row-actions"><RefreshDataButton :refresh="refresh" :disabled="busy || edit || extractionOpen"/><button v-if="manage" class="primary" :disabled="busy" @click="extractionOpen=true">自动构建</button><button v-if="manage" :disabled="busy" @click="create">登记关系</button></div></div>
     <GraphExtractionPanel v-if="manage" v-model:open="extractionOpen" :documents="docs" @changed="act(()=>load())"/>
     <p v-if="error" class="error" role="alert">{{ error }}</p><p v-if="notice" role="status">{{ notice }}</p>
     <p v-if="!loaded && busy" class="loading-state">正在读取图谱与来源…</p><template v-if="loaded"><p class="small muted">{{ catalog.configured ? '图谱已配置' : '图谱未配置，查询使用文本检索' }} · 关系版本 {{ catalog.revision }} · 投影版本 {{ catalog.projected_revision }} <button v-if="manage" class="text-button" :disabled="busy || !catalog.configured" @click="rebuild">重建投影</button></p>
-    <GraphExplorer :revision="catalog.revision" :types="types" :relations="relations"/>
+    <GraphExplorer :refresh-key="refreshKey" :revision="catalog.revision" :types="types" :relations="relations"/>
     <ResourceDrawer v-model="edit" title="登记有来源的关系" :snapshot="form" :busy="busy" :error="error"><form id="graph-editor" @submit.prevent="save"><h2>登记有来源的关系</h2><fieldset :disabled="busy"><div class="form-row"><label>起点名称<input v-model="form.subject.name" maxlength="120" required/></label><label>起点类型<select v-model="form.subject.kind"><option v-for="(label,key) in types" :value="key">{{ label }}</option></select></label><label>终点名称<input v-model="form.object.name" maxlength="120" required/></label><label>终点类型<select v-model="form.object.kind"><option v-for="(label,key) in types" :value="key">{{ label }}</option></select></label></div>
       <label>关系类型<select v-model="form.relation"><option v-for="(label,key) in relations" :value="key">{{ label }}</option></select></label>
       <label>来源文档<select v-model="form.document_id" @change="selectSource" required><option value="" disabled>请选择已发布来源</option><option v-for="doc in docs" :value="doc.id">{{ doc.title }}</option></select></label>

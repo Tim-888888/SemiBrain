@@ -1,6 +1,11 @@
 import { api } from './api'
+import { readCache, catalogIsStable } from './read-cache'
 
-export async function documentCatalog(): Promise<{items: any[]}> {
+export function documentCatalog(): Promise<{items: any[]}> {
+  // Cache the whole pagination result atomically; never combine old and new pages.
+  return readCache.read('document-catalog', loadCatalog, 30_000, false, catalogIsStable)
+}
+async function loadCatalog(): Promise<{items: any[]}> {
   const items = new Map<string, any>(), seen = new Set<string>()
   let cursor: string | null = null
   do {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import RefreshDataButton from './RefreshDataButton.vue'
 import { rememberFilters } from './page-filters'
 import { computed, onMounted, ref, watch } from 'vue'
 import { api, post } from './api'
@@ -48,7 +49,7 @@ rememberFilters('SkillsPanel', {search,filter})
 
 <template>
   <section class="skills-panel">
-    <div class="page-title"><div><h1>Skills 技能</h1><p class="muted">将经过审核的方法与脚本，交给合适的 Agent。</p></div><button class="primary" :disabled="busy" @click="select()">＋ 新建技能</button></div>
+    <div class="page-title"><div><h1>Skills 技能</h1><p class="muted">将经过审核的方法与脚本，交给合适的 Agent。</p></div><div class="row-actions"><RefreshDataButton :refresh="()=>action(load)" :disabled="busy || editorOpen || detailOpen"/><button class="primary" :disabled="busy" @click="select()">＋ 新建技能</button></div></div>
     <p v-if="error" class="error" role="alert">{{ error }} <button v-if="!data" class="text-button" @click="action(load)">重试</button></p><p v-if="notice" class="notice" role="status">{{ notice }}</p>
     <div class="page-toolbar"><input v-model="search" type="search" placeholder="搜索技能名称、标识或用途" aria-label="搜索技能" /><select v-model="filter" aria-label="技能状态"><option value="all">全部状态</option><option value="enabled">已启用</option><option value="disabled">未启用</option></select><span class="result-count">{{ items.length }} 个技能</span></div>
     <div v-if="busy && !data" class="loading-state" role="status">正在加载技能目录…</div>

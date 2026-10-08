@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import RefreshDataButton from './RefreshDataButton.vue'
 import { computed, onMounted, ref, toRaw } from 'vue'
 import { api, post } from './api'
 import ResourceDrawer from './ResourceDrawer.vue'
@@ -29,7 +30,7 @@ function useDraft() { draft.value = structuredClone(toRaw(selected.value.setting
 onMounted(() => act(load))
 </script>
 <template>
-  <section class="resource-panel config-panel"><div class="page-title"><h1>Agent 配置</h1><button class="primary" :disabled="busy || !data" @click="startEdit">创建配置修订</button></div>
+  <section class="resource-panel config-panel"><div class="page-title"><h1>Agent 配置</h1><div class="row-actions"><RefreshDataButton :refresh="()=>act(load)" :disabled="busy || editing || detailOpen"/><button class="primary" :disabled="busy || !data" @click="startEdit">创建配置修订</button></div></div>
     <p class="muted">模型与角色 Prompt、意图卡一起审核发布。已有任务及其子 Agent 固定使用原版本；发布、回滚只影响新任务。权限、工具范围和自由 Markdown 输出规则由系统保持。</p>
     <p v-if="error" class="error" role="alert">{{ error }}</p><p v-if="notice" role="status">{{ notice }}</p>
     <template v-if="data && draft">
