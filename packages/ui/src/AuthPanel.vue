@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import BrandLogo from './BrandLogo.vue'
+import IcpFooter from './IcpFooter.vue'
 import { api, post, setCsrf, type User } from './api'
 const emit = defineEmits<{ signedIn: [user: User] }>()
 const mode = ref<'login' | 'register'>('login')
@@ -48,6 +49,7 @@ onMounted(refresh)
         <p v-if="error" role="alert" class="error">{{ error }}</p>
         <button class="primary wide" :disabled="busy || refreshing || !challenge">{{ busy ? '正在处理…' : mode === 'login' ? '登录 SemiBrain' : '创建账号并登录' }}</button>
       </form>
+      <IcpFooter />
     </section>
   </main>
 </template>
