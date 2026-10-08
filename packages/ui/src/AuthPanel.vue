@@ -57,6 +57,14 @@ onMounted(refresh)
 </template>
 <style scoped>
 .auth-profile-link { display: flex; justify-content: center; margin-top: 20px; }
-.auth-profile-link :deep(.github-profile-link) { min-height: 40px; padding: 9px 20px; }
-@media (pointer: coarse) { .auth-profile-link :deep(.github-profile-link) { min-height: 44px; } }
+.auth-card form > .primary,
+.auth-profile-link :deep(.github-profile-link) {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 22px;
+}
+.auth-profile-link :deep(.github-profile-link) { padding-block: 9px; }
 </style>
