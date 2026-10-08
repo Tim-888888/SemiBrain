@@ -97,3 +97,52 @@ def test_mcp_activity_rejects_another_users_run(monkeypatch):
         assert runs.find_one.call_args.args[0]["owner_id"]=="viewer"
     finally:
         app.dependency_overrides.clear()
+
+
+def test_mcp_review_provenance_requires_success_and_retained_matching_source():
+    from semibrain_agent.closeout import queried_mcp
+
+    source = {"source_id": "job", "locator": {"tool": "mcp.call"}}
+    record = {"evidence_id": "e", "marker": "1", "source": source}
+    observed = {**record, "content": {"content_kind": "mcp_tool_result",
+                "service_id": "public-docs", "tool_name": "topics", "content": "external text"}}
+    observation = {"tool": "mcp.call", "status": "succeeded", "job_id": "job", "evidence": [observed]}
+    rows = [{"observation": observation}, {"observation": {"tool": "mcp.discover", "status": "succeeded"}}]
+    runner = SimpleNamespace(run={"_id": "run"}, db=SimpleNamespace(
+        observations=SimpleNamespace(find=lambda _: rows)))
+    result = queried_mcp(runner, [record])
+    assert result["calls"] == [{"service_id": "public-docs", "tool_name": "topics",
+                                "status": "succeeded", "source_markers": ["1"]}]
+    assert result["observed_tool_names"] == ["mcp.call", "mcp.discover"]
+    assert "external text" not in str(result)
+    assert queried_mcp(runner, []) is None  # Revoked/omitted evidence cannot be revived.
+    assert queried_mcp(runner, [{**record, "source": {**source, "source_id": "another-job"}}]) is None
+    observation["status"] = "failed"
+    assert queried_mcp(runner, [record]) is None
+
+
+def test_mcp_review_packet_carries_server_provenance_without_auto_approval():
+    import json
+
+    from semibrain_agent.closeout import review_answer
+
+    source = {"kind": "query", "source_id": "job", "source_version": "mcp-v1",
+              "data_origin": "public", "locator": {"tool": "mcp.call"}}
+    record = {"evidence_id": "e", "marker": "1", "source": source,
+              "lineage_refs": ["query:job:hash"], "title": "MCP topics",
+              "content": {"content_kind": "mcp_tool_result", "service_id": "docs", "tool_name": "topics",
+                          "content": "Topic A"}}
+    observation = {"tool": "mcp.call", "status": "succeeded", "job_id": "job", "evidence": [record]}
+    verdict = {"blocks": [{"id": 0, "verdict": "unsupported", "source_markers": [],
+                            "reason": "Remote result does not support invented Topic B"}],
+               "goals": [{"index": 0, "covered": False, "block_ids": []}], "missing_goals": ["Topics"]}
+    runner = SimpleNamespace(run={"_id": "run"}, context={"input": {"question": "Read topics using MCP"}},
+        executor=SimpleNamespace(evidence=lambda: [record]),
+        db=SimpleNamespace(observations=SimpleNamespace(find=lambda _: [{"observation": observation}])),
+        model_call=Mock(return_value=(SimpleNamespace(text=json.dumps(verdict)), "fixture")),
+        partial_body=lambda *a: "No supported answer")
+    result = review_answer(runner, {"intent": {"goals": ["Topics"]}, "draft": "Topic B [1].",
+                                   "closeout_reason": "BUDGET_EXHAUSTED"})
+    payload = json.loads(runner.model_call.call_args.kwargs["inputs"][0]["content"])
+    assert payload["queried_mcp"]["calls"][0]["tool_name"] == "topics"
+    assert result["outcome"] == "partial" and "Topic B" not in result["draft"]

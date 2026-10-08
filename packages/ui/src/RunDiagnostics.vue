@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { api } from './api'
+import MCPActivity from './MCPActivity.vue'
 const props = defineProps<{ runId: string }>()
 const data = ref<any>(null), error = ref(''), loading = ref(false)
 const kind=ref('all'), onlyProblems=ref(false)
@@ -32,7 +33,8 @@ onMounted(refresh)
         <tr v-for="item in visible" :key="item.kind + item.id"><td>{{ item.phase || item.tool || item.kind }}<small v-if="item.task_id" class="muted"> · {{ item.task_id }}</small></td><td>{{ labels[item.status] || item.status || '未知' }}<span v-if="item.error_code"> · {{ item.error_code }}</span></td><td>{{ item.profile.model || '—' }}<small v-if="item.profile.version"> / {{ item.profile.version }}</small></td><td>{{ item.elapsed_ms == null ? '—' : (item.elapsed_ms / 1000).toFixed(1) + ' 秒' }}</td><td>{{ item.usage.input_tokens ?? '—' }} / {{ item.usage.output_tokens ?? '—' }} / {{ item.usage.total_tokens ?? '待核验' }}</td></tr>
       </tbody></table></div>
       <p v-if="!visible.length" class="muted">没有符合当前筛选条件的调用记录。</p><p v-if="data.truncated" class="muted">每类最多显示前 300 条；总次数按全部记录统计。</p>
-      <p class="small muted">预留额度不计为实际用量；未配置价格的金额保持未知。此处不展示密钥、工具正文或隐藏推理。</p>
+      <p class="small muted">预留额度不计为实际用量；未配置价格的金额保持未知。上方用量记录不展示工具正文；MCP 参数与结果可在下方按权限查看。</p>
+      <MCPActivity :key="runId" :run-id="runId" />
     </template>
   </section>
 </template>
