@@ -2,9 +2,12 @@
 import { ref, watch } from 'vue'
 import { api } from './api'
 import UiIcon from './UiIcon.vue'
+import { useDetailsDismiss } from './use-details-dismiss'
 const props=defineProps<{modelValue:string[]|null;multiAgent:boolean;disabled?:boolean;documentOnly?:boolean}>()
 const emit=defineEmits<{ 'update:modelValue':[value:string[]|null] }>()
 const services=ref<any[]>([]), loading=ref(false), error=ref(''), expanded=ref(false)
+const menu = ref<HTMLDetailsElement | null>(null)
+useDetailsDismiss(menu)
 let generation=0
 async function load(){const current=++generation;loading.value=true;error.value='';try{const result=await api('/v1/mcp/services?multi_agent='+props.multiAgent);if(current===generation)services.value=result.services}catch(e){if(current===generation)error.value=(e as Error).message}finally{if(current===generation)loading.value=false}}
 function toggle(event:Event){expanded.value=(event.target as HTMLDetailsElement).open;if(expanded.value)void load()}
@@ -12,7 +15,7 @@ function select(id:string,checked:boolean){const selected=new Set(props.modelVal
 watch(()=>props.multiAgent,()=>{if(expanded.value)void load()})
 </script>
 <template>
-<details class="source-select mcp-select" @toggle="toggle"><summary><UiIcon name="mcp" :size="16"/> MCP 工具{{modelValue===null?'':modelValue.length?' · '+modelValue.length:' · 关闭'}}</summary>
+<details ref="menu" class="source-select mcp-select" @toggle="toggle"><summary><UiIcon name="mcp" :size="16"/> MCP 工具{{modelValue===null?'':modelValue.length?' · '+modelValue.length:' · 关闭'}}</summary>
   <div class="source-menu"><strong>本次调查可用的 MCP</strong><p v-if="documentOnly" class="notice">当前限定了知识库文档，本轮不使用外部 MCP；清除文档范围后恢复。</p><p class="small muted">选择服务后，Agent 根据问题按需调用。</p>
     <label class="checkbox"><input type="checkbox" :checked="modelValue===null" :disabled="disabled || documentOnly" @change="emit('update:modelValue',($event.target as HTMLInputElement).checked?null:[])"/>使用管理员授权的服务</label>
     <p v-if="loading" class="small muted">正在加载…</p><p v-if="error" class="error">{{error}} <button type="button" @click="load">重试</button></p>

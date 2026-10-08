@@ -3,6 +3,7 @@ import { documentCatalog } from './document-catalog'
 import { computed, defineAsyncComponent, inject, provide, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import ComposerAddMenu from './ComposerAddMenu.vue'
 import MCPSelector from './MCPSelector.vue'
+import { useDetailsDismiss } from './use-details-dismiss'
 import ConversationStarters from './ConversationStarters.vue'
 import ConversationHistoryItem from './ConversationHistoryItem.vue'
 import ConversationTitleEditor from './ConversationTitleEditor.vue'
@@ -126,6 +127,7 @@ const settings = ref(false), oldPassword = ref(''), newPassword = ref('')
 watch(settings,open=>{if(!open){oldPassword.value='';newPassword.value=''}})
 const conversationsCursor = ref<string | null>(null), messagesCursor = ref<number | null>(null)
 const sourceMenu = ref<HTMLDetailsElement | null>(null)
+useDetailsDismiss(sourceMenu)
 let source: EventSource | null = null
 let generation = 0
 let pending: { conversationId: string; payload: any } | null = null
