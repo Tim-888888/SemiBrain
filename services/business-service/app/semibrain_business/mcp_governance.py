@@ -7,6 +7,7 @@ from pymongo import ReturnDocument
 from semibrain_common.runtime import canonical, digest, failure, now, transaction
 from semibrain_contracts.mcp import MCPCall, MCPDiscover, MCPPolicy, MCPPolicyEdit, MCPRefresh
 
+from semibrain_business import mcp_connections as connections
 from semibrain_business import mcp_transport as transport
 from semibrain_business.analysis_tools import current as execution_claim
 from semibrain_business.safe_fetch import WebError
@@ -28,6 +29,7 @@ def permitted(policy, claim):
     return {item["id"]: item for item in policy["services"]
             if item["enabled"] and claim["role"] in item["user_roles"]
             and role in item["agent_roles"]
+            and (claim.get("mcp_service_ids") is None or item["id"] in claim["mcp_service_ids"])
             and (policy["mode"] == "all" or item["id"] in policy["selected"])}
 
 
@@ -62,7 +64,8 @@ def discover(form, job):
     claim = {**execution_claim(job), "run_id": job["run_id"]}
     services = allowed(claim)
     if form.action == "list_servers":
-        return {"notice": NOTICE, "servers": [{"service_id": s["id"], "label": s["label"]}
+        return {"notice": NOTICE, "servers": [{"service_id": s["id"], "label": s["label"],
+                                              "usage_instructions": s.get("usage_instructions", "")}
                                               for s in services.values()]}
     service = selected_service(form.service_id, claim)
     items = manifest(service)
@@ -122,6 +125,42 @@ def authorize_result(job, claim):
         raise WebError("MCP_SOURCE_REVOKED")
 
 
+@router.get("/internal/v1/mcp/services")
+def available_services(request: Request, multi_agent: bool = False):
+    claim = authorize_request(request, "mcp.discover")
+    policy = current()["policy"]
+    roles = ["sqlbot", "rag", "tool", "vision"] if multi_agent else ["single_agent"]
+    items = {}
+    for role in roles:
+        items.update(permitted(policy, {**claim, "agent_role": role}))
+    return {"services": [{"id": s["id"], "label": s["label"],
+                          "usage_instructions": s.get("usage_instructions", ""),
+                          "tool_count": len(s["allowed_tools"])} for s in items.values()]}
+
+
+@router.get("/internal/v1/mcp/activity")
+def activity(request: Request):
+    claim = authorize_request(request, "mcp.discover")
+    if not claim.get("run_id"):
+        failure("RUN_BINDING_MISMATCH", 403)
+    items = []
+    for job in db().tool_jobs.find({"run_id": claim["run_id"], "subject_id": claim["subject_id"],
+                                   "tool": "mcp.call"}).sort("created_at", 1).limit(100):
+        ref = db().mcp_tool_refs.find_one({"_id": job["arguments"].get("tool_ref")}) or {}
+        result = (job.get("result") or {}).get("data") or {}
+        service_id = ref.get("service_id") or result.get("service_id")
+        role = ref.get("agent_role") or result.get("agent_role")
+        service = permitted(current()["policy"], {**claim, "agent_role": role}).get(service_id)
+        visible = service and (ref.get("service_hash") or result.get("service_hash")) == digest(canonical(service))
+        items.append({"job_id": job["_id"], "service": service["label"] if visible else "已撤销的 MCP 服务",
+                      "tool": ref.get("tool_name") or result.get("tool_name"),
+                      "status": job["status"], "created_at": job["created_at"],
+                      "arguments": job["arguments"].get("arguments", {}) if visible else None,
+                      "content": result.get("content", "") if visible else "当前权限下不可查看。",
+                      "error": (job.get("result") or {}).get("error")})
+    return {"items": items}
+
+
 @router.get("/internal/v1/admin/mcp")
 def settings(request: Request):
     claim = authorize_request(request, "mcp.manage")
@@ -134,8 +173,16 @@ def settings(request: Request):
             configured.append({"ref": name, "ready": True, "authenticated": bool(secret)})
         except WebError:
             configured.append({"ref": name, "ready": False, "authenticated": False})
+    for reference in {s["endpoint_ref"] for s in value["policy"]["services"]
+                      if s["endpoint_ref"].startswith("web-")}:
+        try:
+            configured.append(connections.metadata(reference))
+        except WebError:
+            configured.append({"ref": reference, "managed": True, "ready": False})
     return {"revision": value["revision"], "policy": value["policy"], "endpoints": configured,
+            "web_connections_ready": connections.ready(),
             "catalogs": [{"service_id": item["_id"], "updated_at": item["updated_at"],
+                          "endpoint_ref": item["endpoint_ref"],
                           "tools": item["tools"]} for item in db().mcp_catalogs.find({}).limit(30)],
             "recent": [{"job_id": item["_id"], "tool": item["tool"], "status": item["status"],
                         "created_at": item["created_at"], "error": (item.get("result") or {}).get("error")}
@@ -148,8 +195,20 @@ def edit(form: MCPPolicyEdit, request: Request):
     claim = authorize_request(request, "mcp.manage")
     require_manager(claim)
     policy = form.policy.model_dump(mode="json")
-    for service in policy["services"]:
-        transport.endpoint(service["endpoint_ref"])
+    try:
+        pending = connections.prepare(form.connection) if form.connection else None
+        if pending and not any(s["endpoint_ref"] == pending["_id"] for s in policy["services"]):
+            failure("MCP_CONNECTION_UNUSED")
+        for service in policy["services"]:
+            if not pending or service["endpoint_ref"] != pending["_id"]:
+                transport.endpoint(service["endpoint_ref"])
+            if service["enabled"] or service["allowed_tools"]:
+                items = manifest(service)
+                # All selected names must still be present in this connection's catalog.
+                if set(service["allowed_tools"]) != {x["name"] for x in items}:
+                    failure("MCP_CATALOG_REFRESH_REQUIRED")
+    except WebError as exc:
+        failure(str(exc))
     identity = digest(claim["subject_id"] + ":" + str(form.request_id))
     hashed = digest(canonical(form.model_dump(mode="json")))
 
@@ -159,6 +218,10 @@ def edit(form: MCPPolicyEdit, request: Request):
             if previous["payload_hash"] != hashed:
                 failure("IDEMPOTENCY_CONFLICT", 409)
             return {"revision": previous["revision"]}
+        if pending:
+            if db().mcp_connections.find_one({"_id": pending["_id"]}, session=session):
+                failure("MCP_CONNECTION_REFERENCE_CONFLICT", 409)
+            db().mcp_connections.insert_one(pending, session=session)
         db().mcp_settings.update_one({"_id": "active"}, {"$setOnInsert": {
             "revision": 0, "policy": MCPPolicy().model_dump(mode="json")}}, upsert=True, session=session)
         row = db().mcp_settings.find_one_and_update({"_id": "active", "revision": form.expected_revision},

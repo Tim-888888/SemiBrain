@@ -18,6 +18,20 @@ class MCPService(BaseModel):
     agent_roles: list[AgentRole] = Field(default_factory=lambda: ["single_agent", "tool"])
     allowed_tools: list[str] = Field(default_factory=list, max_length=100)
     timeout_seconds: int = Field(default=20, ge=2, le=30)
+    usage_instructions: str = Field(default="", max_length=4000)
+
+
+class MCPConnectionWrite(BaseModel):
+    """Write-only credentials; references are immutable and never exposed to agents."""
+    model_config = ConfigDict(extra="forbid")
+    ref: str = Field(pattern=r"^web-[a-f0-9]{32}$")
+    previous_ref: str | None = Field(default=None, pattern=r"^web-[a-f0-9]{32}$")
+    url: str = Field(min_length=1, max_length=2048)
+    transport: Literal["streamable_http", "sse"] = "streamable_http"
+    auth_type: Literal["none", "bearer", "api_key", "headers"] = "none"
+    # None keeps the previous credentials; {} explicitly clears them.
+    headers: dict[str, str] | None = Field(default=None, max_length=16)
+    data_origin: Literal["public", "authorized_business", "synthetic"] = "public"
 
 
 class MCPPolicy(BaseModel):
@@ -39,6 +53,7 @@ class MCPPolicyEdit(BaseModel):
     request_id: UUID
     expected_revision: int = Field(ge=0)
     policy: MCPPolicy
+    connection: MCPConnectionWrite | None = None
 
 
 class MCPRefresh(BaseModel):

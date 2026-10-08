@@ -77,6 +77,7 @@ def make_grant(user, *, run=None, operations=None, child=None):
         "allowed_ops": sorted(allowed),
         "resource_ids": [*user.get("resource_ids", ["demo"]), "owner:" + user["_id"]],
         "document_ids": run["input"]["resource_restrictions"] if run else [],
+        "mcp_service_ids": run["input"].get("mcp_service_ids") if run else None,
         "attachment_refs": run["input"]["attachment_refs"] if run else [],
     }
     redis().setex("delegation:" + digest(token), 60, json.dumps(claim))
@@ -241,6 +242,7 @@ def execution_authorization(form: ExecutionAuthorization, request: Request):
         "auth_version": user["auth_version"],
         "resource_ids": user.get("resource_ids", ["demo"]),
         "document_ids": run["input"]["resource_restrictions"] if run else [],
+        "mcp_service_ids": run["input"].get("mcp_service_ids") if run else None,
         "attachment_refs": run["input"]["attachment_refs"] if run else [],
     }
 
@@ -264,6 +266,7 @@ def run_snapshot(user, run_id):
             "resource_restrictions",
             "attachment_refs",
             "investigation_strategy",
+            "mcp_service_ids",
         )
     }
     response["continuation"] = gateway.get("continuation")

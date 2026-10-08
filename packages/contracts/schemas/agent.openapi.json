@@ -848,6 +848,94 @@
           }
         }
       }
+    },
+    "/internal/v1/graph-extraction/models": {
+      "get": {
+        "summary": "Models",
+        "operationId": "models_internal_v1_graph_extraction_models_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/graph-extraction/extract": {
+      "post": {
+        "summary": "Extract",
+        "operationId": "extract_internal_v1_graph_extraction_extract_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtractRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/conversation-titles/generate": {
+      "post": {
+        "summary": "Generate",
+        "operationId": "generate_internal_v1_conversation_titles_generate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TitleInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1151,6 +1239,55 @@
         ],
         "title": "EvaluationEdit"
       },
+      "ExtractRequest": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Job Id"
+          },
+          "fence": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Fence"
+          },
+          "chunk_id": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Chunk Id"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 18000,
+            "minLength": 1,
+            "title": "Text"
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Model"
+          },
+          "instructions": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Instructions",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "job_id",
+          "fence",
+          "chunk_id",
+          "text",
+          "model"
+        ],
+        "title": "ExtractRequest"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1204,6 +1341,21 @@
             "type": "boolean",
             "title": "Allow Web",
             "default": false
+          },
+          "mcp_service_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 30
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mcp Service Ids"
           },
           "investigation_strategy": {
             "anyOf": [
@@ -1642,6 +1794,22 @@
         "additionalProperties": false,
         "type": "object",
         "title": "SweepRequest"
+      },
+      "TitleInput": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 3600,
+            "minLength": 1,
+            "title": "Text"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "TitleInput"
       },
       "ValidationError": {
         "properties": {

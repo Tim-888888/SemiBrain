@@ -73,6 +73,8 @@ class InputSnapshot(Contract):
     question: str = Field(min_length=1, max_length=32000)
     mode: Literal["quick_qa", "investigation"]
     allow_web: bool = False
+    # None inherits administrator policy; [] disables external MCP for this run.
+    mcp_service_ids: list[str] | None = Field(default=None, max_length=30)
     investigation_strategy: Literal["single_agent", "multi_agent"] | None = None
     resource_restrictions: list[str] = Field(default_factory=list)
     attachment_refs: list[UUID] = Field(default_factory=list)

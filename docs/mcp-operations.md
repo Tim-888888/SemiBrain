@@ -4,6 +4,38 @@ The business service owns MCP configuration, version history, discovery handles 
 
 ## Deployment and activation
 
+Remote services can be added in the administrator UI using HTTPS URLs or
+`mcpServers` JSON import. Supported transports are Streamable HTTP and SSE;
+authentication supports Bearer, API key and custom headers. OAuth and stdio are
+not supported. Query-string credentials are rejected; use headers instead.
+The backend connects to the service, not the browser. Public DNS checks and
+connections pinned to validated IP addresses apply to every managed request.
+SSE message endpoints must remain on the same origin. Approved internal services
+continue to use the deployment registry below.
+
+Set a persistent `SEMIBRAIN_MCP_ENCRYPTION_KEY` (a generated Fernet key) in the
+business API and all business worker environments. Back it up separately from
+MongoDB. `mcp_connections` stores immutable encrypted URLs and credentials.
+Management responses return header names, never their values. Blank credentials
+preserve their previous value on the same origin; changing origin or authentication
+type requires re-entry. Connection replacement requires catalog synchronization
+and fresh tool grants. Old environment references remain valid.
+
+Use **Save and connect / Sync tools**, select allowed tools, add usage instructions,
+enable the service and include it in the administrator scope. Refresh does not
+grant newly discovered tools. Usage instructions remain untrusted catalog metadata.
+
+The investigation composer exposes an MCP selector. `mcp_service_ids=null` inherits
+administrator policy, `[]` disables MCP, and a list narrows the run scope. The
+selection is persisted in the input snapshot and propagated through trusted grants
+to single and multi-agent execution. Selected-document restrictions still disable
+external MCP. Run details show owned calls; revoked services hide retained payloads.
+
+Implementation reference for web connection/import/SSE behavior: WeKnora
+`9fa9e7c29d8eb727825b14f0b0ca23907969b91a`, `McpServiceDialog.vue`,
+`internal/mcp/client.go` and `internal/mcp/security.go`. The existing Python
+discovery/call loop and three-service ownership remain unchanged.
+
 Set `SEMIBRAIN_MCP_ENDPOINTS_JSON` in the **business service and worker** environment. Its value is a deployment-owned JSON object keyed by endpoint reference. Each endpoint has `url`, optional `secret_ref`, and `data_origin` (`public`, `authorized_business`, or `synthetic`). Credentials are read from a named `SEMIBRAIN_MCP_*_TOKEN` environment variable; never put credentials in the URL or browser configuration. Plain HTTP requires explicit `allow_private: true` for an approved internal endpoint. No arbitrary model-supplied URL, stdio, remote shell, client roots, sampling or elicitation is supported.
 
 The optional `infra/compose/extensions.yaml` starts `mcp-measurement`, a stateless length conversion example with no mounted data, secrets or published ports. Register its internal URL `http://mcp-measurement:8000/mcp` with `allow_private: true` and `data_origin: authorized_business`. This is a real MCP transport example, not a production connector or a source of process specifications.

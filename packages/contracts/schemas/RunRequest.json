@@ -41,6 +41,22 @@
           "title": "Allow Web",
           "type": "boolean"
         },
+        "mcp_service_ids": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 30,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mcp Service Ids"
+        },
         "investigation_strategy": {
           "anyOf": [
             {

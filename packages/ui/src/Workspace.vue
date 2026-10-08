@@ -2,6 +2,7 @@
 import { documentCatalog } from './document-catalog'
 import { computed, defineAsyncComponent, inject, provide, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import ComposerAddMenu from './ComposerAddMenu.vue'
+import MCPSelector from './MCPSelector.vue'
 import ConversationStarters from './ConversationStarters.vue'
 import ConversationHistoryItem from './ConversationHistoryItem.vue'
 import ConversationTitleEditor from './ConversationTitleEditor.vue'
@@ -95,6 +96,7 @@ watch(() => user.value?.id, () => {
 })
 const attached = ref<string[]>([])
 const mode = ref<'quick_qa' | 'investigation'>('quick_qa'), allowWeb = ref(false)
+const selectedMcp = ref<string[] | null>(null)
 const multiAvailable = ref(false), multiAgent = ref(false), uploading = ref(false)
 const imageUploads = ref<{ asset_id: string; name: string; preview: string }[]>([])
 const uploadingPreview = ref(''), imageInput = ref<HTMLInputElement | null>(null)
@@ -111,6 +113,7 @@ async function useStarter(starter: ConversationStarter) {
   if (running.value || uploading.value || (starter.multiAgent && !multiAvailable.value)) return
   text.value = starter.prompt
   mode.value = starter.mode; multiAgent.value = starter.multiAgent; allowWeb.value = starter.allowWeb
+  selectedMcp.value = null
   selectedDocuments.value = []; attached.value = []; clearImages(); pending = null; error.value = ''
   starterNotice.value = `已填入「${starter.title}」。资料范围：全部可访问的已发布资料；可修改后发送。`
   if (sourceMenu.value) sourceMenu.value.open = false
@@ -167,7 +170,7 @@ function clearImages() {
   uploadController?.abort(); uploadController = null; uploading.value = false
   uploadingPreview.value = ''; imageUploads.value = []
 }
-function newChat() { mobileNav.value = false; rememberChat(); multiAgent.value = false; clearImages(); scrollFollow.reset(); allowWeb.value = false; starterNotice.value = ''; generation++; closeStream(); conversation.value = null; messages.value = []; activeRun.value = null; error.value = ''; pending = null; selectedDocuments.value = []; attached.value = []; messagesCursor.value = null; view.value = 'chat' }
+function newChat() { selectedMcp.value = null; mobileNav.value = false; rememberChat(); multiAgent.value = false; clearImages(); scrollFollow.reset(); allowWeb.value = false; starterNotice.value = ''; generation++; closeStream(); conversation.value = null; messages.value = []; activeRun.value = null; error.value = ''; pending = null; selectedDocuments.value = []; attached.value = []; messagesCursor.value = null; view.value = 'chat' }
 async function openChat(item: any) {
   mobileNav.value = false
   starterNotice.value = ''
@@ -187,6 +190,7 @@ async function openChat(item: any) {
 function restoreScope(state: Partial<Run>) {
   if (!state.input_scope) return
   mode.value = state.input_scope.mode; allowWeb.value = state.input_scope.allow_web && !state.web_disabled
+  selectedMcp.value = state.input_scope.mcp_service_ids ?? null
   selectedDocuments.value = state.input_scope.resource_restrictions; attached.value = state.input_scope.attachment_refs
   multiAgent.value = state.input_scope.investigation_strategy === 'multi_agent'
 }
@@ -278,9 +282,9 @@ async function send() {
       conversation.value = created
       rememberChat(created.id)
     }
-    if (!pending || pending.payload.text !== text.value || pending.payload.mode !== mode.value || pending.payload.investigation_strategy !== submittedStrategy.value || pending.payload.allow_web !== allowWeb.value || JSON.stringify(pending.payload.resource_restrictions) !== JSON.stringify(selectedDocuments.value) || JSON.stringify(pending.payload.attachment_refs) !== JSON.stringify(attached.value) || pending.conversationId !== conversation.value.id) pending = {
+    if (!pending || pending.payload.text !== text.value || pending.payload.mode !== mode.value || pending.payload.investigation_strategy !== submittedStrategy.value || pending.payload.allow_web !== allowWeb.value || JSON.stringify(pending.payload.mcp_service_ids) !== JSON.stringify(mode.value === 'investigation' ? selectedMcp.value : null) || JSON.stringify(pending.payload.resource_restrictions) !== JSON.stringify(selectedDocuments.value) || JSON.stringify(pending.payload.attachment_refs) !== JSON.stringify(attached.value) || pending.conversationId !== conversation.value.id) pending = {
       conversationId: conversation.value.id, payload: { request_id: crypto.randomUUID(), expected_revision: conversation.value.revision,
-        text: text.value, mode: mode.value, investigation_strategy: submittedStrategy.value, continuation_of: messages.value.at(-1)?.status === 'waiting_input' ? messages.value.at(-1)?.run_id : null, resource_restrictions: [...selectedDocuments.value], attachment_refs: [...attached.value], allow_web: allowWeb.value },
+        text: text.value, mode: mode.value, investigation_strategy: submittedStrategy.value, continuation_of: messages.value.at(-1)?.status === 'waiting_input' ? messages.value.at(-1)?.run_id : null, resource_restrictions: [...selectedDocuments.value], attachment_refs: [...attached.value], allow_web: allowWeb.value, mcp_service_ids: mode.value === 'investigation' ? selectedMcp.value : null },
     }
     const submitted = pending
     const accepted = await post(`/v1/conversations/${submitted.conversationId}/messages`, submitted.payload, submitted.payload.request_id)
@@ -376,6 +380,7 @@ onUnmounted(() => { closeStream(); clearImages(); titleEpoch++; clearTimeout(tit
               <select v-model="mode" :disabled="running || uploading" aria-label="问答模式" @change="allowWeb = false"><option value="quick_qa">快速问答</option><option value="investigation">智能调查</option></select>
               <label v-if="mode === 'investigation'" class="checkbox web-toggle"><input v-model="multiAgent" type="checkbox" :disabled="running || uploading || (!multiAvailable && !multiAgent)" />多 Agent 协作</label>
               <label class="checkbox web-toggle"><input v-model="allowWeb" type="checkbox" :disabled="running" />联网搜索</label>
+              <MCPSelector v-if="mode==='investigation'" v-model="selectedMcp" :multi-agent="multiAgent" :disabled="running || uploading" :document-only="!!selectedDocuments.length"/>
               <details ref="sourceMenu" class="source-select"><summary>▤ 资料范围{{ selectedDocuments.length ? ` · ${selectedDocuments.length}` : '' }}</summary><div class="source-menu"><p class="small muted">不勾选时检索全部可访问资料</p><label v-for="doc in knowledge" :key="doc.id" class="checkbox"><input v-model="selectedDocuments" :disabled="running || uploading" type="checkbox" :value="doc.id" />{{ doc.title }}</label><p class="small muted">将已发布文件作为本轮阅读对象</p><label v-for="doc in knowledge.filter(item => item.asset_id)" :key="doc.asset_id" class="checkbox"><input v-model="attached" :disabled="running || uploading" type="checkbox" :value="doc.asset_id" />阅读：{{ doc.title }}</label><label v-for="image in imageUploads" :key="image.asset_id" class="checkbox"><input v-model="attached" :disabled="running || uploading" type="checkbox" :value="image.asset_id" />图片：{{ image.name }}</label><p v-if="attached.some(id => !knowledge.some(doc => doc.asset_id === id) && !imageUploads.some(image => image.asset_id === id))" class="small muted">已继承上一轮图片附件 <button type="button" class="text-button" @click="attached = attached.filter(id => knowledge.some(doc => doc.asset_id === id))">移除</button></p><p v-if="!knowledge.length" class="small muted">暂无已发布资料</p></div></details>
               <button class="send-button" :disabled="!text.trim() || running || uploading" @click="send" aria-label="发送问题">↑</button>
             </div>

@@ -98,6 +98,7 @@ class MessageInput(BaseModel):
     resource_restrictions: list[UUID] = Field(default_factory=list, max_length=30)
     attachment_refs: list[UUID] = Field(default_factory=list, max_length=10)
     allow_web: bool = False
+    mcp_service_ids: list[str] | None = Field(default=None, max_length=30)
     continuation_of: UUID | None = None
     investigation_strategy: Literal["single_agent", "multi_agent"] | None = None
 
@@ -125,12 +126,14 @@ def submission_response(row):
 
 def submission_matches(row, form):
     payload = form.model_dump(mode="json")
-    if row["payload_hash"] == digest(canonical(payload)):
-        return True
-    if "investigation_strategy" not in row["input"] and form.investigation_strategy is None:
-        payload.pop("investigation_strategy", None)
-        return row["payload_hash"] == digest(canonical(payload))
-    return False
+    candidates = [payload]
+    # Accepted requests can predate either additive nullable field. Never omit
+    # an explicit selection: replay must not silently alter execution scope.
+    for key in ("mcp_service_ids", "investigation_strategy"):
+        if key not in row["input"] and payload[key] is None:
+            candidates += [{k: v for k, v in candidate.items() if k != key}
+                           for candidate in list(candidates)]
+    return any(row["payload_hash"] == digest(canonical(candidate)) for candidate in candidates)
 
 
 @router.post("/v1/conversations/{conversation_id}/messages", status_code=202)
@@ -170,6 +173,7 @@ def submit(conversation_id: str, form: MessageInput, request: Request, user=Depe
             for key, value in {
                 "mode": form.mode,
                 "allow_web": form.allow_web,
+                "mcp_service_ids": form.mcp_service_ids,
                 "resource_restrictions": [str(x) for x in form.resource_restrictions],
                 "attachment_refs": [str(x) for x in form.attachment_refs],
             }.items()
@@ -243,6 +247,7 @@ def submit(conversation_id: str, form: MessageInput, request: Request, user=Depe
             question=form.text,
             mode=form.mode,
             allow_web=form.allow_web,
+            mcp_service_ids=form.mcp_service_ids,
             investigation_strategy=strategy,
             resource_restrictions=[str(x) for x in form.resource_restrictions],
             attachment_refs=form.attachment_refs,

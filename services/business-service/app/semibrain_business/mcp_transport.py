@@ -1,4 +1,4 @@
-"""Bounded official MCP Streamable HTTP client; no stdio, sampling or host roots."""
+"""Bounded official MCP HTTP/SSE clients with pinned public DNS for web connections."""
 
 import asyncio
 import json
@@ -10,7 +10,7 @@ from jsonschema import Draft202012Validator
 from semibrain_common.runtime import canonical, digest
 
 from semibrain_business.cancellation import ACTIVE_QUERY, QueryCancelled
-from semibrain_business.safe_fetch import WebError
+from semibrain_business.safe_fetch import WebError, resolve_public
 
 
 def endpoints():
@@ -22,6 +22,11 @@ def endpoints():
 
 
 def endpoint(reference):
+    if reference.startswith("web-"):
+        from semibrain_business import mcp_connections
+        config = mcp_connections.read(reference)
+        mcp_connections.validate_url(config["url"])
+        return config, ""
     row = endpoints().get(reference)
     if not isinstance(row, dict):
         raise WebError("MCP_ENDPOINT_UNCONFIGURED")
@@ -110,6 +115,11 @@ async def exchange(service, *, name=None, arguments=None, schema_hash=None):
 
     config, secret = endpoint(service["endpoint_ref"])
     target = httpx2.URL(config["url"])
+    sse = config.get("transport") == "sse"
+    headers = config.get("headers", {}) if config.get("managed") else (
+        {"Authorization": "Bearer " + secret} if secret else {})
+    secrets = [*headers.values(), *([secret] if secret else [])]
+    secrets += [value[7:] for value in headers.values() if value.lower().startswith("bearer ")]
 
     class LimitedStream(httpx2.AsyncByteStream):
         def __init__(self, inner):
@@ -131,7 +141,19 @@ async def exchange(service, *, name=None, arguments=None, schema_hash=None):
             self.inner = httpx2.AsyncHTTPTransport()
 
         async def handle_async_request(self, request):
-            response = await self.inner.handle_async_request(request)
+            outgoing = request
+            if config.get("managed"):
+                # Resolve/check once, then connect to that exact IP (including TLS SNI).
+                # This closes the DNS-rebinding gap between validation and connection.
+                values = await asyncio.to_thread(resolve_public, target.host, target.port or 443)
+                address = values[0][4][0]
+                outgoing = httpx2.Request(request.method, request.url.copy_with(host=address),
+                    headers=request.headers, stream=request.stream,
+                    extensions={**request.extensions, "sni_hostname": target.host})
+            response = await self.inner.handle_async_request(outgoing)
+            if response.status_code in {401, 403}:
+                await response.aclose()
+                raise WebError("MCP_AUTH_FAILED")
             response.stream = LimitedStream(response.stream)
             return response
 
@@ -139,16 +161,26 @@ async def exchange(service, *, name=None, arguments=None, schema_hash=None):
             await self.inner.aclose()
 
     async def request_guard(request):
-        # Also covers SDK-managed 307/308 redirects: secrets never leave this exact endpoint.
-        if request.url != target:
+        # SSE advertises a POST endpoint with a session query, on the same origin.
+        if ((request.url.scheme, request.url.host, request.url.port) !=
+                (target.scheme, target.host, target.port)
+                or (not sse and request.url != target)):
             raise WebError("MCP_REDIRECT_DENIED")
 
-    headers = {"Authorization": "Bearer " + secret} if secret else {}
-    async with httpx2.AsyncClient(headers=headers, timeout=service["timeout_seconds"],
-                                 trust_env=False, follow_redirects=False,
-                                 transport=LimitedTransport(),
-                                 event_hooks={"request": [request_guard]}) as http:
-        async with Client(streamable_http_client(config["url"], http_client=http),
+    def http_factory(**kwargs):
+        return httpx2.AsyncClient(headers=headers, timeout=service["timeout_seconds"],
+                                 trust_env=False, follow_redirects=False, transport=LimitedTransport(),
+                                 event_hooks={"request": [request_guard]})
+
+    async with http_factory() as http:
+        if sse:
+            from mcp.client.sse import sse_client
+            channel = sse_client(config["url"], httpx_client_factory=http_factory,
+                                 timeout=service["timeout_seconds"],
+                                 sse_read_timeout=service["timeout_seconds"])
+        else:
+            channel = streamable_http_client(config["url"], http_client=http)
+        async with Client(channel,
                           read_timeout_seconds=service["timeout_seconds"], cache=None) as client:
             tools, cursor = [], None
             for _ in range(5):
@@ -161,7 +193,7 @@ async def exchange(service, *, name=None, arguments=None, schema_hash=None):
                     break
             if cursor or len({tool["name"] for tool in tools}) != len(tools):
                 raise WebError("MCP_CATALOG_CONFLICT")
-            if secret and secret in canonical(tools):
+            if any(value and value in canonical(tools) for value in secrets):
                 raise WebError("MCP_CREDENTIAL_IN_REMOTE_CATALOG")
             if name is None:
                 return tools
@@ -170,7 +202,11 @@ async def exchange(service, *, name=None, arguments=None, schema_hash=None):
                 raise WebError("MCP_SCHEMA_CHANGED_REDISCOVER")
             validate_arguments(item["input_schema"], arguments)
             result = await client.call_tool(name, arguments)
-            return {"text": safe_result(result, secret),
+            content = safe_result(result, secret)
+            for value in secrets:
+                if value:
+                    content = content.replace(value, "[credential removed]")
+            return {"text": content,
                     "data_origin": config.get("data_origin", "authorized_business")}
 
 

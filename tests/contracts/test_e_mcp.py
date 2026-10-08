@@ -33,8 +33,8 @@ def policy():
     return {"mode": "all", "selected": [], "services": [service()]}
 
 
-@pytest.fixture(scope="module")
-def mcp_server():
+@pytest.fixture(scope="module", params=["streamable_http", "sse"])
+def mcp_server(request):
     server = MCPServer("SemiBrain controlled test", log_level="ERROR")
 
     @server.tool()
@@ -50,7 +50,8 @@ def mcp_server():
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
-    runner = uvicorn.Server(uvicorn.Config(server.streamable_http_app(stateless_http=True),
+    application = server.sse_app() if request.param == "sse" else server.streamable_http_app(stateless_http=True)
+    runner = uvicorn.Server(uvicorn.Config(application,
                                          log_level="error", lifespan="on"))
     thread = threading.Thread(target=runner.run, kwargs={"sockets": [sock]}, daemon=True)
     thread.start()
@@ -59,7 +60,7 @@ def mcp_server():
             break
         time.sleep(.02)
     assert runner.started
-    yield f"http://127.0.0.1:{port}/mcp"
+    yield f"http://127.0.0.1:{port}/{'sse' if request.param == 'sse' else 'mcp'}"
     runner.should_exit = True
     thread.join(timeout=5)
     sock.close()
@@ -67,7 +68,8 @@ def mcp_server():
 
 def configure(monkeypatch, url):
     monkeypatch.setenv("SEMIBRAIN_MCP_ENDPOINTS_JSON", json.dumps({
-        "local": {"url": url, "allow_private": True, "data_origin": "synthetic"}}))
+        "local": {"url": url, "allow_private": True, "data_origin": "synthetic",
+                  "transport": "sse" if url.endswith('/sse') else "streamable_http"}}))
 
 
 def test_real_streamable_http_discovery_validation_and_execution(monkeypatch, mcp_server):

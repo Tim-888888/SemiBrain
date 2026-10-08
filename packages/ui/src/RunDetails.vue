@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import MCPActivity from './MCPActivity.vue'
 import type { Run } from './api'
 import ContextDetails from './ContextDetails.vue'
 defineProps<{ run: Partial<Run> }>()
@@ -27,6 +28,7 @@ function searchLabel(run: Partial<Run>) {
     </div>
     <p v-if="run.budget" class="small muted">已发起 {{ run.budget.model_calls }} 次模型请求、{{ run.budget.tools }} 次工具调用；本轮模型与已登记外部工具累计用量 {{ run.budget.settled_tokens }} Token<span v-if="run.budget.unreconciled_calls">，{{ run.budget.unreconciled_calls }} 笔执行用量待对账</span>。</p>
     <ContextDetails v-if="run.context_usage" :value="run.context_usage" />
+    <MCPActivity v-if="run.run_id && ['single_agent','multi_agent'].includes(run.strategy || '')" :run-id="run.run_id" />
     <template v-if="run.web_activity">
       <p class="small muted">{{ run.web_activity.reason }} · 网络搜索：{{ searchLabel(run) }}<span v-if="run.web_activity.results !== undefined">（{{ run.web_activity.results }} 个候选来源）</span>。</p>
       <p v-if="run.web_activity.pages.length" class="small muted">已完成 {{ run.web_activity.pages.length }} 次网页读取尝试，其中 {{ run.web_activity.pages.filter(page => ['succeeded', 'partial'].includes(page.status)).length }} 次取得正文。搜索网址和未读正文不作为回答证据。</p>
