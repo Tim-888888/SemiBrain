@@ -121,10 +121,11 @@ def test_mcp_review_provenance_requires_success_and_retained_matching_source():
     assert queried_mcp(runner, [record]) is None
 
 
-def test_mcp_review_packet_carries_server_provenance_without_auto_approval():
+@pytest.mark.parametrize("has_provenance", [True, False])
+def test_mcp_review_packet_carries_server_provenance_without_auto_approval(has_provenance):
     import json
 
-    from semibrain_agent.closeout import review_answer
+    from semibrain_agent.closeout import MCP_REVIEW_RULE, REVIEW_SYSTEM, review_answer
 
     source = {"kind": "query", "source_id": "job", "source_version": "mcp-v1",
               "data_origin": "public", "locator": {"tool": "mcp.call"}}
@@ -138,11 +139,16 @@ def test_mcp_review_packet_carries_server_provenance_without_auto_approval():
                "goals": [{"index": 0, "covered": False, "block_ids": []}], "missing_goals": ["Topics"]}
     runner = SimpleNamespace(run={"_id": "run"}, context={"input": {"question": "Read topics using MCP"}},
         executor=SimpleNamespace(evidence=lambda: [record]),
-        db=SimpleNamespace(observations=SimpleNamespace(find=lambda _: [{"observation": observation}])),
+        db=SimpleNamespace(observations=SimpleNamespace(find=lambda _: [{"observation": observation}] if has_provenance else [])),
         model_call=Mock(return_value=(SimpleNamespace(text=json.dumps(verdict)), "fixture")),
         partial_body=lambda *a: "No supported answer")
     result = review_answer(runner, {"intent": {"goals": ["Topics"]}, "draft": "Topic B [1].",
                                    "closeout_reason": "BUDGET_EXHAUSTED"})
     payload = json.loads(runner.model_call.call_args.kwargs["inputs"][0]["content"])
-    assert payload["queried_mcp"]["calls"][0]["tool_name"] == "topics"
+    if has_provenance:
+        assert payload["queried_mcp"]["calls"][0]["tool_name"] == "topics"
+        assert runner.model_call.call_args.kwargs["system_override"] == REVIEW_SYSTEM + MCP_REVIEW_RULE
+    else:
+        assert "queried_mcp" not in payload
+        assert runner.model_call.call_args.kwargs["system_override"] == REVIEW_SYSTEM
     assert result["outcome"] == "partial" and "Topic B" not in result["draft"]
