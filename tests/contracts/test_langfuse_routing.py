@@ -34,6 +34,35 @@ def test_legacy_records_do_not_silently_follow_current_target(monkeypatch):
     assert "/project/old/" in trace_link("run", telemetry.trace_target(legacy=True))["url"]
 
 
+def test_same_project_origin_rename_updates_only_display_link(monkeypatch):
+    configure(monkeypatch, "https://traces.example.com", "selfhosted")
+    monkeypatch.setenv("SEMIBRAIN_LANGFUSE_UI_ALIASES", " http://127.0.0.1:18811/, http://localhost:18811 ")
+    old = {"enabled": True, "ui_url": "http://127.0.0.1:18811", "project_id": "selfhosted"}
+    link = trace_link("run", old)
+    assert link["url"] == f"https://traces.example.com/project/selfhosted/traces/{link['trace_id']}"
+    assert old["ui_url"] == "http://127.0.0.1:18811"
+    assert link["delivery_status"] == "not_verified"
+    monkeypatch.setenv("SEMIBRAIN_LANGFUSE_ENABLED", "false")
+    assert trace_link("run", old)["url"] == link["url"]
+    assert trace_link("run", {**old, "enabled": False})["url"] is None
+
+
+def test_origin_alias_cannot_redirect_unrelated_projects_or_cloud(monkeypatch):
+    configure(monkeypatch, "https://traces.example.com", "selfhosted")
+    monkeypatch.setenv("SEMIBRAIN_LANGFUSE_UI_ALIASES", "http://127.0.0.1:18811")
+    for host, project in [("http://127.0.0.1:18811", "other"),
+                          ("https://jp.cloud.langfuse.com", "selfhosted")]:
+        assert trace_link("run", {"enabled": True, "ui_url": host, "project_id": project})["url"].startswith(host + "/")
+    monkeypatch.delenv("SEMIBRAIN_LANGFUSE_UI_ALIASES")
+    assert trace_link("run", {"enabled": True, "ui_url": "http://127.0.0.1:18811", "project_id": "selfhosted"})["url"].startswith("http://127.0.0.1:18811/")
+
+
+def test_origin_alias_destination_still_requires_a_valid_public_url(monkeypatch):
+    configure(monkeypatch, "http://langfuse-web:3000", "selfhosted")
+    monkeypatch.setenv("SEMIBRAIN_LANGFUSE_UI_ALIASES", "http://127.0.0.1:18811")
+    assert trace_link("run", {"enabled": True, "ui_url": "http://127.0.0.1:18811", "project_id": "selfhosted"})["url"] is None
+
+
 @pytest.mark.parametrize("host", ["http://127.0.0.1:18811", "http://localhost:18811", "http://[::1]:18811"])
 def test_local_ssh_tunnel_links(host):
     assert trace_link("run", {"enabled": True, "ui_url": host, "project_id": "local"})["url"]

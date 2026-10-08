@@ -1,5 +1,6 @@
 """Read-only, allowlisted run diagnostics. Never returns prompts or tool payloads."""
 
+import os
 import re
 from urllib.parse import urlsplit
 
@@ -19,6 +20,13 @@ def trace_link(run_id, target=None):
     host = str(target.get("ui_url", "")).rstrip("/")
     project = str(target.get("project_id", ""))
     enabled = target.get("enabled") is True
+    # An origin rename of the same project is a display-only operation. Keep
+    # persisted routing snapshots and unrelated/cloud destinations intact.
+    aliases = {value.strip().rstrip("/") for value in
+               os.getenv("SEMIBRAIN_LANGFUSE_UI_ALIASES", "").split(",") if value.strip()}
+    current = trace_target()
+    if host in aliases and project and project == current.get("project_id"):
+        host = str(current.get("ui_url", "")).rstrip("/")
     try:
         parsed = urlsplit(host)
         # HTTP is limited to explicit loopback SSH tunnels. Remote UIs need TLS.

@@ -13,6 +13,7 @@ credentials. All six services use bounded memory and rotating Docker logs.
 | --- | --- |
 | `LANGFUSE_BASE_URL=http://langfuse-web:3000` | SDK ingestion over the existing core Docker network |
 | `SEMIBRAIN_LANGFUSE_UI_URL` | Browser origin: HTTPS, or HTTP only for an explicit loopback SSH tunnel |
+| `SEMIBRAIN_LANGFUSE_UI_ALIASES` | Explicit previous origins of the same project; comma-separated, empty by default |
 | `SEMIBRAIN_LANGFUSE_PROJECT_ID` | New self-hosted project ID |
 | `SEMIBRAIN_LANGFUSE_LEGACY_*` | Previous cloud origin/project for pre-snapshot records |
 | `NEXTAUTH_URL` | Langfuse login/callback origin; must match the browser origin |
@@ -25,6 +26,16 @@ The old cloud project and credentials are retained privately for rollback.
 Cloud traces are not copied automatically. A console link is not proof of
 successful delivery: diagnostics continue to return `not_verified` until an
 operator checks Langfuse itself.
+
+When publishing the existing self-hosted instance under a new domain, set both
+`NEXTAUTH_URL` and `SEMIBRAIN_LANGFUSE_UI_URL` to its HTTPS origin. Set
+`SEMIBRAIN_LANGFUSE_UI_ALIASES=http://127.0.0.1:18811,http://localhost:18811`
+to display historical tunnel links at that origin, only when their saved
+project ID matches the current project. This does not migrate stored snapshots
+or traces, change ingestion, enable disabled traces, or redirect unlisted cloud
+origins. Keep `LANGFUSE_BASE_URL` on the private Docker network. Use a dedicated
+HTTPS virtual host with the original Host header and `X-Forwarded-Proto=https`;
+keep signup disabled and storage ports private.
 
 SDK payloads remain allowlisted metadata, timing and token counts. Self-hosting
 does not enable uploading full prompts, document bodies or private tool outputs.
