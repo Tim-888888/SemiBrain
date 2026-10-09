@@ -1,0 +1,147 @@
+/* The wrapper has no desktop box: the original toolbar layout stays intact. */
+.composer-options { display: contents; }
+.composer-note-mobile { display: none; }
+
+@media (max-width: 650px) {
+  .workspace.mobile-chat {
+    position: fixed;
+    inset: var(--mobile-viewport-top, 0px) 0 auto;
+    height: var(--mobile-viewport-height, 100dvh);
+  }
+  .workspace.mobile-chat .composer-area {
+    padding: 6px 12px max(6px, env(safe-area-inset-bottom));
+  }
+  .workspace.mobile-chat .composer {
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1fr) 48px;
+    grid-template-rows: auto auto auto auto;
+    align-items: end;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+  }
+  .workspace.mobile-chat .composer::before {
+    content: '';
+    grid-area: 3 / 1 / 5 / -1;
+    align-self: stretch;
+    min-height: 50px;
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    background: var(--surface, #fff);
+    box-shadow: 0 3px 12px #243d3910;
+    pointer-events: none;
+  }
+  .workspace.mobile-chat .composer:focus-within::before { border-color: #9bc9c1; }
+  .workspace.mobile-chat .composer-toolbar { display: contents; }
+  .workspace.mobile-chat .composer-options {
+    grid-area: 1 / 1 / 2 / -1;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    padding: 0 0 8px;
+  }
+  .workspace.mobile-chat .composer-options::-webkit-scrollbar { display: none; }
+  .workspace.mobile-chat .composer-options > * { flex-shrink: 0; }
+  .workspace.mobile-chat .composer-options select,
+  .workspace.mobile-chat .composer-options summary,
+  .workspace.mobile-chat .composer-options .web-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    height: 40px;
+    padding: 0 11px;
+    white-space: nowrap;
+    border: 1px solid var(--border);
+    border-radius: 13px;
+    background: var(--surface, #fff);
+    font-size: 13px;
+    line-height: 1.2;
+  }
+  .workspace.mobile-chat .composer-options input[type='checkbox'] {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+  }
+  .workspace.mobile-chat .composer-options .web-toggle:has(input:checked),
+  .workspace.mobile-chat .composer-options details[open] summary {
+    color: var(--accent);
+    border-color: #9bc9c1;
+    background: #edf6f3;
+  }
+  .workspace.mobile-chat .composer textarea {
+    grid-area: 3 / 2 / 4 / 3;
+    position: relative;
+    z-index: 1;
+    align-self: center;
+    min-width: 0;
+    min-height: 48px;
+    max-height: 120px;
+    padding: 12px 2px;
+    font-size: 16px;
+    line-height: 24px;
+    border-radius: 0;
+  }
+  .workspace.mobile-chat .composer-add {
+    grid-area: 3 / 1 / 4 / 2;
+    margin: 3px;
+    z-index: 2;
+  }
+  .workspace.mobile-chat .composer .composer-add-trigger,
+  .workspace.mobile-chat .composer .send-button {
+    width: 42px;
+    height: 42px;
+    border-radius: 13px;
+  }
+  .workspace.mobile-chat .composer .composer-add-trigger { border-color: transparent; background: transparent; }
+  .workspace.mobile-chat .composer .send-button {
+    grid-area: 3 / 3 / 4 / 4;
+    position: relative;
+    z-index: 1;
+    margin: 3px;
+  }
+  .workspace.mobile-chat .composer-images { grid-area: 2 / 1 / 3 / -1; padding: 0 0 8px; }
+  .workspace.mobile-chat .composer .source-menu,
+  .workspace.mobile-chat .composer .composer-add-panel {
+    position: fixed;
+    top: var(--mobile-menu-top, 80px);
+    bottom: auto;
+    left: 12px;
+    right: 12px;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    max-height: var(--mobile-menu-height, 300px);
+    transform: translateY(-100%);
+    z-index: 30;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    white-space: normal;
+  }
+  .workspace.mobile-chat .composer .source-menu label { min-height: 36px; font-size: 13px; }
+  .workspace.mobile-chat .composer-note { margin: 4px 0 0; line-height: 12px; font-size: 10px; }
+  .workspace.mobile-chat .composer-note-desktop { display: none; }
+  .workspace.mobile-chat .composer-note-mobile { display: inline; }
+  .workspace.mobile-chat.is-keyboard-open .composer-note { display: none; }
+  .workspace.mobile-chat.is-keyboard-open .composer-area { padding-bottom: 6px; }
+  .workspace.mobile-chat.is-keyboard-open .composer textarea { grid-column: 1 / -1; padding: 12px 14px 4px; min-height: 40px; max-height: 112px; }
+  .workspace.mobile-chat.is-keyboard-open .composer-add,
+  .workspace.mobile-chat.is-keyboard-open .send-button { grid-row: 4; }
+  .workspace.mobile-chat .markdown { font-size: 15px; line-height: 1.75; }
+  .workspace.mobile-chat .markdown h1 { font-size: 22px; }
+  .workspace.mobile-chat .markdown h2 { font-size: 19px; }
+  .workspace.mobile-chat .markdown h3 { font-size: 17px; }
+  .workspace.mobile-chat .markdown h1,
+  .workspace.mobile-chat .markdown h2,
+  .workspace.mobile-chat .markdown h3 { line-height: 1.45; margin: 20px 0 10px; }
+  .workspace.mobile-chat .markdown > :first-child { margin-top: 0; }
+  .workspace.mobile-chat .markdown p { margin-bottom: 11px; }
+  .workspace.mobile-chat .markdown ul,
+  .workspace.mobile-chat .markdown ol { margin: 10px 0 14px; }
+  .workspace.mobile-chat .markdown li { margin: 4px 0; }
+}

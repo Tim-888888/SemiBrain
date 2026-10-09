@@ -4,6 +4,7 @@ import { computed, defineAsyncComponent, inject, provide, h, nextTick, onMounted
 import ComposerAddMenu from './ComposerAddMenu.vue'
 import MCPSelector from './MCPSelector.vue'
 import { useDetailsDismiss } from './use-details-dismiss'
+import { useMobileComposer } from './use-mobile-composer'
 import ConversationStarters from './ConversationStarters.vue'
 import ConversationHistoryItem from './ConversationHistoryItem.vue'
 import ConversationTitleEditor from './ConversationTitleEditor.vue'
@@ -38,6 +39,7 @@ import { api, post, setCsrf, setCacheUser, invalidateReadCache, type Message, ty
 import './style.css'
 import './experience.css'
 import './workbench.css'
+import './mobile-workbench.css'
 import UiIcon from './UiIcon.vue'
 import { routerKey } from 'vue-router'
 import { adminGroups, adminPages } from './admin-navigation'
@@ -135,6 +137,9 @@ let source: EventSource | null = null
 let generation = 0
 let pending: { conversationId: string; payload: any } | null = null
 const adminPage = computed(() => props.audience === 'admin')
+const composerArea = ref<HTMLElement | null>(null)
+const mobileChat = computed(() => narrow.value && !adminPage.value && view.value === 'chat' && !!user.value)
+const { keyboardOpen, viewportStyle } = useMobileComposer(mobileChat, questionInput, composerArea, text)
 const denied = computed(() => adminPage.value && user.value?.role !== 'admin')
 const running = computed(() => sending.value || (!!activeRun.value && !['succeeded', 'failed', 'partial', 'cancelled', 'waiting_input'].includes(activeRun.value.status)))
 async function loadLists() {
@@ -388,7 +393,7 @@ onUnmounted(() => { closeStream(); clearImages(); titleEpoch++; clearTimeout(tit
   <div v-if="loading" class="loading-page">正在打开 SemiBrain…</div>
   <AuthPanel v-else-if="!user" @signed-in="signedIn" />
   <div v-else-if="denied" class="loading-page"><h1>此账号没有管理权限</h1><p><a href="/">返回工作台</a></p></div>
-  <div v-else class="workspace" :class="{ 'admin-workspace': adminPage, 'is-collapsed': collapsed, 'mobile-nav-open': mobileNav }"><button v-if="mobileNav" class="sidebar-scrim" aria-label="关闭导航" @click="mobileNav = false" />
+  <div v-else class="workspace" :style="viewportStyle" :class="{ 'admin-workspace': adminPage, 'is-collapsed': collapsed, 'mobile-nav-open': mobileNav, 'mobile-chat': mobileChat, 'is-keyboard-open': keyboardOpen }"><button v-if="mobileNav" class="sidebar-scrim" aria-label="关闭导航" @click="mobileNav = false" />
     <component :inert="narrow && !mobileNav" :is="adminPage ? 'aside' : ResizableSidebar" :class="{ 'admin-sidebar': adminPage }"><a class="wordmark" href="/" aria-label="SemiBrain 首页"><BrandLogo /><span class="brand-name">SemiBrain</span></a><span v-if="adminPage" class="admin-caption">管理控制台</span>
       <button v-if="!adminPage" class="new-chat" @click="newChat">＋ 新会话</button>
       <nav v-if="adminPage" class="admin-navigation" aria-label="管理导航"><section v-for="group in adminGroups" :key="group.label" class="nav-group"><p class="nav-group-label">{{ group.label }}</p><button v-for="[id,label] in group.items" :key="id" :class="{ active: view === id }" :aria-current="view === id ? 'page' : undefined" :title="label" @click="navigate(id)"><UiIcon :name="id" /><span class="nav-label">{{ label }}</span></button></section></nav>
@@ -407,7 +412,7 @@ onUnmounted(() => { closeStream(); clearImages(); titleEpoch++; clearTimeout(tit
             <section v-if="activeRun" class="message assistant"><div class="assistant-label"><span class="mini-brand">S</span> SemiBrain</div><div class="run-progress" role="status"><span class="pulse-dot"></span>{{ activeRun.progress || '正在处理' }}</div><RunDetails :run="activeRun" /><button class="text-button" @click="diagnosticRun = activeRun.run_id">查看运行链路</button><button v-if="allowWeb" class="text-button" @click="disableWeb">关闭本次联网</button><button class="text-button" :disabled="cancelling || activeRun.status === 'cancelling'" @click="cancelRun">{{ activeRun.status === 'cancelling' ? '正在停止…' : '停止回答' }}</button><MarkdownAnswer :text="activeRun.body_markdown" :citations="activeRun.citations" :artifacts="activeRun.artifacts" :image-refs="activeRun.image_refs" streaming /></section>
           </div>
         </div>
-        <div class="composer-area">
+        <div ref="composerArea" class="composer-area">
           <button v-if="!followLatest && (messages.length || activeRun)" type="button" class="latest-button" @click="bottom(true)">↓ 回到最新</button>
           <p v-if="error" class="error" role="alert">{{ error }}</p>
           <p v-if="starterNotice" class="starter-notice" role="status">{{ starterNotice }}</p>
@@ -423,15 +428,17 @@ onUnmounted(() => { closeStream(); clearImages(); titleEpoch++; clearTimeout(tit
             <input ref="imageInput" class="image-file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple :disabled="running || uploading || !imageEnabled" tabindex="-1" aria-label="选择图片文件" @change="pickImages" />
             <div class="composer-toolbar">
               <ComposerAddMenu :disabled="running || uploading" :actions="addActions" @select="addContent" />
+              <div class="composer-options" role="group" aria-label="本次提问设置">
               <select v-model="mode" :disabled="running || uploading" aria-label="问答模式" @change="allowWeb = false"><option value="quick_qa">快速问答</option><option value="investigation">智能调查</option></select>
               <label v-if="mode === 'investigation'" class="checkbox web-toggle"><input v-model="multiAgent" type="checkbox" :disabled="running || uploading || (!multiAvailable && !multiAgent)" />多 Agent 协作</label>
               <label class="checkbox web-toggle"><input v-model="allowWeb" type="checkbox" :disabled="running" />联网搜索</label>
               <MCPSelector v-if="mode==='investigation'" v-model="selectedMcp" :multi-agent="multiAgent" :disabled="running || uploading" :document-only="!!selectedDocuments.length"/>
               <details ref="sourceMenu" class="source-select" @toggle="sourceToggle"><summary>▤ 资料范围{{ selectedDocuments.length ? ` · ${selectedDocuments.length}` : '' }}</summary><div class="source-menu"><p class="small muted">不勾选时检索全部可访问资料</p><label v-for="doc in knowledge" :key="doc.id" class="checkbox"><input v-model="selectedDocuments" :disabled="running || uploading" type="checkbox" :value="doc.id" />{{ doc.title }}</label><p class="small muted">将已发布文件作为本轮阅读对象</p><label v-for="doc in knowledge.filter(item => item.asset_id)" :key="doc.asset_id" class="checkbox"><input v-model="attached" :disabled="running || uploading" type="checkbox" :value="doc.asset_id" />阅读：{{ doc.title }}</label><label v-for="image in imageUploads" :key="image.asset_id" class="checkbox"><input v-model="attached" :disabled="running || uploading" type="checkbox" :value="image.asset_id" />图片：{{ image.name }}</label><p v-if="attached.some(id => !knowledge.some(doc => doc.asset_id === id) && !imageUploads.some(image => image.asset_id === id))" class="small muted">已继承上一轮图片附件 <button type="button" class="text-button" @click="attached = attached.filter(id => knowledge.some(doc => doc.asset_id === id))">移除</button></p><p v-if="!knowledge.length" class="small muted">暂无已发布资料</p></div></details>
+              </div>
               <button class="send-button" :disabled="!text.trim() || running || uploading" @click="send" aria-label="发送问题">↑</button>
             </div>
           </div>
-          <p class="composer-note">回答可通过引用核验 · 业务数据为合成演示数据 · Enter 发送，Shift + Enter 换行</p>
+          <p class="composer-note"><span class="composer-note-desktop">回答可通过引用核验 · 业务数据为合成演示数据 · Enter 发送，Shift + Enter 换行</span><span class="composer-note-mobile">回答可核验 · 演示数据</span></p>
         </div>
       </template>
     </main>
