@@ -45,12 +45,18 @@ describe('mobile composer retains the existing request contract',()=>{
     expect(wrapper.find('.source-select:not(.mcp-select) summary').text()).toContain('1')
     expect(wrapper.find('.mcp-select summary').text()).toContain('1')
     const input=wrapper.find('textarea')
-    await input.setValue('比较 CP 和 FT，保留原文证据')
+    await input.setValue('比较 CP 和 FT')
     await input.trigger('keydown',{key:'Enter',isComposing:true});expect(post).not.toHaveBeenCalled()
     await input.trigger('keydown',{key:'Enter',shiftKey:true});expect(post).not.toHaveBeenCalled()
+    const enter=new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true})
+    input.element.dispatchEvent(enter);await flushPromises()
+    expect(enter.defaultPrevented).toBe(false);expect(post).not.toHaveBeenCalled()
+    expect(input.attributes('enterkeyhint')).toBe('enter')
+    // jsdom does not perform the browser's default textarea insertion.
+    await input.setValue('比较 CP 和 FT\n保留原文证据')
     await wrapper.find('.send-button').trigger('click');await flushPromises()
     expect(post).toHaveBeenLastCalledWith('/v1/conversations/chat-1/messages',expect.objectContaining({
-      text:'比较 CP 和 FT，保留原文证据',mode:'investigation',investigation_strategy:'multi_agent',allow_web:true,mcp_service_ids:['mcp-1'],resource_restrictions:['doc-1'],attachment_refs:[],
+      text:'比较 CP 和 FT\n保留原文证据',mode:'investigation',investigation_strategy:'multi_agent',allow_web:true,mcp_service_ids:['mcp-1'],resource_restrictions:['doc-1'],attachment_refs:[],
     }),expect.any(String))
     expect((input.element as HTMLTextAreaElement).value).toBe('');expect(input.attributes('disabled')).toBeDefined()
     stream.dispatchEvent(new MessageEvent('snapshot',{data:JSON.stringify({run_id:'run-1',status:'running',sequence:1,body_markdown:'正在输出',citations:[]})}));await flushPromises()
@@ -58,6 +64,21 @@ describe('mobile composer retains the existing request contract',()=>{
     stream.dispatchEvent(new MessageEvent('snapshot',{data:JSON.stringify({run_id:'run-1',status:'succeeded',sequence:2,body_markdown:'## 完成\n\nCP 与 FT 对比结果',citations:[]})}));await flushPromises()
     expect(wrapper.text()).toContain('CP 与 FT 对比结果');expect(input.attributes('disabled')).toBeUndefined()
     expect(wrapper.findAll('.report-export')).toHaveLength(1)
+  })
+  it('keeps desktop Enter sending and Shift+Enter / IME composition unchanged',async()=>{
+    vi.stubGlobal('matchMedia',()=>({matches:false,addEventListener:vi.fn(),removeEventListener:vi.fn()}))
+    wrapper=mount(Workspace,{props:{audience:'user'},attachTo:document.body});await flushPromises()
+    expect(wrapper.find('.workspace').classes()).not.toContain('mobile-chat')
+    const input=wrapper.find('textarea')
+    expect(input.attributes('enterkeyhint')).toBeUndefined()
+    await input.setValue('桌面发送检查')
+    await input.trigger('keydown',{key:'Enter',shiftKey:true})
+    await input.trigger('keydown',{key:'Enter',isComposing:true})
+    expect(post).not.toHaveBeenCalled()
+    const enter=new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true})
+    input.element.dispatchEvent(enter);await flushPromises()
+    expect(enter.defaultPrevented).toBe(true)
+    expect(post).toHaveBeenLastCalledWith('/v1/conversations/chat-1/messages',expect.objectContaining({text:'桌面发送检查'}),expect.any(String))
   })
   it('keeps image preview/removal and attachment references in the submitted request',async()=>{
     wrapper=mount(Workspace,{props:{audience:'user'},attachTo:document.body});await flushPromises()

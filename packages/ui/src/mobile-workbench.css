@@ -32,6 +32,8 @@
     box-shadow: 0 3px 12px #243d3910;
     pointer-events: none;
   }
+  /* The desktop focus shadow would outline the whole grid, including the chips. */
+  .workspace.mobile-chat .composer:focus-within { box-shadow: none; }
   .workspace.mobile-chat .composer:focus-within::before { border-color: #9bc9c1; }
   .workspace.mobile-chat .composer-toolbar { display: contents; }
   .workspace.mobile-chat .composer-options {
@@ -47,6 +49,9 @@
   }
   .workspace.mobile-chat .composer-options::-webkit-scrollbar { display: none; }
   .workspace.mobile-chat .composer-options > * { flex-shrink: 0; }
+  /* Keep keyboard focus inside each chip so horizontal scrolling cannot clip it. */
+  .workspace.mobile-chat .composer-options select:focus-visible,
+  .workspace.mobile-chat .composer-options summary:focus-visible { outline-offset: -3px; }
   .workspace.mobile-chat .composer-options select,
   .workspace.mobile-chat .composer-options summary,
   .workspace.mobile-chat .composer-options .web-toggle {

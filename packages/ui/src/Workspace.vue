@@ -370,7 +370,10 @@ async function showPrompt(runId: string) {
   try { promptPreview.value = JSON.stringify(await api(`/admin/v1/runs/${runId}/prompt-preview`), null, 2) }
   catch (e) { error.value = (e as Error).message }
 }
-function keydown(event: KeyboardEvent) { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); send() } }
+function keydown(event: KeyboardEvent) {
+  // Mobile keyboards label Enter as a line break; the arrow remains the send action.
+  if (!mobileChat.value && event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); send() }
+}
 onMounted(async () => { try { const result = await api('/v1/auth/me'); setCsrf(result.csrf); await signedIn(result.user); if (!adminPage.value) await restoreChat() } catch { user.value = null } finally { loading.value = false } })
 let checkingSession = false
 async function verifyVisibleSession() {
@@ -424,7 +427,7 @@ onUnmounted(() => { closeStream(); clearImages(); titleEpoch++; clearTimeout(tit
               </div>
               <div v-if="uploading" class="composer-image is-uploading" role="status"><img v-if="uploadingPreview" :src="uploadingPreview" alt="正在上传的图片" /><span>正在上传…</span></div>
             </div>
-            <textarea ref="questionInput" v-model="text" :disabled="running" placeholder="向 SemiBrain 提问…" aria-label="问题输入框" rows="2" @keydown="keydown" @paste="pasteImages"></textarea>
+            <textarea ref="questionInput" v-model="text" :disabled="running" :enterkeyhint="mobileChat ? 'enter' : undefined" placeholder="向 SemiBrain 提问…" aria-label="问题输入框" rows="2" @keydown="keydown" @paste="pasteImages"></textarea>
             <input ref="imageInput" class="image-file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple :disabled="running || uploading || !imageEnabled" tabindex="-1" aria-label="选择图片文件" @change="pickImages" />
             <div class="composer-toolbar">
               <ComposerAddMenu :disabled="running || uploading" :actions="addActions" @select="addContent" />
