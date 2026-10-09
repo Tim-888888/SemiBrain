@@ -84,5 +84,15 @@ onMounted(()=>load())
 .explorer-toolbar select{width:112px}
 .explorer-toolbar button{flex-shrink:0;white-space:nowrap;padding:9px 15px}
 @container graph-explorer (max-width:860px){.explorer-search{flex-basis:100%}}
+@media (max-width:650px) {
+ .explorer-toolbar{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+ .explorer-search{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
+ .explorer-filters,.explorer-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;min-width:0;width:100%;margin:0}
+ .explorer-field{min-width:0}
+ .graph-explorer .explorer-toolbar input,.graph-explorer .explorer-toolbar select,.graph-explorer .explorer-toolbar button{height:42px;min-height:42px;font-size:13px}
+ .explorer-toolbar select,.explorer-actions button{width:100%;min-width:0}
+ .explorer-toolbar button{padding:9px 12px}
+ .graph-explorer .explorer-status{flex-direction:column;gap:4px;margin-top:14px;line-height:1.6}
+}
 .explorer-status{display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;font-size:12px;color:var(--muted);margin-top:16px}.graph-explorer :deep(.interactive-graph){margin:12px 0}.graph-explorer :deep(svg){height:clamp(480px,68vh,1000px)}.graph-expanded{position:fixed;inset:0;z-index:1900;background:var(--canvas,#f5f7fa);padding:18px 24px;display:flex;flex-direction:column;overflow:auto}.graph-expanded :deep(.interactive-graph){flex:1;min-height:300px;display:flex;flex-direction:column}.graph-expanded :deep(svg){height:auto;flex:1;min-height:240px}.empty{padding:80px 20px;text-align:center}blockquote{white-space:pre-wrap;border-left:3px solid var(--border);padding-left:12px;max-height:280px;overflow:auto}.panel-card{margin-top:14px}.panel-card h3{font-size:15px}details{overflow-wrap:anywhere}@media(max-width:700px){.graph-explorer :deep(svg){height:60vh;min-height:360px}.graph-expanded{padding:12px}}
 </style>
