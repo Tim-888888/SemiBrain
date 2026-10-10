@@ -4,7 +4,6 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
-
 from semibrain_agent.closeout import queried_graph
 from semibrain_agent.prompts import Intent, IntentSourceError, validate_intent_sources
 
@@ -53,9 +52,14 @@ def test_review_does_not_revive_unavailable_or_mismatched_graph_sources(change):
     if change == "missing":
         assert queried_graph(runner, []) == []
         return
-    if change == "version": record["source"]["source_version"] = "v2"
-    if change == "quote": record["content"] = "Different paragraph"
-    if change == "failed": observation["status"] = "failed"
-    if change == "other_tool": observation["tool"] = "knowledge.search"
-    if change == "other_evidence": observation["evidence"] = [{"evidence_id": "other"}]
+    if change == "version":
+        record["source"]["source_version"] = "v2"
+    if change == "quote":
+        record["content"] = "Different paragraph"
+    if change == "failed":
+        observation["status"] = "failed"
+    if change == "other_tool":
+        observation["tool"] = "knowledge.search"
+    if change == "other_evidence":
+        observation["evidence"] = [{"evidence_id": "other"}]
     assert queried_graph(runner, [record]) == []
