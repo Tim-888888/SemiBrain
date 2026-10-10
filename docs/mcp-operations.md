@@ -1,5 +1,7 @@
 # MCP operations
 
+[简体中文](mcp-operations.zh-CN.md) · [English](mcp-operations.md) · [Project overview](../README.en.md)
+
 The business service owns MCP configuration, version history, discovery handles and durable tool jobs. The gateway only proxies administrator actions and supplies current identity/Agent-role claims. Single and multi-Agent execution use the same `mcp.discover` and `mcp.call` tools, filtered by role and current scope.
 
 ## Deployment and activation
@@ -31,11 +33,6 @@ selection is persisted in the input snapshot and propagated through trusted gran
 to single and multi-agent execution. Selected-document restrictions still disable
 external MCP. Run details show owned calls; revoked services hide retained payloads.
 
-Implementation reference for web connection/import/SSE behavior: WeKnora
-`9fa9e7c29d8eb727825b14f0b0ca23907969b91a`, `McpServiceDialog.vue`,
-`internal/mcp/client.go` and `internal/mcp/security.go`. The existing Python
-discovery/call loop and three-service ownership remain unchanged.
-
 For deployment-managed endpoints, set `SEMIBRAIN_MCP_ENDPOINTS_JSON` in the **business service and worker** environment. Its value is a deployment-owned JSON object keyed by endpoint reference. Each endpoint has `url`, optional `secret_ref`, and `data_origin` (`public`, `authorized_business`, or `synthetic`). Credentials are read from a named `SEMIBRAIN_MCP_*_TOKEN` environment variable; never put credentials in URLs, committed configuration, or frontend assets. Plain HTTP requires explicit `allow_private: true` for an approved internal endpoint. No arbitrary model-supplied URL, stdio, remote shell, client roots, sampling or elicitation is supported.
 
 The optional `infra/compose/extensions.yaml` starts `mcp-measurement`, a stateless length conversion example with no mounted data, secrets or published ports. Register its internal URL `http://mcp-measurement:8000/mcp` with `allow_private: true` and `data_origin: authorized_business`. This is a real MCP transport example, not a production connector or a source of process specifications.
@@ -52,4 +49,4 @@ Each call uses the existing durable job and correlation identifiers. The complet
 
 Configuration collections: `mcp_settings`, `mcp_config_history`, `mcp_catalogs`; ephemeral `mcp_tool_refs` and `mcp_run_policies` have TTL indexes. No cross-service database access or destructive migration is added. Rollback disables the policy and restores prior application images/configuration; previously accepted calls keep their audit records.
 
-Design reference: WeKnora `f46c9905677b36a454aa6669a2619f9eecf9fd23`, `internal/agent/tools/mcp_catalog.go` and `mcp_exposure.go`. The implementation uses the official Python MCP SDK, locked by `uv.lock`, and adapts progressive discovery to SemiBrain's service and authorization boundaries.
+The implementation uses the official Python MCP SDK, locked by `uv.lock`, and applies progressive discovery within SemiBrain's service and authorization boundaries.

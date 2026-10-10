@@ -1,5 +1,7 @@
 # Demo recovery rehearsal
 
+[简体中文](recovery-rehearsal.zh-CN.md) · [English](recovery-rehearsal.md) · [Project overview](../README.en.md)
+
 These operator scripts implement a **manual cold backup**, with a brief maintenance window. They do not schedule backups or guarantee a daily RPO. Run them only on the authorized Docker host. The root-only backup includes credentials and container configuration; never publish it or place it in a web root. Use a separately authorized encrypted off-host copy for host-loss recovery.
 
 1. Finish active runs, ingestion and exports. Verify no deployment is running. Choose a new directory under `/data/semibrain/backups`.

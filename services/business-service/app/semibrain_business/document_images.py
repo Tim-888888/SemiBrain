@@ -1,4 +1,4 @@
-"""Document-scoped Markdown resources; adapted concepts are recorded in THIRD_PARTY_NOTICES."""
+"""Document-scoped Markdown resource mapping."""
 
 import base64
 import io

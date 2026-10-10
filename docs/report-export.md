@@ -1,5 +1,7 @@
 # Saved-answer export
 
+[简体中文](report-export.zh-CN.md) · [English](report-export.md) · [Project overview](../README.en.md)
+
 Every terminal succeeded/partial answer exposes Markdown, Word and PDF export. The gateway authorizes the owner and asks the Agent service for its immutable report. The business service converts those bytes; no model rewrites the answer and no browser HTML is accepted. Existing Markdown and report schemas remain unchanged.
 
 `POST /v1/runs/{run_id}/exports` accepts only request UUID and format. A durable, idempotent job pins report ID, revision, content hash and renderer version. `GET /v1/runs/{run_id}/exports` restores recent jobs after refresh. Download uses the existing authenticated asset proxy. It revalidates the owner authentication epoch, source access, report hash, winning job and expiration. Withdrawing sources also blocks future export/download; previously downloaded files cannot be recalled.

@@ -1,5 +1,7 @@
 # Personal memory
 
+[简体中文](memory-operations.zh-CN.md) · [English](memory-operations.md) · [Project overview](../README.en.md)
+
 Memory is opt-in per user. The agent service owns `memories`, `memory_settings`,
 revision hashes and idempotency records. The conversation gateway derives owner
 and authorization version from the authenticated session. There is no model write
@@ -40,11 +42,6 @@ disabling the master switch stops both. No bulk export, vector search or topic
 tracking is introduced. Restore the previous backend/web images and stop the
 new worker to roll back; the additive collections and fields are backward compatible.
 
-Reference: WeKnora `602d0c388bf17d894f467fe0cd65d1d62c73d303`,
-`internal/application/service/memory/extract.go` and `service.go`. The source-bound
-batching and review mechanisms were adapted to Python/MongoDB and the existing
-three-service boundary, rather than introducing WeKnora's Go storage/runtime.
-
 The workspace's **My memory** page supports confirmed preferences, confirmed work
 background and confirmed report excerpts. Excerpts must be contiguous text from
 the caller's accessible final report; source hashes and lineage remain attached.
@@ -67,9 +64,4 @@ continuing through an old run. Affected runs stop and ask for a fresh submission
 Sources are checked before each use and joined into final report lineage, so a
 withdrawn source cannot become permanent authorization through memory.
 
-References inspected: WeKnora `f46c9905677b36a454aa6669a2619f9eecf9fd23`
-(`internal/agent/tools/search_memory.go`, `internal/handler/memory.go`), and DSH
-`4878cdabd87d4041bdaff61d04c966883b9fd07a` (`docs/user/guide/mcp-memory.md`).
-WeKnora informed bounded recall and identity ownership. DSH's optional third-party
-MCP examples do not implement this project's lifecycle or conflict policy; no
-third-party memory database is required by this adaptation.
+No third-party memory database is required by this implementation.

@@ -1,5 +1,7 @@
 # Reviewed skills
 
+[简体中文](skills-operations.zh-CN.md) · [English](skills-operations.md) · [Project overview](../README.en.md)
+
 Administrators create immutable draft versions in **Skills**. Publishing requires an explicit review confirmation and note. Knowledge uploads never register skills. A skill contains a short catalog description, Markdown instructions, dependencies, permitted account/Agent roles, and optionally reviewed Python code, a parameter schema, fixed export names, and a 1–30 second execution limit.
 
 The catalog exposes only metadata. `skill.load` retrieves instructions and the pinned version; `skill.execute` accepts JSON parameters and authorized input asset/query/answer identifiers, not code. Instructions guide a method but are not fact evidence or a final answer schema. Script results and downloadable artifacts use the existing evidence and authorization pipeline.
@@ -10,4 +12,4 @@ Scripts run in the existing network-disabled, resource-limited Docker sandbox. O
 
 The supervisor receives a union of role-specific extension metadata; it does not acquire the child's execution permission. The gateway supplies trusted roles, and business-service owns configuration, versions, execution, and revocation. There is no agent-service database access to these records.
 
-Reference: WeKnora `f46c9905677b36a454aa6669a2619f9eecf9fd23`, `internal/agent/skills/loader.go` (progressive disclosure) and `internal/agent/tools/skill_runtime_guard.go` (runtime dependency diagnostics). SemiBrain keeps reviewed scripts in versioned records instead of exposing host skill directories or allowing runtime package installation.
+SemiBrain keeps reviewed scripts in versioned records instead of exposing host skill directories or allowing runtime package installation.
