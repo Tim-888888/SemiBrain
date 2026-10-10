@@ -1846,6 +1846,102 @@
         }
       }
     },
+    "/v1/memories/candidates/{candidate_id}/confirm": {
+      "post": {
+        "summary": "Confirm",
+        "operationId": "confirm_v1_memories_candidates__candidate_id__confirm_post",
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Candidate Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryCandidateConfirm"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/memories/candidates/{candidate_id}/dismiss": {
+      "post": {
+        "summary": "Dismiss",
+        "operationId": "dismiss_v1_memories_candidates__candidate_id__dismiss_post",
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Candidate Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryCandidateDismiss"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/v1/memories/authorize": {
       "post": {
         "summary": "Authorize",
@@ -2284,6 +2380,236 @@
             }
           }
         },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/langfuse/oidc/.well-known/openid-configuration": {
+      "get": {
+        "summary": "Discovery",
+        "operationId": "discovery_v1_auth_langfuse_oidc__well_known_openid_configuration_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/langfuse/oidc/jwks": {
+      "get": {
+        "summary": "Jwks",
+        "operationId": "jwks_v1_auth_langfuse_oidc_jwks_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/langfuse/oidc/authorize": {
+      "get": {
+        "summary": "Authorize",
+        "operationId": "authorize_v1_auth_langfuse_oidc_authorize_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/langfuse/resume": {
+      "get": {
+        "summary": "Resume",
+        "operationId": "resume_v1_auth_langfuse_resume_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/langfuse/oidc/token": {
+      "post": {
+        "summary": "Token",
+        "operationId": "token_v1_auth_langfuse_oidc_token_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/langfuse/oidc/userinfo": {
+      "get": {
+        "summary": "Userinfo",
+        "operationId": "userinfo_v1_auth_langfuse_oidc_userinfo_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/langfuse/open": {
+      "get": {
+        "summary": "Open Trace",
+        "operationId": "open_trace_v1_auth_langfuse_open_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/langfuse/logout-redirect": {
+      "get": {
+        "summary": "Logout Redirect",
+        "operationId": "logout_redirect_v1_auth_langfuse_logout_redirect_get",
+        "parameters": [
+          {
+            "name": "ticket",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ticket"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/langfuse/bridge": {
+      "get": {
+        "summary": "Bridge",
+        "description": "Served ONLY via exact same-origin locations on the Langfuse HTTPS proxy.\n\nNextAuth's own CSRF-protected endpoints set its cookies. Never mint/replay its\nsession cookies or proxy passwords. The gateway path is also harmless on the\nSemiBrain host: relative /api/auth requests there cannot authenticate anyone.",
+        "operationId": "bridge_v1_auth_langfuse_bridge_get",
+        "parameters": [
+          {
+            "name": "target",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Target"
+            }
+          },
+          {
+            "name": "ticket",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Ticket"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "signin",
+              "title": "Action"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -3062,6 +3388,44 @@
       "get": {
         "summary": "Run Diagnostics",
         "operationId": "run_diagnostics_admin_v1_runs__run_id__diagnostics_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/runs/{run_id}/trace": {
+      "get": {
+        "summary": "Own Run Trace",
+        "operationId": "own_run_trace_v1_runs__run_id__trace_get",
         "parameters": [
           {
             "name": "run_id",
@@ -5453,6 +5817,64 @@
         ],
         "title": "MCPService"
       },
+      "MemoryCandidateConfirm": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          },
+          "confirmed": {
+            "type": "boolean",
+            "const": true,
+            "title": "Confirmed"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "preference",
+              "background"
+            ],
+            "title": "Kind"
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 1600,
+            "minLength": 1,
+            "title": "Content"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "confirmed",
+          "kind",
+          "content",
+          "expires_at"
+        ],
+        "title": "MemoryCandidateConfirm"
+      },
+      "MemoryCandidateDismiss": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id"
+        ],
+        "title": "MemoryCandidateDismiss"
+      },
       "MemoryDelete": {
         "properties": {
           "request_id": {
@@ -5556,6 +5978,17 @@
           "enabled": {
             "type": "boolean",
             "title": "Enabled"
+          },
+          "auto_extract": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Extract"
           }
         },
         "additionalProperties": false,
@@ -5590,6 +6023,18 @@
               }
             ],
             "title": "Source Run Id"
+          },
+          "source_input_run_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Input Run Id"
           },
           "lineage_refs": {
             "items": {

@@ -4,6 +4,14 @@ from semibrain_agent.runs import db
 
 
 def initialize():
+    migrate(db(), "memory-candidates-001", [
+        ("memory_candidates", [("owner_id", 1), ("status", 1), ("created_at", -1)], {}),
+        ("memory_candidates", [("owner_id", 1), ("fingerprint", 1)], {}),
+        ("memory_candidates", [("expires_at", 1)], {"expireAfterSeconds": 0}),
+        ("memory_extraction_logs", [("expires_at", 1)], {"expireAfterSeconds": 0}),
+        ("memory_settings", [("enabled", 1), ("auto_extract", 1), ("extract_next_at", 1)], {}),
+        ("runs", [("command.subject_ref", 1), ("created_at", 1)], {}),
+    ])
     migrate(db(), "e-configuration-001", [
         ("agent_configuration_versions", [("created_at", -1)], {}),
         ("agent_configuration_commands", [("created_at", -1)], {}),

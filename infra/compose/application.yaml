@@ -46,6 +46,12 @@ services:
     command: [celery, -A, semibrain_agent.worker:app, worker, --beat, --schedule, /tmp/celerybeat, --pool, threads, --concurrency, '3', --loglevel, WARNING, --without-gossip, --without-mingle, --without-heartbeat]
     env_file: ["${SECRET_DIR}/agent.env"]
     healthcheck: {disable: true}
+  memory-worker:
+    <<: *api
+    command: [celery, -A, semibrain_agent.memory_worker:app, worker, --beat, --schedule, /tmp/memory-celerybeat, --pool, threads, --concurrency, '1', --queues, celery_agent_memory_v1, --loglevel, WARNING, --without-gossip, --without-mingle, --without-heartbeat]
+    env_file: ["${SECRET_DIR}/agent.env"]
+    mem_limit: 512m
+    healthcheck: {disable: true}
   business-worker:
     <<: *api
     command: [celery, -A, semibrain_business.worker:app, worker, --beat, --schedule, /tmp/celerybeat, --pool, threads, --concurrency, '3', --loglevel, WARNING, --without-gossip, --without-mingle, --without-heartbeat]

@@ -537,6 +537,43 @@
         }
       }
     },
+    "/internal/v1/runs/{run_id}/trace": {
+      "get": {
+        "summary": "Run Trace",
+        "operationId": "run_trace_internal_v1_runs__run_id__trace_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/internal/v1/admin/evaluations": {
       "get": {
         "summary": "Overview",
@@ -754,6 +791,102 @@
             }
           },
           "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/memories/candidates/{candidate_id}/confirm": {
+      "post": {
+        "summary": "Confirm",
+        "operationId": "confirm_internal_v1_memories_candidates__candidate_id__confirm_post",
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Candidate Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryConfirm"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/memories/candidates/{candidate_id}/dismiss": {
+      "post": {
+        "summary": "Dismiss",
+        "operationId": "dismiss_internal_v1_memories_candidates__candidate_id__dismiss_post",
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Candidate Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryDismiss"
+              }
+            }
+          }
         },
         "responses": {
           "200": {
@@ -1441,6 +1574,64 @@
         ],
         "title": "IntentCard"
       },
+      "MemoryCandidateConfirm": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          },
+          "confirmed": {
+            "type": "boolean",
+            "const": true,
+            "title": "Confirmed"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "preference",
+              "background"
+            ],
+            "title": "Kind"
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 1600,
+            "minLength": 1,
+            "title": "Content"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "confirmed",
+          "kind",
+          "content",
+          "expires_at"
+        ],
+        "title": "MemoryCandidateConfirm"
+      },
+      "MemoryCandidateDismiss": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id"
+        ],
+        "title": "MemoryCandidateDismiss"
+      },
       "MemoryConfigure": {
         "properties": {
           "owner_id": {
@@ -1466,6 +1657,31 @@
         ],
         "title": "MemoryConfigure"
       },
+      "MemoryConfirm": {
+        "properties": {
+          "owner_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Owner Id"
+          },
+          "auth_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Auth Version"
+          },
+          "change": {
+            "$ref": "#/components/schemas/MemoryCandidateConfirm"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "owner_id",
+          "auth_version",
+          "change"
+        ],
+        "title": "MemoryConfirm"
+      },
       "MemoryDelete": {
         "properties": {
           "request_id": {
@@ -1486,6 +1702,31 @@
           "expected_revision"
         ],
         "title": "MemoryDelete"
+      },
+      "MemoryDismiss": {
+        "properties": {
+          "owner_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Owner Id"
+          },
+          "auth_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Auth Version"
+          },
+          "change": {
+            "$ref": "#/components/schemas/MemoryCandidateDismiss"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "owner_id",
+          "auth_version",
+          "change"
+        ],
+        "title": "MemoryDismiss"
       },
       "MemoryEdit": {
         "properties": {
@@ -1615,6 +1856,17 @@
           "enabled": {
             "type": "boolean",
             "title": "Enabled"
+          },
+          "auto_extract": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Extract"
           }
         },
         "additionalProperties": false,

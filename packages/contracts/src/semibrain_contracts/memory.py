@@ -38,6 +38,7 @@ class MemorySetting(BaseModel):
     request_id: UUID
     expected_revision: int = Field(ge=0)
     enabled: bool
+    auto_extract: bool | None = None
 
 
 class MemoryIdentity(BaseModel):
@@ -60,5 +61,28 @@ class MemoryConfigure(MemoryIdentity):
 
 class MemorySource(MemoryIdentity):
     source_run_id: UUID | None = None
+    source_input_run_id: UUID | None = None
     lineage_refs: list[str] = Field(default_factory=list, max_length=10000)
+
+
+class MemoryCandidateConfirm(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: UUID
+    confirmed: Literal[True]
+    kind: Literal["preference", "background"]
+    content: str = Field(min_length=1, max_length=1600)
+    expires_at: datetime
+
+
+class MemoryCandidateDismiss(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: UUID
+
+
+class MemoryConfirm(MemoryIdentity):
+    change: MemoryCandidateConfirm
+
+
+class MemoryDismiss(MemoryIdentity):
+    change: MemoryCandidateDismiss
 

@@ -8,6 +8,7 @@ from semibrain_agent.diagnostics import router as diagnostics_router
 from semibrain_agent.evaluations import router as evaluations_router
 from semibrain_agent.graph_extraction import router as graph_extraction_router
 from semibrain_agent.memory import router as memory_router
+from semibrain_agent.memory_candidates import router as memory_candidates_router
 from semibrain_agent.retention import router as retention_router
 from semibrain_agent.runs import router
 from semibrain_agent.storage import initialize
@@ -21,6 +22,7 @@ app.include_router(configuration_router)
 app.include_router(diagnostics_router)
 app.include_router(evaluations_router)
 app.include_router(memory_router)
+app.include_router(memory_candidates_router)
 app.include_router(retention_router)
 app.include_router(graph_extraction_router)
 app.include_router(titles_router)

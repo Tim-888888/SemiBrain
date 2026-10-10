@@ -3,8 +3,15 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
-from semibrain_common.runtime import call, failure, internal_identity
-from semibrain_contracts.memory import MemoryDelete, MemoryEdit, MemorySetting, MemorySource
+from semibrain_common.runtime import call, digest, failure, internal_identity
+from semibrain_contracts.memory import (
+    MemoryCandidateConfirm,
+    MemoryCandidateDismiss,
+    MemoryDelete,
+    MemoryEdit,
+    MemorySetting,
+    MemorySource,
+)
 
 from semibrain_conversation.access import check_lineage, run_snapshot
 from semibrain_conversation.auth import current_user, db
@@ -37,12 +44,37 @@ def remove(memory_id: UUID, form: MemoryDelete, user=Depends(current_user)):
                 json={**identity(user), "change": form.model_dump(mode="json")}).json()
 
 
+@router.post("/v1/memories/candidates/{candidate_id}/confirm")
+def confirm(candidate_id: UUID, form: MemoryCandidateConfirm, user=Depends(current_user)):
+    return call("agent", "POST", f"/internal/v1/memories/candidates/{candidate_id}/confirm",
+                json={**identity(user), "change": form.model_dump(mode="json")}).json()
+
+
+@router.post("/v1/memories/candidates/{candidate_id}/dismiss")
+def dismiss(candidate_id: UUID, form: MemoryCandidateDismiss, user=Depends(current_user)):
+    return call("agent", "POST", f"/internal/v1/memories/candidates/{candidate_id}/dismiss",
+                json={**identity(user), "change": form.model_dump(mode="json")}).json()
+
+
 @router.post("/internal/v1/memories/authorize")
 def authorize(form: MemorySource, request: Request):
     internal_identity(request, {"agent"})
     user = db().users.find_one({"_id": str(form.owner_id), "enabled": True, "auth_version": form.auth_version})
     if not user:
         failure("MEMORY_OWNER_REVOKED", 403)
+    if form.source_input_run_id:
+        run_id = str(form.source_input_run_id)
+        run = db().gateway_runs.find_one({"_id": run_id, "owner_id": user["_id"],
+                                         "auth_version": user["auth_version"]})
+        if not run or not db().conversations.find_one({
+            "_id": run["input"]["conversation_id"], "owner_id": user["_id"],
+        }):
+            failure("MEMORY_SOURCE_UNAVAILABLE", 409)
+        message = db().messages.find_one({"run_id": run_id, "owner_id": user["_id"], "role": "user"})
+        if not message or not message.get("text"):
+            failure("MEMORY_SOURCE_UNAVAILABLE", 409)
+        return {"text": message["text"], "content_hash": digest(message["text"]),
+                "conversation_id": run["input"]["conversation_id"]}
     check_lineage(user, form.lineage_refs)
     if not form.source_run_id:
         return {"valid": True}

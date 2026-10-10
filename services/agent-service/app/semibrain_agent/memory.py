@@ -15,6 +15,7 @@ from semibrain_common.runtime import (
     internal_identity,
     now,
     transaction,
+    uid,
 )
 from semibrain_contracts.memory import MemoryConfigure, MemoryIdentity, MemoryRemove, MemoryWrite
 
@@ -43,7 +44,7 @@ def settings(owner, *, session=None):
     return db().memory_settings.find_one({"_id": owner}, session=session) or {"_id": owner, "revision": 0, "enabled": False}
 
 
-def command(owner, scope, form, action):
+def command(owner, scope, form, action, *, affects_recall=True):
     key = digest(canonical([owner, scope, str(form.request_id)]))
     hashed = digest(canonical(form.model_dump(mode="json")))
     def commit(session):
@@ -55,7 +56,9 @@ def command(owner, scope, form, action):
         db().memory_settings.update_one({"_id": owner}, {"$setOnInsert": {"revision": 0, "enabled": False}}, upsert=True, session=session)
         result = action(session)
         # Serialize edits across all of this owner's memories and invalidate running pins.
-        epoch = db().memory_settings.find_one_and_update({"_id": owner}, {"$inc": {"revision": 1}}, return_document=ReturnDocument.AFTER, session=session)
+        epoch = db().memory_settings.find_one_and_update({"_id": owner}, {"$inc": {
+            "revision" if affects_recall else "candidate_revision": 1,
+        }}, return_document=ReturnDocument.AFTER, session=session)
         result["settings_revision"] = epoch["revision"]
         db().memory_commands.insert_one({"_id": key, "owner_id": owner, "payload_hash": hashed, "result": result,
             "created_at": now(), "expires_at": now() + timedelta(days=30)}, session=session)
@@ -66,9 +69,10 @@ def command(owner, scope, form, action):
 def source_state(row, identity):
     if row["expires_at"] <= now():
         return "expired"
-    if row.get("source_run_id"):
+    source_key = "source_input_run_id" if row.get("source_input_run_id") else "source_run_id"
+    if row.get(source_key):
         try:
-            source = authority(identity, source_run_id=row["source_run_id"])
+            source = authority(identity, **{source_key: row[source_key]})
             if source.get("content_hash") != row.get("source_hash"):
                 return "source_unavailable"
         except HTTPException as exc:
@@ -89,7 +93,9 @@ def listing(form: MemoryIdentity, request: Request):
             row["content"] = "[来源当前不可用]"
         row.pop("lineage_refs", None)
     current = settings(identity["owner_id"])
-    return {"items": rows, "enabled": current["enabled"], "revision": current["revision"], "limit": 100}
+    from semibrain_agent.memory_candidates import pending
+    return {"items": rows, "enabled": current["enabled"], "revision": current["revision"], "limit": 100,
+            "auto_extract": current.get("auto_extract", False), "candidates": pending(identity)}
 
 
 @router.post("/internal/v1/memories")
@@ -151,11 +157,19 @@ def configure(form: MemoryConfigure, request: Request):
     identity = principal(form, request)
     owner = identity["owner_id"]
     def action(session):
+        current = settings(owner, session=session)
+        automatic = current.get("auto_extract", False) if form.change.auto_extract is None else form.change.auto_extract
+        changes = {"enabled": form.change.enabled, "auto_extract": automatic}
+        if (current["enabled"] != form.change.enabled
+                or current.get("auto_extract", False) != automatic):
+            # A fresh epoch cancels claimed work even after off -> on, without deleting memories.
+            changes.update(extract_epoch=uid(), extract_since=now(), extract_next_at=now(),
+                           extract_lease_until=now(), extract_auth_version=identity["auth_version"])
         changed = db().memory_settings.update_one({"_id": owner, "revision": form.change.expected_revision},
-            {"$set": {"enabled": form.change.enabled}}, session=session)
+            {"$set": changes}, session=session)
         if not changed.matched_count:
             failure("REVISION_CONFLICT", 409)
-        return {"enabled": form.change.enabled}
+        return {"enabled": form.change.enabled, "auto_extract": automatic}
     return command(owner, "settings", form.change, action)
 
 
