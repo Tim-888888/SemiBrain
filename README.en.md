@@ -196,12 +196,19 @@ Calculate first-test and final-test yield from the data I provide. Show the nume
 ## ⚙️ Built for extensible engineering workflows
 
 <p align="center">
-  <a href="docs/assets/semibrain-system-architecture.en.png">
-    <img src="docs/assets/semibrain-system-architecture.en.png" alt="SemiBrain system architecture: user and admin requests enter the Conversation Service; the Agent Service calls the Business Service through authorized APIs; each service owns its data" width="100%" />
+  <a href="https://tim-888888.github.io/SemiBrain/">
+    <img src="docs/assets/semibrain-interactive-architecture.png" alt="Interactive SemiBrain architecture preview: main request path, three services, external dependencies, and trust boundaries. Click to explore; diagram labels are in Chinese." width="100%" />
   </a>
 </p>
 
-<p align="center"><sub>Three Python services · APIs and events · Click the image for full resolution</sub></p>
+<p align="center">
+  <a href="https://tim-888888.github.io/SemiBrain/">
+    <img src="https://img.shields.io/badge/Explore_interactive_architecture-147D70?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="Explore interactive architecture" />
+  </a>
+</p>
+
+<p align="center"><sub>Click the preview or button to zoom, inspect nodes, trace paths, and open source references. Interactive diagram labels are in Chinese.</sub></p>
+<p align="center"><a href="docs/assets/semibrain-system-architecture.en.png">View the English architecture overview</a> · <a href="docs/site/index.html">HTML source (download for offline viewing)</a></p>
 
 | Layer | Components |
 | :--- | :--- |

@@ -1,0 +1,571 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "SemiBrain · 高层系统架构",
+    "locale": "zh-CN",
+    "output": "docs/site/index.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/Tim-888888/SemiBrain.git",
+      "revision": "fc2c76809910de6db8b74fb46eafd91900666d3d",
+      "link_mode": "web"
+    }
+  },
+  "components": [
+    {
+      "id": "workbench",
+      "type": "frontend",
+      "label": "浏览器工作台",
+      "sublabel": "Vue 3 · 对话 / 管理台",
+      "tag": "客户端 · 不可信输入",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        180,
+        74
+      ],
+      "sources": [
+        {
+          "path": "packages/ui/src/Workspace.vue",
+          "line": 275,
+          "end_line": 320,
+          "label": "提交问题与订阅 SSE"
+        }
+      ]
+    },
+    {
+      "id": "web-entry",
+      "type": "cloud",
+      "label": "HTTPS 入口",
+      "sublabel": "Nginx · 静态页面与代理",
+      "tag": "自管 · 统一入口",
+      "pos": [
+        350,
+        40
+      ],
+      "size": [
+        210,
+        74
+      ],
+      "sources": [
+        {
+          "path": "infra/proxy/domain.conf",
+          "line": 17,
+          "end_line": 41,
+          "label": "TLS 入口代理"
+        },
+        {
+          "path": "infra/proxy/platform.conf",
+          "line": 16,
+          "end_line": 44,
+          "label": "屏蔽内部 API 与转发"
+        }
+      ]
+    },
+    {
+      "id": "conversation",
+      "type": "backend",
+      "label": "会话与身份服务",
+      "sublabel": "conversation-service",
+      "tag": "API + Worker",
+      "pos": [
+        700,
+        40
+      ],
+      "size": [
+        210,
+        74
+      ],
+      "sources": [
+        {
+          "path": "services/conversation-service/app/semibrain_conversation/conversations.py",
+          "line": 245,
+          "end_line": 295,
+          "label": "输入快照与事务 Outbox"
+        },
+        {
+          "path": "packages/common/src/semibrain_common/runtime.py",
+          "line": 95,
+          "end_line": 128,
+          "label": "Outbox 投递至 Redis"
+        },
+        {
+          "path": "services/conversation-service/app/semibrain_conversation/conversations.py",
+          "line": 417,
+          "end_line": 451,
+          "label": "按身份读取 SSE 快照"
+        }
+      ]
+    },
+    {
+      "id": "metadata",
+      "type": "database",
+      "label": "状态与元数据",
+      "sublabel": "MongoDB",
+      "tag": "自管 · 权限与版本真相",
+      "pos": [
+        1030,
+        40
+      ],
+      "size": [
+        190,
+        74
+      ],
+      "sources": [
+        {
+          "path": "packages/common/src/semibrain_common/runtime.py",
+          "line": 48,
+          "end_line": 55,
+          "label": "MongoDB 客户端"
+        },
+        {
+          "path": "services/conversation-service/app/semibrain_conversation/conversations.py",
+          "line": 263,
+          "end_line": 295,
+          "label": "会话状态与消息写入"
+        },
+        {
+          "path": "services/business-service/app/semibrain_business/storage.py",
+          "line": 6,
+          "end_line": 40,
+          "label": "图谱、Wiki 与扩展元数据"
+        }
+      ]
+    },
+    {
+      "id": "agent-runtime",
+      "type": "backend",
+      "label": "Agent 编排服务",
+      "sublabel": "agent-service",
+      "tag": "三种模式 · API + Worker",
+      "pos": [
+        700,
+        330
+      ],
+      "size": [
+        210,
+        74
+      ],
+      "sources": [
+        {
+          "path": "services/agent-service/app/semibrain_agent/runs.py",
+          "line": 254,
+          "end_line": 279,
+          "label": "按用户策略选择执行器"
+        },
+        {
+          "path": "services/agent-service/app/semibrain_agent/client.py",
+          "line": 10,
+          "end_line": 41,
+          "label": "逐次委托访问业务服务"
+        },
+        {
+          "path": "services/agent-service/app/semibrain_agent/investigator.py",
+          "line": 346,
+          "end_line": 367,
+          "label": "模型调用与观测 Span"
+        }
+      ]
+    },
+    {
+      "id": "business-runtime",
+      "type": "backend",
+      "label": "业务与知识服务",
+      "sublabel": "business-service",
+      "tag": "受托执行 · API + Worker",
+      "pos": [
+        350,
+        330
+      ],
+      "size": [
+        210,
+        74
+      ],
+      "sources": [
+        {
+          "path": "services/business-service/app/semibrain_business/tools.py",
+          "line": 72,
+          "end_line": 88,
+          "label": "业务数据只读查询"
+        },
+        {
+          "path": "services/business-service/app/semibrain_business/tools.py",
+          "line": 237,
+          "end_line": 258,
+          "label": "工具授权与参数校验"
+        },
+        {
+          "path": "services/business-service/app/semibrain_business/tools.py",
+          "line": 493,
+          "end_line": 511,
+          "label": "再鉴权后执行工具"
+        }
+      ]
+    },
+    {
+      "id": "model-api",
+      "type": "external",
+      "label": "外部模型 API",
+      "sublabel": "LLM · 按角色配置",
+      "tag": "第三方依赖",
+      "pos": [
+        1030,
+        330
+      ],
+      "size": [
+        190,
+        74
+      ],
+      "sources": [
+        {
+          "path": "services/agent-service/app/semibrain_agent/provider.py",
+          "line": 224,
+          "end_line": 235,
+          "label": "Responses API 调用"
+        },
+        {
+          "path": "services/agent-service/app/semibrain_agent/model.py",
+          "line": 52,
+          "end_line": 65,
+          "label": "模型适配器入口"
+        }
+      ]
+    },
+    {
+      "id": "remote-tools",
+      "type": "external",
+      "label": "外部工具与搜索",
+      "sublabel": "MCP · 公网检索",
+      "tag": "第三方 · 按需调用",
+      "pos": [
+        40,
+        330
+      ],
+      "size": [
+        180,
+        74
+      ],
+      "sources": [
+        {
+          "path": "services/business-service/app/semibrain_business/mcp_transport.py",
+          "line": 175,
+          "end_line": 209,
+          "label": "HTTP / SSE 发现与调用"
+        },
+        {
+          "path": "services/business-service/app/semibrain_business/search_providers.py",
+          "line": 71,
+          "end_line": 86,
+          "label": "调用搜索服务"
+        }
+      ]
+    },
+    {
+      "id": "sandbox",
+      "type": "backend",
+      "label": "受控计算沙箱",
+      "sublabel": "Broker · Docker Python",
+      "tag": "可选 · 无网络",
+      "pos": [
+        350,
+        185
+      ],
+      "size": [
+        210,
+        74
+      ],
+      "sources": [
+        {
+          "path": "services/business-service/app/semibrain_business/analysis_tools.py",
+          "line": 133,
+          "end_line": 145,
+          "label": "业务端请求沙箱"
+        },
+        {
+          "path": "services/business-service/app/semibrain_business/sandbox_broker.py",
+          "line": 65,
+          "end_line": 104,
+          "label": "容器隔离与资源限制"
+        },
+        {
+          "path": "infra/compose/multi-agent.yaml",
+          "line": 13,
+          "end_line": 29,
+          "label": "仅 Broker 持有 Docker Socket"
+        }
+      ]
+    },
+    {
+      "id": "knowledge-storage",
+      "type": "database",
+      "label": "知识资产与索引",
+      "sublabel": "MinIO · Milvus",
+      "tag": "原件存储 / 检索投影",
+      "pos": [
+        40,
+        555
+      ],
+      "size": [
+        210,
+        74
+      ],
+      "sources": [
+        {
+          "path": "services/business-service/app/semibrain_business/knowledge.py",
+          "line": 31,
+          "end_line": 83,
+          "label": "资产读写与校验"
+        },
+        {
+          "path": "services/business-service/app/semibrain_business/retrieval.py",
+          "line": 167,
+          "end_line": 211,
+          "label": "授权范围内混合检索"
+        },
+        {
+          "path": "infra/compose/storage.yaml",
+          "line": 38,
+          "end_line": 75,
+          "label": "知识数据内网与存储"
+        }
+      ]
+    },
+    {
+      "id": "warehouse",
+      "type": "database",
+      "label": "半导体业务数据",
+      "sublabel": "PostgreSQL",
+      "tag": "合成演示 · 只读访问",
+      "pos": [
+        350,
+        555
+      ],
+      "size": [
+        210,
+        74
+      ],
+      "sources": [
+        {
+          "path": "services/business-service/app/semibrain_business/warehouse.py",
+          "line": 530,
+          "end_line": 536,
+          "label": "PostgreSQL 连接"
+        },
+        {
+          "path": "services/business-service/app/semibrain_business/tools.py",
+          "line": 72,
+          "end_line": 88,
+          "label": "只读事务与合成数据标识"
+        },
+        {
+          "path": "infra/compose/storage.yaml",
+          "line": 26,
+          "end_line": 37,
+          "label": "业务数据内网"
+        }
+      ]
+    },
+    {
+      "id": "observability",
+      "type": "backend",
+      "label": "运行观测",
+      "sublabel": "Langfuse",
+      "tag": "自管 · 按配置启用",
+      "pos": [
+        700,
+        555
+      ],
+      "size": [
+        210,
+        74
+      ],
+      "sources": [
+        {
+          "path": "packages/common/src/semibrain_common/telemetry.py",
+          "line": 51,
+          "end_line": 88,
+          "label": "可选遥测与异常隔离"
+        },
+        {
+          "path": "infra/langfuse/compose.yaml",
+          "line": 11,
+          "end_line": 40,
+          "label": "独立 Langfuse 服务栈"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "平台控制层 · 会话与编排",
+      "wraps": [
+        "conversation",
+        "agent-runtime"
+      ],
+      "pad": 20
+    },
+    {
+      "kind": "security-group",
+      "label": "业务授权边界",
+      "wraps": [
+        "business-runtime"
+      ],
+      "pad": 18
+    },
+    {
+      "kind": "security-group",
+      "label": "代码隔离边界",
+      "wraps": [
+        "sandbox"
+      ],
+      "pad": 18
+    },
+    {
+      "kind": "security-group",
+      "label": "业务数据内网 · 自管",
+      "wraps": [
+        "knowledge-storage",
+        "warehouse"
+      ],
+      "pad": 20
+    }
+  ],
+  "connections": [
+    {
+      "id": "browser-entry",
+      "from": "workbench",
+      "to": "web-entry",
+      "label": "HTTPS",
+      "variant": "emphasis"
+    },
+    {
+      "id": "entry-api",
+      "from": "web-entry",
+      "to": "conversation",
+      "label": "REST / SSE",
+      "variant": "emphasis"
+    },
+    {
+      "id": "durable-submit",
+      "from": "conversation",
+      "to": "agent-runtime",
+      "label": "Redis 异步事件",
+      "variant": "dashed"
+    },
+    {
+      "id": "delegated-call",
+      "from": "agent-runtime",
+      "to": "business-runtime",
+      "label": "委托鉴权",
+      "variant": "emphasis"
+    },
+    {
+      "id": "business-query",
+      "from": "business-runtime",
+      "to": "warehouse",
+      "label": "只读 SQL",
+      "variant": "emphasis"
+    },
+    {
+      "id": "conversation-state",
+      "from": "conversation",
+      "to": "metadata",
+      "label": "事务落库",
+      "variant": "default"
+    },
+    {
+      "id": "model-inference",
+      "from": "agent-runtime",
+      "to": "model-api",
+      "label": "模型请求",
+      "variant": "default"
+    },
+    {
+      "id": "optional-observation",
+      "from": "agent-runtime",
+      "to": "observability",
+      "label": "启用后遥测",
+      "variant": "default"
+    },
+    {
+      "id": "knowledge-access",
+      "from": "business-runtime",
+      "to": "knowledge-storage",
+      "label": "授权检索 / 资产",
+      "variant": "default"
+    },
+    {
+      "id": "optional-compute",
+      "from": "business-runtime",
+      "to": "sandbox",
+      "label": "授权后计算",
+      "variant": "security"
+    },
+    {
+      "id": "remote-capabilities",
+      "from": "business-runtime",
+      "to": "remote-tools",
+      "label": "开关 / 授权",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "主路径：一次半导体业务调查",
+      "items": [
+        "浏览器 → HTTPS 入口 → 会话服务 → Agent 编排 → 业务服务 → 只读业务数据。返回结果由 Agent 组织为回答与引用。",
+        "会话服务提供 SSE 快照；前端沿原入口接收进度与答案。回程不再重复画线。源码：Workspace.vue 275–320；conversations.py 417–451。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "三服务分工与可靠投递",
+      "items": [
+        "会话层保存身份、输入快照和续接关系；Agent 层负责理解与调查协调；业务层拥有数据访问及实际工具执行。",
+        "MongoDB 事务 Outbox → Redis Streams → Agent Worker。Celery 负责轮询与执行调度，Redis 不是持久业务真相；这些机制合并在服务框内。",
+        "投递与消费依据：common/runtime.py 95–128；semibrain_agent/worker.py 12–30。API 与 Worker 的部署归属见 infra/compose/application.yaml。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Agent 内部：按任务选择执行模式",
+      "items": [
+        "快速问答走受控短路径；单 Agent 循环检索、调用工具与核对；多 Agent 由 Supervisor 组织专业分支。",
+        "SQLBot、RAG、Vision、Tool 及后续 RCA / Reviewer 属于编排角色，不是额外部署的独立微服务。详见 runs.py 与 multi_agent.py。",
+        "槽位、追问、上下文压缩、证据回读与长期记忆属于编排内部能力，按当前任务需要介入。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "数据归属：元数据、原件、索引分开",
+      "items": [
+        "MongoDB 承载各服务状态与治理元数据，包括文档版本、Wiki 和图谱实体关系；图中只画会话写入代表线，其余读写在所属服务内。",
+        "知识资产与索引是一个逻辑分组：MinIO 保存原件及产物，Milvus 保存可重建检索投影，二者并非同一数据库。实际读写归业务服务。",
+        "PostgreSQL 当前承载合成测试 / 良率等演示数据，不能当作已接入真实晶圆厂。查询使用只读事务并限制执行时间。"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "信任边界：权限由服务执行",
+      "items": [
+        "Nginx 屏蔽 /internal/ 并清除外部伪造的服务身份头；Agent 调用业务服务前领取本次运行的委托凭证。",
+        "业务服务核验调用方、委托用途、有效期与资源权限。MCP / 联网按用户范围及治理策略启用，模型不能自行扩大授权。",
+        "只有 Sandbox Broker 持有 Docker Socket；Python 容器禁网、非 root、只读根文件系统并限制资源。业务端通过 Broker 请求执行。"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "观测与阅读范围",
+      "items": [
+        "Langfuse 为单独部署的观测栈，按配置接收调用链；其 PostgreSQL、Redis、MinIO、ClickHouse 等内部依赖合并展示。",
+        "本图是源码与部署配置支持的高层逻辑架构，非线上健康快照；12 个框不等于 12 个容器，也不代表每次请求会调用全部分支。",
+        "界面缓存、Worker 扩展、嵌入 / 重排模型、备份与运维流程放在组件职责中理解，不额外扩展连线。核对日期：2026-10-15。"
+      ]
+    }
+  ]
+}

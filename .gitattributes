@@ -4,3 +4,5 @@
 *.docx binary
 # Preserve the verbatim upstream license, including its whitespace.
 vendor/weknora-docreader/LICENSE -whitespace
+# Preserve the validated standalone renderer output and exclude it from language statistics.
+docs/site/index.html linguist-generated=true whitespace=-blank-at-eol

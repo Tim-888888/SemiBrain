@@ -196,12 +196,19 @@ Supervisor 组织专业 Agent 分工取证：SQLBot 查询业务数据，RAG 查
 ## ⚙️ 为可扩展的工程工作流而构建
 
 <p align="center">
-  <a href="docs/assets/semibrain-system-architecture.zh-CN.png">
-    <img src="docs/assets/semibrain-system-architecture.zh-CN.png" alt="SemiBrain 系统架构：用户与管理请求进入会话服务，Agent 服务通过授权接口调用业务服务，各服务管理独立数据" width="100%" />
+  <a href="https://tim-888888.github.io/SemiBrain/">
+    <img src="docs/assets/semibrain-interactive-architecture.png" alt="SemiBrain 交互式系统架构预览：主要请求路径、三大服务、外部依赖与信任边界；点击打开交互版" width="100%" />
   </a>
 </p>
 
-<p align="center"><sub>三大 Python 服务 · API 与事件协作 · 点击图片查看原图</sub></p>
+<p align="center">
+  <a href="https://tim-888888.github.io/SemiBrain/">
+    <img src="https://img.shields.io/badge/探索交互式架构图-147D70?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="探索交互式架构图" />
+  </a>
+</p>
+
+<p align="center"><sub>点击图片或按钮进入交互版：缩放、节点详情、路径探索与源码定位。</sub></p>
+<p align="center"><a href="docs/assets/semibrain-system-architecture.zh-CN.png">查看系统架构总览原图</a> · <a href="docs/site/index.html">HTML 源文件（可下载后离线查看）</a></p>
 
 | 层次 | 组成 |
 | :--- | :--- |
