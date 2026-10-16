@@ -8140,8 +8140,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       }
       function writeStored() {
         try {
-          if (readerPaused) localStorage.removeItem(STORAGE_KEY);
-          else localStorage.setItem(STORAGE_KEY, 'live');
+          localStorage.setItem(STORAGE_KEY, readerPaused ? 'still' : 'live');
         } catch (_) {}
       }
       function reducedMotion() {
@@ -8291,7 +8290,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       createFlows();
       html.setAttribute('data-motion-capable', 'true');
       btn.hidden = false;
-      readerPaused = readStored() !== 'live';
+      // SemiBrain starts Live on first visit and preserves an explicit pause.
+      readerPaused = readStored() === 'still';
       btn.addEventListener('click', function () { setPaused(!readerPaused); });
       if (motionQuery) {
         if (typeof motionQuery.addEventListener === 'function') motionQuery.addEventListener('change', render);
